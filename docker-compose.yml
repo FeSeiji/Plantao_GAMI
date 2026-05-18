@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: plantao-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./Backend/.env
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./Backend/src:/app/src
+      - ./Backend/node_modules:/app/node_modules
+    working_dir: /app
+    command: npm run dev
