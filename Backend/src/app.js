@@ -1,11 +1,17 @@
 const express = require('express');
 
 const app = express();
+const { authMiddleware } = require('./middleware/auth')
 
 app.use(express.json());
 
-// Rotas
-const routes = require('./routes');
-app.use(routes);
+// rotas públicas (sem auth)
+app.use('/auth', require('./routes/auth'))
 
-module.exports = app;
+// middleware JWT — protege tudo abaixo
+app.use(authMiddleware)
+
+// rotas protegidas
+app.use('/users', require('./routes/users'))
+
+module.exports = app
