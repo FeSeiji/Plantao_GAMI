@@ -8,9 +8,7 @@ const router = Router();
 
 router.get('/health', healthController.check);
 
-router.get('/salve', hello.salve);
-
-router.get('/hospital',hospital.CreateHospital);
+//router.get('/hospital',hospital.CreateHospital);
 
 router.get('/users',user.getUsers);
 
