@@ -7,9 +7,7 @@ const user = require('../controllers/users')
 const router = Router();
 
 router.get('/health', healthController.check);
-
 //router.get('/hospital',hospital.CreateHospital);
-
-router.get('/users',user.getUsers);
+router.get('/teste',user.getUsers);
 
 module.exports = router;
