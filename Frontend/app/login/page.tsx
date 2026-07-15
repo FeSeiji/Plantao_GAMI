@@ -31,6 +31,18 @@ export default function LoginPage() {
       }
 
       localStorage.setItem("token", data.token)
+
+      const meRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${data.token}` },
+      })
+      const me = await meRes.json()
+
+      if (meRes.ok) {
+        localStorage.setItem("roles", JSON.stringify(me.roles))
+        localStorage.setItem("email", me.email)
+        localStorage.setItem("nome", me.nome ?? "")
+      }
+
       router.push("/dashboard")
     } catch {
       setError("Não foi possível conectar ao servidor.")

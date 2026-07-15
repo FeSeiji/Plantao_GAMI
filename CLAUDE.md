@@ -73,4 +73,5 @@ Note: `Backend/supabase.js` at the root uses ESM syntax (`import`/`export`) and 
 - `POST /auth/register` — creates user via `supabase.auth.admin.createUser`, email confirmation is bypassed
 
 **Protected** (`Authorization: Bearer <token>` required):
+- `GET /auth/me` — returns `{ id, email, roles }` for the authenticated user. Exception to the public/protected split below: mounted under `/auth` (before the global `authMiddleware`), so it applies `authMiddleware` directly on the route in `routes/auth.js`.
 - `GET /users` — list users

@@ -7,9 +7,26 @@ exports.login = async (req, res) => {
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
-  if (error) return res.status(401).json({ error: error.message })
+  if (error) return res.status(401).json({ error: "Credenciais incorretas" })
 
   return res.json({ token: data.session.access_token })
+}
+
+exports.me = async (req, res) => {
+  const { id, email, app_metadata } = req.user
+
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('nome')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    console.error(error)
+    return res.status(500).json({ error: error.message })
+  }
+
+  return res.json({ id, email, nome: profile?.nome ?? null, roles: app_metadata?.roles ?? [] })
 }
 
 exports.register = async (req, res) => {
