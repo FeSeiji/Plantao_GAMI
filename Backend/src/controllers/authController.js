@@ -68,3 +68,42 @@ exports.register = async (req, res) => {
 
   return res.status(201).json({ user: data.user })
 }
+
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body
+
+  if (!email) {
+    return res.status(400).json({ error: 'email é obrigatório' })
+  }
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${process.env.FRONTEND_URL}/reset-password`
+  })
+
+  if (error) {
+    console.error(error)
+  }
+
+  // Resposta genérica: não revela se o e-mail está cadastrado
+  return res.json({ message: 'Se o e-mail estiver cadastrado, um link de redefinição de senha foi enviado.' })
+}
+
+exports.resetPassword = async (req, res) => {
+  const { access_token, password } = req.body
+
+  if (!access_token || !password) {
+    return res.status(400).json({ error: 'access_token e password são obrigatórios' })
+  }
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser(access_token)
+
+  if (userError || !user) {
+    return res.status(401).json({ error: 'Token inválido ou expirado' })
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(user.id, { password })
+
+  if (error) return res.status(400).json({ error: error.message })
+
+  return res.json({ message: 'Senha redefinida com sucesso.' })
+}
