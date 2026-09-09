@@ -15,5 +15,6 @@ app.use(authMiddleware)
 
 // rotas protegidas
 app.use('/users', require('./routes/users'))
+app.use('/plantoes', require('./routes/plantoes'))
 
 module.exports = app

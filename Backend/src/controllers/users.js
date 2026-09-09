@@ -4,9 +4,16 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 exports.getUsers = async (req, res) => {
-  const { data, error } = await supabase
-    .from('Users')
-    .select('*')
+  const { search } = req.query
+
+  let query = supabase.from('Users').select('*')
+
+  if (search) {
+    const termo = `%${search}%`
+    query = query.or(`nome.ilike.${termo},email.ilike.${termo}`)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     console.error(error)

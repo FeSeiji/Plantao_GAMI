@@ -56,7 +56,7 @@ export default function LoginPage() {
       {/* Logo */}
       <div className="mb-8 text-center">
         <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg">
-          <span className="text-brand-800 font-bold text-2xl">P</span>
+          <span className="text-brand-800 font-bold text-sm">PMP</span>
         </div>
         <h1 className="text-white font-bold text-2xl tracking-wide">Plantão</h1>
         <p className="text-brand-200 text-sm mt-1">Gestão de Escalas Hospitalares</p>

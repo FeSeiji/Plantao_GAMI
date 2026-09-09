@@ -20,3 +20,13 @@ exports.authMiddleware = async (req, res, next) => {
   req.user = user
   next()
 }
+
+exports.requireRole = (...allowedRoles) => (req, res, next) => {
+  const roles = req.user?.app_metadata?.roles ?? []
+
+  if (!roles.some(role => allowedRoles.includes(role))) {
+    return res.status(403).json({ error: 'Você não tem permissão para realizar esta ação' })
+  }
+
+  next()
+}
