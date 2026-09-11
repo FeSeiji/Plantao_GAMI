@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import NovoPlantaoModal from "../../../components/NovoPlantaoModal"
+import PlantaoModal from "../../../components/PlantaoModal"
 
 type Plantao = {
   id: string
@@ -21,6 +22,7 @@ export default function PlantoesPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
 
   const carregarPlantoes = useCallback(() => {
     const token = localStorage.getItem("token")
@@ -80,7 +82,12 @@ export default function PlantoesPage() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {plantoes.map((p) => (
-            <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPlantaoSelecionado(p)}
+              className="text-left bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:border-brand-300 hover:shadow-md transition-shadow"
+            >
               <h2 className="font-semibold text-gray-900 mb-1">{p.titulo}</h2>
               <p className="text-sm text-gray-500 mb-3">
                 {new Date(`${p.data}T00:00:00`).toLocaleDateString("pt-BR")} · {p.hora_inicio.slice(0, 5)} - {p.hora_fim.slice(0, 5)}
@@ -89,13 +96,22 @@ export default function PlantoesPage() {
               <p className="text-xs text-gray-400">
                 {p.usuarios.length} usuário{p.usuarios.length === 1 ? "" : "s"} atribuído{p.usuarios.length === 1 ? "" : "s"}
               </p>
-            </div>
+            </button>
           ))}
         </div>
       )}
 
       {showModal && (
         <NovoPlantaoModal onClose={() => setShowModal(false)} onCreated={carregarPlantoes} />
+      )}
+
+      {plantaoSelecionado && (
+        <PlantaoModal
+          plantao={plantaoSelecionado}
+          podeEditar={podeGerenciar}
+          onClose={() => setPlantaoSelecionado(null)}
+          onUpdated={carregarPlantoes}
+        />
       )}
     </main>
   )

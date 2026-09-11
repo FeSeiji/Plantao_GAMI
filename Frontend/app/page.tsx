@@ -85,12 +85,6 @@ const steps = [
   },
 ]
 
-const stats = [
-  { value: "500+", label: "Médicos ativos" },
-  { value: "12", label: "Hospitais parceiros" },
-  { value: "98%", label: "Satisfação" },
-]
-
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -138,16 +132,6 @@ export default function HomePage() {
               Criar conta gratuita
             </Link>
           </div>
-        </div>
-
-        {/* Stats */}
-        <div className="max-w-3xl mx-auto mt-16 grid grid-cols-3 gap-6 text-center">
-          {stats.map((s) => (
-            <div key={s.label}>
-              <p className="text-3xl sm:text-4xl font-bold text-white">{s.value}</p>
-              <p className="text-brand-200 text-xs sm:text-sm mt-1">{s.label}</p>
-            </div>
-          ))}
         </div>
       </section>
 

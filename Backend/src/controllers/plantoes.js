@@ -64,6 +64,45 @@ exports.getPlantao = async (req, res) => {
   return res.json(formatPlantao(data))
 }
 
+exports.updatePlantao = async (req, res) => {
+  const { titulo, descricao, data, hora_inicio, hora_fim } = req.body
+
+  const updates = {}
+  if (titulo !== undefined) updates.titulo = titulo
+  if (descricao !== undefined) updates.descricao = descricao || null
+  if (data !== undefined) updates.data = data
+  if (hora_inicio !== undefined) updates.hora_inicio = hora_inicio
+  if (hora_fim !== undefined) updates.hora_fim = hora_fim
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Nenhum campo para atualizar' })
+  }
+
+  const { data: plantao, error } = await supabase
+    .from('plantoes')
+    .update(updates)
+    .eq('id', req.params.id)
+    .select('*, plantao_usuarios(usuario_id)')
+    .maybeSingle()
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+  return res.json(formatPlantao(plantao))
+}
+
+exports.removeUsuario = async (req, res) => {
+  const { error } = await supabase
+    .from('plantao_usuarios')
+    .delete()
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', req.params.usuarioId)
+
+  if (error) return res.status(400).json({ error: error.message })
+
+  return res.status(204).send()
+}
+
 exports.addUsuarios = async (req, res) => {
   const { usuarios } = req.body
 

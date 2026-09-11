@@ -23,12 +23,17 @@ export default function Sidebar() {
     <>
       {/* Barra superior — só no mobile */}
       <div className="md:hidden flex items-center justify-between bg-brand-800 px-4 py-3">
-        <div className="flex items-center gap-3">
+        <Link
+          href="/dashboard"
+          onClick={() => setOpen(false)}
+          aria-label="Voltar para o dashboard"
+          className="flex items-center gap-3"
+        >
           <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0">
             <span className="text-brand-800 font-bold text-[9px]">PMP</span>
           </div>
           <span className="text-white font-semibold tracking-wide">Plantão</span>
-        </div>
+        </Link>
         <button
           onClick={() => setOpen(true)}
           aria-label="Abrir menu"
@@ -53,12 +58,17 @@ export default function Sidebar() {
         }`}
       >
         <div className="flex items-center justify-between px-5 py-5">
-          <div className="flex items-center gap-3">
+          <Link
+            href="/dashboard"
+            onClick={() => setOpen(false)}
+            aria-label="Voltar para o dashboard"
+            className="flex items-center gap-3"
+          >
             <div className="w-9 h-9 bg-white rounded-full flex items-center justify-center shrink-0">
               <span className="text-brand-800 font-bold text-[10px]">PMP</span>
             </div>
             <span className="text-white font-semibold text-lg tracking-wide">Plantão</span>
-          </div>
+          </Link>
           <button onClick={() => setOpen(false)} aria-label="Fechar menu" className="text-white p-1 md:hidden">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" />
