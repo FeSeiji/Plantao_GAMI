@@ -1,20 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import NovoPlantaoModal from "../../../components/NovoPlantaoModal"
 import PlantaoModal from "../../../components/PlantaoModal"
-import PlantaoCalendario from "../../../components/PlantaoCalendario"
-
-type Plantao = {
-  id: string
-  titulo: string
-  descricao: string | null
-  data: string
-  hora_inicio: string
-  hora_fim: string
-  usuarios: string[]
-}
+import PlantaoCalendario, {
+  Plantao,
+  Visualizacao,
+  calcularIntervaloVisivel,
+} from "../../../components/PlantaoCalendario"
 
 export default function PlantoesPage() {
   const router = useRouter()
@@ -23,18 +17,23 @@ export default function PlantoesPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
-  const [mes, setMes] = useState(() => {
-    const hoje = new Date()
-    return new Date(hoje.getFullYear(), hoje.getMonth(), 1)
-  })
+  const [visualizacao, setVisualizacao] = useState<Visualizacao>("semana")
+  const [dataReferencia, setDataReferencia] = useState(() => new Date())
   const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
+  const [carregouUmaVez, setCarregouUmaVez] = useState(false)
+
+  const { inicio, fim } = useMemo(
+    () => calcularIntervaloVisivel(dataReferencia, visualizacao),
+    [dataReferencia, visualizacao]
+  )
 
   const carregarPlantoes = useCallback(() => {
     const token = localStorage.getItem("token")
     if (!token) return
 
     setLoading(true)
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
+    const params = new URLSearchParams({ inicio, fim })
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -43,8 +42,11 @@ export default function PlantoesPage() {
         setPlantoes(data)
       })
       .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => {
+        setLoading(false)
+        setCarregouUmaVez(true)
+      })
+  }, [inicio, fim])
 
   useEffect(() => {
     const token = localStorage.getItem("token")
@@ -55,8 +57,11 @@ export default function PlantoesPage() {
     }
 
     setRoles(JSON.parse(localStorage.getItem("roles") ?? "[]"))
+  }, [router])
+
+  useEffect(() => {
     carregarPlantoes()
-  }, [router, carregarPlantoes])
+  }, [carregarPlantoes])
 
   const podeGerenciar = roles.includes("coordenador") || roles.includes("admin") || roles.includes("tecnico")
 
@@ -80,15 +85,19 @@ export default function PlantoesPage() {
         </p>
       )}
 
-      {loading ? (
+      {!carregouUmaVez && loading ? (
         <p className="text-gray-400 text-sm">Carregando...</p>
       ) : (
-        <PlantaoCalendario
-          mes={mes}
-          plantoes={plantoes}
-          onMesChange={setMes}
-          onSelectPlantao={setPlantaoSelecionado}
-        />
+        <div className={loading ? "opacity-60 pointer-events-none transition-opacity" : "transition-opacity"}>
+          <PlantaoCalendario
+            visualizacao={visualizacao}
+            dataReferencia={dataReferencia}
+            plantoes={plantoes}
+            onVisualizacaoChange={setVisualizacao}
+            onDataReferenciaChange={setDataReferencia}
+            onSelectPlantao={setPlantaoSelecionado}
+          />
+        </div>
       )}
 
       {showModal && (

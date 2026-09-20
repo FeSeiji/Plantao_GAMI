@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
+import SiglaBadge from "./SiglaBadge"
 
 type Usuario = {
   id: string
-  nome?: string
-  email?: string
+  nome?: string | null
+  email?: string | null
+  sigla?: string | null
 }
 
 type Plantao = {
@@ -15,7 +17,7 @@ type Plantao = {
   data: string
   hora_inicio: string
   hora_fim: string
-  usuarios: string[]
+  usuarios: Usuario[]
 }
 
 type Props = {
@@ -34,35 +36,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const [horaInicio, setHoraInicio] = useState(plantao.hora_inicio.slice(0, 5))
   const [horaFim, setHoraFim] = useState(plantao.hora_fim.slice(0, 5))
 
-  const [todosUsuarios, setTodosUsuarios] = useState<Usuario[]>([])
-  const [selecionados, setSelecionados] = useState<Usuario[]>(
-    plantao.usuarios.map((id) => ({ id }))
-  )
+  const [selecionados, setSelecionados] = useState<Usuario[]>(plantao.usuarios)
   const [busca, setBusca] = useState("")
   const [resultados, setResultados] = useState<Usuario[]>([])
   const [buscando, setBuscando] = useState(false)
 
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    const token = localStorage.getItem("token")
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/users`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        const data = await res.json()
-        if (res.ok) setTodosUsuarios(data)
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (todosUsuarios.length === 0) return
-    setSelecionados((prev) =>
-      prev.map((u) => todosUsuarios.find((t) => t.id === u.id) ?? u)
-    )
-  }, [todosUsuarios])
 
   useEffect(() => {
     const termo = busca.trim()
@@ -316,8 +296,9 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                   {selecionados.map((u) => (
                     <span
                       key={u.id}
-                      className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-3 pr-2 py-1.5 rounded-full"
+                      className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full"
                     >
+                      <SiglaBadge sigla={u.sigla} size="sm" />
                       {u.nome ?? u.email ?? u.id}
                       <button
                         type="button"
@@ -407,8 +388,9 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                   {selecionados.map((u) => (
                     <span
                       key={u.id}
-                      className="bg-brand-100 text-brand-800 text-xs font-semibold px-3 py-1.5 rounded-full"
+                      className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-3 py-1 rounded-full"
                     >
+                      <SiglaBadge sigla={u.sigla} size="sm" />
                       {u.nome ?? u.email ?? u.id}
                     </span>
                   ))}

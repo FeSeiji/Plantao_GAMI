@@ -36,19 +36,36 @@ exports.createPlantao = async (req, res) => {
     if (usuariosError) return res.status(400).json({ error: usuariosError.message })
   }
 
-  return res.status(201).json({ ...plantao, usuarios: usuarios ?? [] })
+  try {
+    const perfis = await buscarPerfis(usuarios ?? [])
+    return res.status(201).json({ ...plantao, usuarios: (usuarios ?? []).map(id => perfis.get(id) ?? { id }) })
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 exports.listPlantoes = async (req, res) => {
-  const { data, error } = await supabase
+  const { inicio, fim } = req.query
+
+  let query = supabase
     .from('plantoes')
     .select('*, plantao_usuarios(usuario_id)')
     .order('data', { ascending: true })
     .order('hora_inicio', { ascending: true })
 
+  if (inicio) query = query.gte('data', inicio)
+  if (fim) query = query.lte('data', fim)
+
+  const { data, error } = await query
+
   if (error) return res.status(500).json({ error: error.message })
 
-  return res.json(data.map(formatPlantao))
+  try {
+    const perfis = await buscarPerfis(data.flatMap(row => row.plantao_usuarios.map(u => u.usuario_id)))
+    return res.json(data.map(row => formatPlantao(row, perfis)))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 exports.getPlantao = async (req, res) => {
@@ -61,7 +78,12 @@ exports.getPlantao = async (req, res) => {
   if (error) return res.status(500).json({ error: error.message })
   if (!data) return res.status(404).json({ error: 'Plantão não encontrado' })
 
-  return res.json(formatPlantao(data))
+  try {
+    const perfis = await buscarPerfis(data.plantao_usuarios.map(u => u.usuario_id))
+    return res.json(formatPlantao(data, perfis))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 exports.updatePlantao = async (req, res) => {
@@ -88,7 +110,12 @@ exports.updatePlantao = async (req, res) => {
   if (error) return res.status(400).json({ error: error.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
-  return res.json(formatPlantao(plantao))
+  try {
+    const perfis = await buscarPerfis(plantao.plantao_usuarios.map(u => u.usuario_id))
+    return res.json(formatPlantao(plantao, perfis))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 exports.removeUsuario = async (req, res) => {
@@ -131,7 +158,21 @@ exports.addUsuarios = async (req, res) => {
   return res.status(201).json({ message: 'Usuários adicionados ao plantão' })
 }
 
-function formatPlantao(row) {
+async function buscarPerfis(usuarioIds) {
+  const idsUnicos = [...new Set(usuarioIds)]
+  if (idsUnicos.length === 0) return new Map()
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, nome, email, sigla')
+    .in('id', idsUnicos)
+
+  if (error) throw error
+
+  return new Map(data.map(perfil => [perfil.id, perfil]))
+}
+
+function formatPlantao(row, perfis) {
   const { plantao_usuarios, ...plantao } = row
-  return { ...plantao, usuarios: plantao_usuarios.map(u => u.usuario_id) }
+  return { ...plantao, usuarios: plantao_usuarios.map(u => perfis.get(u.usuario_id) ?? { id: u.usuario_id }) }
 }
