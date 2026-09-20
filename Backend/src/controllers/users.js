@@ -6,7 +6,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 exports.getUsers = async (req, res) => {
   const { search } = req.query
 
-  let query = supabase.from('Users').select('*')
+  let query = supabase.from('profiles').select('id, nome, email, sigla')
 
   if (search) {
     const termo = `%${search}%`

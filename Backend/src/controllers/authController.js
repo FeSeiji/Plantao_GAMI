@@ -17,7 +17,7 @@ exports.me = async (req, res) => {
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('nome')
+    .select('nome, sigla')
     .eq('id', id)
     .maybeSingle()
 
@@ -26,15 +26,42 @@ exports.me = async (req, res) => {
     return res.status(500).json({ error: error.message })
   }
 
-  return res.json({ id, email, nome: profile?.nome ?? null, roles: app_metadata?.roles ?? [] })
+  return res.json({
+    id,
+    email,
+    nome: profile?.nome ?? null,
+    sigla: profile?.sigla ?? null,
+    roles: app_metadata?.roles ?? []
+  })
 }
 
 exports.register = async (req, res) => {
-  const { email, password, nome, roles } = req.body
+  const { email, password, nome, sigla, roles } = req.body
 
   // Validações básicas
-  if (!email || !password || !nome) {
-    return res.status(400).json({ error: 'email, password e nome são obrigatórios' })
+  if (!email || !password || !nome || !sigla) {
+    return res.status(400).json({ error: 'email, password, nome e sigla são obrigatórios' })
+  }
+
+  const siglaNormalizada = String(sigla).toUpperCase()
+
+  if (!/^[A-Z]{2}$/.test(siglaNormalizada)) {
+    return res.status(400).json({ error: 'sigla deve conter exatamente 2 letras' })
+  }
+
+  const { data: siglaExistente, error: siglaError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('sigla', siglaNormalizada)
+    .maybeSingle()
+
+  if (siglaError) {
+    console.error(siglaError)
+    return res.status(500).json({ error: siglaError.message })
+  }
+
+  if (siglaExistente) {
+    return res.status(400).json({ error: 'Sigla já está em uso' })
   }
 
   const rolesValidas = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'coordenador', 'admin']
@@ -57,7 +84,8 @@ exports.register = async (req, res) => {
     password,
     email_confirm: true, // pula confirmação de email
     user_metadata: {
-      nome
+      nome,
+      sigla: siglaNormalizada
     },
     app_metadata: {
       roles: roles ?? [] // roles controladas só pelo admin (service role)

@@ -41,6 +41,7 @@ export default function LoginPage() {
         localStorage.setItem("roles", JSON.stringify(me.roles))
         localStorage.setItem("email", me.email)
         localStorage.setItem("nome", me.nome ?? "")
+        localStorage.setItem("sigla", me.sigla ?? "")
       }
 
       router.push("/dashboard")

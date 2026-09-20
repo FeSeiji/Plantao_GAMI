@@ -39,6 +39,7 @@ export default function RegisterPage() {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2>(1)
   const [nome, setNome] = useState("")
+  const [sigla, setSigla] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -72,6 +73,7 @@ export default function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nome,
+          sigla,
           email,
           password,
           roles: role ? [role] : undefined,
@@ -181,6 +183,26 @@ export default function RegisterPage() {
                     placeholder="Seu nome"
                     className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
                   />
+                </div>
+
+                <div>
+                  <label htmlFor="sigla" className="block text-sm font-medium text-gray-700 mb-1">
+                    Sigla (2 letras)
+                  </label>
+                  <input
+                    id="sigla"
+                    type="text"
+                    required
+                    minLength={2}
+                    maxLength={2}
+                    value={sigla}
+                    onChange={(e) => setSigla(e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2))}
+                    placeholder="Ex: FS"
+                    className="w-24 border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 uppercase tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Vai te identificar nos plantões, como uma foto de perfil. Precisa ser única.
+                  </p>
                 </div>
 
                 <div>

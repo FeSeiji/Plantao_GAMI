@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
+import SiglaBadge from "./SiglaBadge"
 
 type Usuario = {
   id: string
   nome?: string
   email?: string
+  sigla?: string
 }
 
 type Props = {
@@ -217,8 +219,9 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                 {selecionados.map((u) => (
                   <span
                     key={u.id}
-                    className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-3 pr-2 py-1.5 rounded-full"
+                    className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full"
                   >
+                    <SiglaBadge sigla={u.sigla} size="sm" />
                     {u.nome ?? u.email ?? u.id}
                     <button
                       type="button"
@@ -261,8 +264,9 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                           key={u.id}
                           type="button"
                           onClick={() => selecionarUsuario(u)}
-                          className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                          className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                         >
+                          <SiglaBadge sigla={u.sigla} size="sm" />
                           {u.nome ?? u.email ?? u.id}
                         </button>
                       ))

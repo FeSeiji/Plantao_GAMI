@@ -16,6 +16,7 @@ export default function Sidebar() {
     localStorage.removeItem("roles")
     localStorage.removeItem("email")
     localStorage.removeItem("nome")
+    localStorage.removeItem("sigla")
     router.push("/login")
   }
 
