@@ -3,7 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'coordenador', 'admin']
+const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_plantonista', 'tecnico','admin']
 
 exports.getUsers = async (req, res) => {
   const { search, role } = req.query

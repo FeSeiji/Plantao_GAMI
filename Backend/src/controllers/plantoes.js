@@ -58,7 +58,11 @@ exports.createPlantao = async (req, res) => {
 }
 
 exports.listPlantoes = async (req, res) => {
-  const { inicio, fim } = req.query
+  const { inicio, fim, tipo } = req.query
+
+  if (tipo !== undefined && !TIPOS_VALIDOS.includes(tipo)) {
+    return res.status(400).json({ error: "tipo deve ser 'plantonista' ou 'socio'" })
+  }
 
   let query = supabase
     .from('plantoes')
@@ -68,6 +72,7 @@ exports.listPlantoes = async (req, res) => {
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
+  if (tipo) query = query.eq('tipo', tipo)
 
   const { data, error } = await query
 
