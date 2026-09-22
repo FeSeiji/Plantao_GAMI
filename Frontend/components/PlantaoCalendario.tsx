@@ -7,6 +7,8 @@ export type Usuario = {
   nome?: string | null
   email?: string | null
   sigla?: string | null
+  coordenador?: boolean
+  posicao?: number | null
 }
 
 export type Plantao = {
@@ -16,10 +18,26 @@ export type Plantao = {
   data: string
   hora_inicio: string
   hora_fim: string
+  tipo: "plantonista" | "socio"
   usuarios: Usuario[]
 }
 
 export type Visualizacao = "semana" | "mes"
+
+function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
+  return (
+    <div className="relative shrink-0">
+      <div className={usuario.coordenador ? "rounded-full ring-2 ring-amber-400" : undefined}>
+        <SiglaBadge sigla={usuario.sigla} size="sm" />
+      </div>
+      {usuario.posicao != null && (
+        <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          {usuario.posicao}
+        </span>
+      )}
+    </div>
+  )
+}
 
 type Props = {
   visualizacao: Visualizacao
@@ -248,7 +266,7 @@ export default function PlantaoCalendario({
                           {p.usuarios.length === 0 ? (
                             <SiglaBadge sigla={null} size="sm" />
                           ) : (
-                            p.usuarios.map((u) => <SiglaBadge key={u.id} sigla={u.sigla} size="sm" />)
+                            p.usuarios.map((u) => <BadgeComMarcador key={u.id} usuario={u} />)
                           )}
                         </div>
                         <p className="text-[11px] text-gray-600 truncate">{p.titulo}</p>
@@ -301,7 +319,7 @@ export default function PlantaoCalendario({
                         >
                           <div className="flex -space-x-1 shrink-0">
                             {p.usuarios.slice(0, 3).map((u) => (
-                              <SiglaBadge key={u.id} sigla={u.sigla} size="sm" />
+                              <BadgeComMarcador key={u.id} usuario={u} />
                             ))}
                           </div>
                           {p.usuarios.length > 3 && (

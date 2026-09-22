@@ -8,6 +8,8 @@ type Usuario = {
   nome?: string | null
   email?: string | null
   sigla?: string | null
+  coordenador?: boolean
+  posicao?: number | null
 }
 
 type Plantao = {
@@ -17,6 +19,7 @@ type Plantao = {
   data: string
   hora_inicio: string
   hora_fim: string
+  tipo: "plantonista" | "socio"
   usuarios: Usuario[]
 }
 
@@ -26,6 +29,8 @@ type Props = {
   onClose: () => void
   onUpdated: () => void
 }
+
+const POSICOES = [1, 2, 3, 4, 5, 6, 7]
 
 export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }: Props) {
   const [editando, setEditando] = useState(false)
@@ -44,6 +49,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
+  const ehSocio = plantao.tipo === "socio"
+
   useEffect(() => {
     const termo = busca.trim()
 
@@ -54,9 +61,11 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
 
     setBuscando(true)
+    const roleEsperada = ehSocio ? "anestesita_socio" : "anestesita_plantonista"
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?search=${encodeURIComponent(termo)}`, {
+      const params = new URLSearchParams({ search: termo, role: roleEsperada })
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(async (res) => {
@@ -68,7 +77,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [busca])
+  }, [busca, ehSocio])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -94,14 +103,52 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     setEditando(false)
   }
 
+  function proximaPosicaoLivre(atual: Usuario[]) {
+    const ocupadas = new Set(atual.map((u) => u.posicao))
+    return POSICOES.find((p) => !ocupadas.has(p)) ?? POSICOES[0]
+  }
+
   async function adicionarUsuario(usuario: Usuario) {
     setBusca("")
     setResultados([])
+    setError("")
 
     if (selecionados.some((u) => u.id === usuario.id)) return
+    if (ehSocio && selecionados.length >= 7) return
 
+    const posicao = ehSocio ? proximaPosicaoLivre(selecionados) : null
     const anterior = selecionados
-    setSelecionados((prev) => [...prev, usuario])
+    setSelecionados((prev) => [...prev, { ...usuario, posicao, coordenador: false }])
+
+    try {
+      const token = localStorage.getItem("token")
+      const body = ehSocio ? { fila: [{ usuario_id: usuario.id, posicao }] } : { usuarios: [usuario.id] }
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/usuarios`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      })
+
+      if (!res.ok) {
+        const result = await res.json()
+        throw new Error(result.error ?? "Não foi possível adicionar o médico.")
+      }
+
+      onUpdated()
+    } catch (err) {
+      setSelecionados(anterior)
+      setError(err instanceof Error ? err.message : "Não foi possível adicionar o médico.")
+    }
+  }
+
+  async function alterarPosicao(id: string, novaPosicao: number) {
+    setError("")
+    const anterior = selecionados
+    setSelecionados((prev) => prev.map((u) => (u.id === id ? { ...u, posicao: novaPosicao } : u)))
 
     try {
       const token = localStorage.getItem("token")
@@ -111,22 +158,51 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ usuarios: [usuario.id] }),
+        body: JSON.stringify({ fila: [{ usuario_id: id, posicao: novaPosicao }] }),
       })
 
       if (!res.ok) {
         const result = await res.json()
-        throw new Error(result.error ?? "Não foi possível adicionar o usuário.")
+        throw new Error(result.error ?? "Não foi possível alterar a posição.")
       }
 
       onUpdated()
     } catch (err) {
       setSelecionados(anterior)
-      setError(err instanceof Error ? err.message : "Não foi possível adicionar o usuário.")
+      setError(err instanceof Error ? err.message : "Não foi possível alterar a posição.")
+    }
+  }
+
+  async function tornarCoordenador(id: string) {
+    setError("")
+    const anterior = selecionados
+    setSelecionados((prev) => prev.map((u) => ({ ...u, coordenador: u.id === id })))
+
+    try {
+      const token = localStorage.getItem("token")
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/coordenador`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ usuario_id: id }),
+      })
+
+      if (!res.ok) {
+        const result = await res.json()
+        throw new Error(result.error ?? "Não foi possível definir o coordenador.")
+      }
+
+      onUpdated()
+    } catch (err) {
+      setSelecionados(anterior)
+      setError(err instanceof Error ? err.message : "Não foi possível definir o coordenador.")
     }
   }
 
   async function removerUsuario(id: string) {
+    setError("")
     const anterior = selecionados
     setSelecionados((prev) => prev.filter((u) => u.id !== id))
 
@@ -139,13 +215,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
       if (!res.ok && res.status !== 204) {
         const result = await res.json().catch(() => ({}))
-        throw new Error(result.error ?? "Não foi possível remover o usuário.")
+        throw new Error(result.error ?? "Não foi possível remover o médico.")
       }
 
       onUpdated()
     } catch (err) {
       setSelecionados(anterior)
-      setError(err instanceof Error ? err.message : "Não foi possível remover o usuário.")
+      setError(err instanceof Error ? err.message : "Não foi possível remover o médico.")
     }
   }
 
@@ -187,6 +263,71 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
   }
 
+  const listaOrdenada = ehSocio
+    ? selecionados.slice().sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
+    : selecionados
+
+  const rotuloLista = ehSocio ? "Fila de sócios" : "Equipe"
+
+  function Chip({ u, editavel }: { u: Usuario; editavel: boolean }) {
+    return (
+      <span
+        className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${
+          u.coordenador ? "bg-brand-700 text-white" : "bg-brand-100 text-brand-800"
+        }`}
+      >
+        {ehSocio && u.posicao != null && (
+          <span className="w-4 h-4 rounded-full bg-white/80 text-brand-800 text-[9px] font-bold flex items-center justify-center">
+            {u.posicao}
+          </span>
+        )}
+        <SiglaBadge sigla={u.sigla} size="sm" />
+        {u.nome ?? u.email ?? u.id}
+
+        {editavel && ehSocio && (
+          <select
+            aria-label="Posição na fila"
+            value={u.posicao ?? ""}
+            onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
+            className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
+          >
+            {POSICOES.map((p) => (
+              <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {editavel && !ehSocio && (
+          <button
+            type="button"
+            onClick={() => tornarCoordenador(u.id)}
+            className={u.coordenador ? "text-white/80" : "text-brand-600 hover:text-brand-900"}
+            title="Definir como coordenador"
+          >
+            {u.coordenador ? "Coordenador" : "Tornar coordenador"}
+          </button>
+        )}
+        {!editavel && !ehSocio && u.coordenador && <span className="text-white/90">· Coordenador</span>}
+
+        {editavel && (
+          <button
+            type="button"
+            onClick={() => removerUsuario(u.id)}
+            aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
+            className={u.coordenador ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
+      </span>
+    )
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
@@ -209,8 +350,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
         </div>
 
         {!editando && (
-          <p className="text-gray-400 text-sm mb-6">
+          <p className="text-gray-400 text-sm mb-1">
             {new Date(`${plantao.data}T00:00:00`).toLocaleDateString("pt-BR")} · {plantao.hora_inicio.slice(0, 5)} - {plantao.hora_fim.slice(0, 5)}
+          </p>
+        )}
+        {!editando && (
+          <p className="text-xs font-semibold text-brand-700 mb-6 uppercase tracking-wide">
+            {ehSocio ? "Sócio" : "Plantonista"}
           </p>
         )}
 
@@ -288,30 +434,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
             <div>
               <label htmlFor="buscaUsuario" className="block text-sm font-medium text-gray-700 mb-1">
-                Usuários atribuídos
+                {rotuloLista}
               </label>
 
-              {selecionados.length > 0 && (
+              {listaOrdenada.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
-                  {selecionados.map((u) => (
-                    <span
-                      key={u.id}
-                      className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full"
-                    >
-                      <SiglaBadge sigla={u.sigla} size="sm" />
-                      {u.nome ?? u.email ?? u.id}
-                      <button
-                        type="button"
-                        onClick={() => removerUsuario(u.id)}
-                        aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
-                        className="text-brand-600 hover:text-brand-900"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                    </span>
+                  {listaOrdenada.map((u) => (
+                    <Chip key={u.id} u={u} editavel />
                   ))}
                 </div>
               )}
@@ -322,17 +451,18 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                   type="text"
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar por nome ou e-mail"
+                  placeholder={ehSocio && selecionados.length >= 7 ? "Fila completa (7/7)" : "Buscar por nome ou e-mail"}
                   autoComplete="off"
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                  disabled={ehSocio && selecionados.length >= 7}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-400"
                 />
 
-                {busca.trim() && (
+                {busca.trim() && !(ehSocio && selecionados.length >= 7) && (
                   <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
                     {buscando ? (
                       <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
                     ) : resultados.filter((u) => !selecionados.some((s) => s.id === u.id)).length === 0 ? (
-                      <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum usuário encontrado.</p>
+                      <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
                     ) : (
                       resultados
                         .filter((u) => !selecionados.some((s) => s.id === u.id))
@@ -380,19 +510,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
             {plantao.descricao && <p className="text-sm text-gray-600">{plantao.descricao}</p>}
 
             <div>
-              <p className="text-sm font-medium text-gray-700 mb-2">Usuários atribuídos</p>
-              {selecionados.length === 0 ? (
-                <p className="text-sm text-gray-400">Nenhum usuário atribuído.</p>
+              <p className="text-sm font-medium text-gray-700 mb-2">{rotuloLista}</p>
+              {listaOrdenada.length === 0 ? (
+                <p className="text-sm text-gray-400">Nenhum médico atribuído.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {selecionados.map((u) => (
-                    <span
-                      key={u.id}
-                      className="flex items-center gap-1.5 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-3 py-1 rounded-full"
-                    >
-                      <SiglaBadge sigla={u.sigla} size="sm" />
-                      {u.nome ?? u.email ?? u.id}
-                    </span>
+                  {listaOrdenada.map((u) => (
+                    <Chip key={u.id} u={u} editavel={false} />
                   ))}
                 </div>
               )}

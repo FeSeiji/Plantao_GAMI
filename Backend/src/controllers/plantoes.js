@@ -2,15 +2,27 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const TIPOS_VALIDOS = ['plantonista', 'socio']
+const ROLE_POR_TIPO = { plantonista: 'anestesita_plantonista', socio: 'anestesita_socio' }
+
 exports.createPlantao = async (req, res) => {
-  const { titulo, descricao, data, hora_inicio, hora_fim, usuarios } = req.body
+  const { titulo, descricao, data, hora_inicio, hora_fim, tipo, usuarios, coordenador_id, fila } = req.body
 
   if (!titulo || !data || !hora_inicio || !hora_fim) {
     return res.status(400).json({ error: 'titulo, data, hora_inicio e hora_fim são obrigatórios' })
   }
 
-  if (usuarios !== undefined && !Array.isArray(usuarios)) {
-    return res.status(400).json({ error: 'usuarios deve ser um array de ids' })
+  if (!TIPOS_VALIDOS.includes(tipo)) {
+    return res.status(400).json({ error: "tipo é obrigatório e deve ser 'plantonista' ou 'socio'" })
+  }
+
+  let membros
+  try {
+    membros = tipo === 'plantonista'
+      ? await validarEquipePlantonista(usuarios, coordenador_id)
+      : await validarFilaSocio(fila)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
   }
 
   const { data: plantao, error } = await supabase
@@ -21,6 +33,7 @@ exports.createPlantao = async (req, res) => {
       data,
       hora_inicio,
       hora_fim,
+      tipo,
       criado_por: req.user.id,
     })
     .select()
@@ -28,17 +41,17 @@ exports.createPlantao = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
-  if (usuarios?.length) {
-    const { error: usuariosError } = await supabase
+  if (membros.length > 0) {
+    const { error: membrosError } = await supabase
       .from('plantao_usuarios')
-      .insert(usuarios.map(usuario_id => ({ plantao_id: plantao.id, usuario_id })))
+      .insert(membros.map(m => ({ plantao_id: plantao.id, ...m })))
 
-    if (usuariosError) return res.status(400).json({ error: usuariosError.message })
+    if (membrosError) return res.status(400).json({ error: membrosError.message })
   }
 
   try {
-    const perfis = await buscarPerfis(usuarios ?? [])
-    return res.status(201).json({ ...plantao, usuarios: (usuarios ?? []).map(id => perfis.get(id) ?? { id }) })
+    const perfis = await buscarPerfis(membros.map(m => m.usuario_id))
+    return res.status(201).json(formatPlantao({ ...plantao, plantao_usuarios: membros }, perfis))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -49,7 +62,7 @@ exports.listPlantoes = async (req, res) => {
 
   let query = supabase
     .from('plantoes')
-    .select('*, plantao_usuarios(usuario_id)')
+    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
     .order('data', { ascending: true })
     .order('hora_inicio', { ascending: true })
 
@@ -71,7 +84,7 @@ exports.listPlantoes = async (req, res) => {
 exports.getPlantao = async (req, res) => {
   const { data, error } = await supabase
     .from('plantoes')
-    .select('*, plantao_usuarios(usuario_id)')
+    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -104,7 +117,7 @@ exports.updatePlantao = async (req, res) => {
     .from('plantoes')
     .update(updates)
     .eq('id', req.params.id)
-    .select('*, plantao_usuarios(usuario_id)')
+    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
     .maybeSingle()
 
   if (error) return res.status(400).json({ error: error.message })
@@ -119,6 +132,19 @@ exports.updatePlantao = async (req, res) => {
 }
 
 exports.removeUsuario = async (req, res) => {
+  const { data: membro, error: membroError } = await supabase
+    .from('plantao_usuarios')
+    .select('is_coordenador')
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', req.params.usuarioId)
+    .maybeSingle()
+
+  if (membroError) return res.status(500).json({ error: membroError.message })
+
+  if (membro?.is_coordenador) {
+    return res.status(400).json({ error: 'Defina outro coordenador antes de remover o atual' })
+  }
+
   const { error } = await supabase
     .from('plantao_usuarios')
     .delete()
@@ -131,31 +157,147 @@ exports.removeUsuario = async (req, res) => {
 }
 
 exports.addUsuarios = async (req, res) => {
-  const { usuarios } = req.body
-
-  if (!Array.isArray(usuarios) || usuarios.length === 0) {
-    return res.status(400).json({ error: 'usuarios deve ser um array não vazio de ids' })
-  }
-
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id')
+    .select('id, tipo')
     .eq('id', req.params.id)
     .maybeSingle()
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
+  let membros
+  try {
+    membros = plantao.tipo === 'plantonista'
+      ? (await validarEquipePlantonista(req.body.usuarios, null, { exigirCoordenador: false }))
+      : await validarFilaSocio(req.body.fila)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
+  }
+
   const { error } = await supabase
     .from('plantao_usuarios')
     .upsert(
-      usuarios.map(usuario_id => ({ plantao_id: req.params.id, usuario_id })),
-      { onConflict: 'plantao_id,usuario_id', ignoreDuplicates: true }
+      membros.map(m => ({ plantao_id: req.params.id, ...m })),
+      { onConflict: 'plantao_id,usuario_id', ignoreDuplicates: plantao.tipo === 'plantonista' }
     )
 
-  if (error) return res.status(400).json({ error: error.message })
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Posição já ocupada nesse plantão' })
+    return res.status(400).json({ error: error.message })
+  }
 
-  return res.status(201).json({ message: 'Usuários adicionados ao plantão' })
+  return res.status(201).json({ message: 'Médicos adicionados ao plantão' })
+}
+
+exports.definirCoordenador = async (req, res) => {
+  const { usuario_id } = req.body
+  if (!usuario_id) return res.status(400).json({ error: 'usuario_id é obrigatório' })
+
+  const { data: plantao, error: plantaoError } = await supabase
+    .from('plantoes')
+    .select('id, tipo')
+    .eq('id', req.params.id)
+    .maybeSingle()
+
+  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (plantao.tipo !== 'plantonista') {
+    return res.status(400).json({ error: 'Somente plantões de plantonista têm coordenador' })
+  }
+
+  const { data: membro, error: membroError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', usuario_id)
+    .maybeSingle()
+
+  if (membroError) return res.status(500).json({ error: membroError.message })
+  if (!membro) return res.status(400).json({ error: 'O médico precisa estar na equipe do plantão para ser coordenador' })
+
+  const { error: limparError } = await supabase
+    .from('plantao_usuarios')
+    .update({ is_coordenador: false })
+    .eq('plantao_id', req.params.id)
+
+  if (limparError) return res.status(400).json({ error: limparError.message })
+
+  const { error: definirError } = await supabase
+    .from('plantao_usuarios')
+    .update({ is_coordenador: true })
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', usuario_id)
+
+  if (definirError) return res.status(400).json({ error: definirError.message })
+
+  return res.json({ message: 'Coordenador definido' })
+}
+
+async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoordenador = true } = {}) {
+  if (!Array.isArray(usuarios) || usuarios.length === 0) {
+    throw new Error('usuarios deve ser um array não vazio de ids')
+  }
+
+  if (exigirCoordenador && (!coordenadorId || !usuarios.includes(coordenadorId))) {
+    throw new Error('coordenador_id é obrigatório e deve estar entre os usuarios')
+  }
+
+  const invalidos = await usuariosSemRole(usuarios, ROLE_POR_TIPO.plantonista)
+  if (invalidos.length > 0) {
+    throw new Error(`Usuários sem a role anestesita_plantonista: ${invalidos.join(', ')}`)
+  }
+
+  return usuarios.map(usuario_id => ({
+    usuario_id,
+    is_coordenador: usuario_id === coordenadorId,
+    posicao: null,
+  }))
+}
+
+async function validarFilaSocio(fila) {
+  if (!Array.isArray(fila) || fila.length === 0) {
+    throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
+  }
+
+  const posicaoInvalida = fila.some(
+    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 7
+  )
+  if (posicaoInvalida) {
+    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 7)')
+  }
+
+  const posicoes = fila.map(f => f.posicao)
+  if (new Set(posicoes).size !== posicoes.length) {
+    throw new Error('posições da fila não podem se repetir')
+  }
+
+  const usuarioIds = fila.map(f => f.usuario_id)
+  if (new Set(usuarioIds).size !== usuarioIds.length) {
+    throw new Error('um médico não pode ocupar duas posições na mesma fila')
+  }
+
+  const invalidos = await usuariosSemRole(usuarioIds, ROLE_POR_TIPO.socio)
+  if (invalidos.length > 0) {
+    throw new Error(`Usuários sem a role anestesita_socio: ${invalidos.join(', ')}`)
+  }
+
+  return fila.map(({ usuario_id, posicao }) => ({ usuario_id, is_coordenador: false, posicao }))
+}
+
+async function usuariosSemRole(usuarioIds, roleEsperada) {
+  const idsUnicos = [...new Set(usuarioIds)]
+
+  const resultados = await Promise.all(
+    idsUnicos.map(async id => {
+      const { data, error } = await supabase.auth.admin.getUserById(id)
+      const roles = data?.user?.app_metadata?.roles ?? []
+      const valido = !error && roles.includes(roleEsperada)
+      return { id, valido }
+    })
+  )
+
+  return resultados.filter(r => !r.valido).map(r => r.id)
 }
 
 async function buscarPerfis(usuarioIds) {
@@ -174,5 +316,13 @@ async function buscarPerfis(usuarioIds) {
 
 function formatPlantao(row, perfis) {
   const { plantao_usuarios, ...plantao } = row
-  return { ...plantao, usuarios: plantao_usuarios.map(u => perfis.get(u.usuario_id) ?? { id: u.usuario_id }) }
+  const usuarios = plantao_usuarios
+    .map(u => ({
+      ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
+      coordenador: u.is_coordenador ?? false,
+      posicao: u.posicao ?? null,
+    }))
+    .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
+
+  return { ...plantao, usuarios }
 }
