@@ -1,11 +1,8 @@
 const { createClient } = require('@supabase/supabase-js')
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+const { validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 
-const UFS = [
-  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA',
-  'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
-]
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 exports.login = async (req, res) => {
   const { email, password } = req.body
@@ -48,113 +45,24 @@ exports.register = async (req, res) => {
     return res.status(400).json({ error: 'email, password, nome e sigla são obrigatórios' })
   }
 
-  const siglaNormalizada = String(sigla).toUpperCase()
-
-  if (!/^[A-Z]{2}$/.test(siglaNormalizada)) {
-    return res.status(400).json({ error: 'sigla deve conter exatamente 2 letras' })
+  if (roles !== undefined && (!Array.isArray(roles) || roles.length === 0)) {
+    return res.status(400).json({ error: 'roles deve ser um array não vazio' })
   }
 
-  const { data: siglaExistente, error: siglaError } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('sigla', siglaNormalizada)
-    .maybeSingle()
-
-  if (siglaError) {
-    console.error(siglaError)
-    return res.status(500).json({ error: siglaError.message })
+  let dados
+  try {
+    dados = await validarDadosUsuario({ sigla, roles: roles ?? [], crm, crm_uf })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
   }
 
-  if (siglaExistente) {
-    return res.status(400).json({ error: 'Sigla já está em uso' })
-  }
+  if (dados.error) return res.status(400).json({ error: dados.error })
 
-  const rolesValidas = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'coordenador', 'admin']
+  const resultado = await criarUsuario({ email, password, nome, ...dados })
+  if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
-  if (roles !== undefined) {
-    if (!Array.isArray(roles) || roles.length === 0) {
-      return res.status(400).json({ error: 'roles deve ser um array não vazio' })
-    }
-
-    const invalidas = roles.filter(r => !rolesValidas.includes(r))
-    if (invalidas.length > 0) {
-      return res.status(400).json({
-        error: `Roles inválidas: ${invalidas.join(', ')}. Permitidas: ${rolesValidas.join(', ')}`
-      })
-    }
-  }
-
-  // Anestesistas precisam informar o CRM (número + UF)
-  const rolesAnestesista = ['anestesita_socio', 'anestesita_plantonista']
-  const exigeCrm = (roles ?? []).some(r => rolesAnestesista.includes(r))
-
-  let crmNormalizado = null
-  let crmUfNormalizada = null
-
-  if (exigeCrm) {
-    if (!crm || !crm_uf) {
-      return res.status(400).json({ error: 'crm e crm_uf são obrigatórios para anestesistas' })
-    }
-
-    crmNormalizado = String(crm).replace(/\D/g, '')
-    crmUfNormalizada = String(crm_uf).toUpperCase()
-
-    if (!/^\d{1,7}$/.test(crmNormalizado)) {
-      return res.status(400).json({ error: 'crm deve conter apenas números (até 7 dígitos)' })
-    }
-
-    if (!UFS.includes(crmUfNormalizada)) {
-      return res.status(400).json({ error: 'crm_uf inválida' })
-    }
-
-    const { data: crmExistente, error: crmError } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('crm', crmNormalizado)
-      .eq('crm_uf', crmUfNormalizada)
-      .maybeSingle()
-
-    if (crmError) {
-      console.error(crmError)
-      return res.status(500).json({ error: crmError.message })
-    }
-
-    if (crmExistente) {
-      return res.status(400).json({ error: 'CRM já cadastrado' })
-    }
-  }
-
-  const { data, error } = await supabase.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true, // pula confirmação de email
-    user_metadata: {
-      nome,
-      sigla: siglaNormalizada
-    },
-    app_metadata: {
-      roles: roles ?? [] // roles controladas só pelo admin (service role)
-    }
-  })
-
-  if (error) return res.status(400).json({ error: error.message })
-
-  // O profile é criado pelo trigger on_auth_user_created; aqui só completamos o CRM
-  if (exigeCrm) {
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({ crm: crmNormalizado, crm_uf: crmUfNormalizada })
-      .eq('id', data.user.id)
-
-    if (profileError) {
-      console.error(profileError)
-      // Desfaz a criação do usuário para não deixar anestesista sem CRM
-      await supabase.auth.admin.deleteUser(data.user.id)
-      return res.status(500).json({ error: 'Não foi possível salvar o CRM' })
-    }
-  }
-
-  return res.status(201).json({ user: data.user })
+  return res.status(201).json({ user: resultado.user })
 }
 
 exports.forgotPassword = async (req, res) => {

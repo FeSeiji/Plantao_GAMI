@@ -1,15 +1,30 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { ROLES_GESTAO } from "./UsuarioModal"
 
-const NAV_ITEMS = [{ label: "Plantões", href: "/plantoes" }]
+const NAV_ITEMS = [
+  { label: "Plantões", href: "/plantoes" },
+  { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
+]
 
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [roles, setRoles] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      setRoles(JSON.parse(localStorage.getItem("roles") ?? "[]"))
+    } catch {
+      setRoles([])
+    }
+  }, [])
+
+  const navItems = NAV_ITEMS.filter((item) => !item.roles || item.roles.some((r) => roles.includes(r)))
 
   function handleLogout() {
     localStorage.removeItem("token")
@@ -79,7 +94,7 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 px-3 py-2 space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const active = pathname.startsWith(item.href)
             return (
               <Link
