@@ -38,6 +38,7 @@ export default function LoginPage() {
       const me = await meRes.json()
 
       if (meRes.ok) {
+        localStorage.setItem("userId", me.id)
         localStorage.setItem("roles", JSON.stringify(me.roles))
         localStorage.setItem("email", me.email)
         localStorage.setItem("nome", me.nome ?? "")

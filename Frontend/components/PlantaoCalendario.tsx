@@ -2,6 +2,13 @@
 
 import SiglaBadge from "./SiglaBadge"
 
+export type TrocaPendente = {
+  id: string
+  solicitadoEm: string
+  usuarioEntrada: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+  solicitadoPor: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+}
+
 export type Usuario = {
   id: string
   nome?: string | null
@@ -9,6 +16,7 @@ export type Usuario = {
   sigla?: string | null
   coordenador?: boolean
   posicao?: number | null
+  trocaPendente?: TrocaPendente | null
 }
 
 export type Plantao = {
@@ -26,10 +34,13 @@ export type Visualizacao = "semana" | "mes"
 
 function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
   return (
-    <div className="relative shrink-0">
+    <div className="relative shrink-0" title={usuario.trocaPendente ? "Troca pendente de aceite" : undefined}>
       <div className={usuario.coordenador ? "rounded-full ring-2 ring-amber-400" : undefined}>
         <SiglaBadge sigla={usuario.sigla} size="sm" />
       </div>
+      {usuario.trocaPendente && (
+        <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
+      )}
       {usuario.posicao != null && (
         <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
           {usuario.posicao}
@@ -230,7 +241,7 @@ export default function PlantaoCalendario({
 
       {visualizacao === "semana" ? (
         <div className="overflow-x-auto">
-          <div className="min-w-[720px] grid grid-cols-7 gap-2">
+          <div className="min-w-[720px] grid grid-cols-7 gap-2 items-start">
             {gerarCelulasSemana(dataReferencia).map((data) => {
               const chave = formatarDataLocal(data)
               const doDia = (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
@@ -249,8 +260,10 @@ export default function PlantaoCalendario({
                     </span>
                   </div>
 
-                  <div className="flex-1 min-h-[280px] max-h-[420px] overflow-y-auto space-y-1.5 bg-gray-50 rounded-lg p-1.5 border border-gray-100">
-                    {doDia.length === 0 && <div className="h-full" />}
+                  <div className="min-h-[56px] max-h-[420px] overflow-y-auto space-y-1.5 bg-gray-50 rounded-lg p-1.5 border border-gray-100">
+                    {doDia.length === 0 && (
+                      <p className="text-[10px] text-gray-300 text-center py-3">Sem plantões</p>
+                    )}
                     {doDia.map((p) => (
                       <button
                         key={p.id}
@@ -298,7 +311,7 @@ export default function PlantaoCalendario({
                 return (
                   <div
                     key={chave + (noMes ? "-fora" : "")}
-                    className={`min-h-[88px] sm:min-h-[108px] p-1.5 flex flex-col gap-1 ${noMes ? "bg-gray-50" : "bg-white"}`}
+                    className={`min-h-[72px] sm:min-h-[92px] p-1.5 flex flex-col gap-1 ${noMes ? "bg-gray-50" : "bg-white"}`}
                   >
                     <span
                       className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-medium ${

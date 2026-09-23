@@ -13,7 +13,6 @@ import PlantaoCalendario, {
 export default function PlantoesPage() {
   const router = useRouter()
   const [plantoes, setPlantoes] = useState<Plantao[]>([])
-  const [roles, setRoles] = useState<string[]>([])
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -57,15 +56,11 @@ export default function PlantoesPage() {
       router.push("/login")
       return
     }
-
-    setRoles(JSON.parse(localStorage.getItem("roles") ?? "[]"))
   }, [router])
 
   useEffect(() => {
     carregarPlantoes()
   }, [carregarPlantoes])
-
-  const podeGerenciar = roles.includes("coordenador") || roles.includes("admin") || roles.includes("tecnico")
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -94,14 +89,12 @@ export default function PlantoesPage() {
             ))}
           </div>
 
-          {podeGerenciar && (
-            <button
-              onClick={() => setShowModal(true)}
-              className="bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-            >
-              + Novo plantão
-            </button>
-          )}
+          <button
+            onClick={() => setShowModal(true)}
+            className="bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            + Novo plantão
+          </button>
         </div>
       </div>
 
@@ -133,7 +126,7 @@ export default function PlantoesPage() {
       {plantaoSelecionado && (
         <PlantaoModal
           plantao={plantaoSelecionado}
-          podeEditar={podeGerenciar}
+          podeEditar
           onClose={() => setPlantaoSelecionado(null)}
           onUpdated={carregarPlantoes}
         />
