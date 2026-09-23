@@ -2,6 +2,31 @@
 
 import React, { useEffect, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
+import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
+
+type Pessoa = {
+  id: string
+  nome?: string | null
+  email?: string | null
+  sigla?: string | null
+}
+
+type TrocaPendente = {
+  id: string
+  solicitadoEm: string
+  usuarioEntrada: Pessoa
+  solicitadoPor: Pessoa
+}
+
+type TrocaHistorico = {
+  id: string
+  status: "pendente" | "aceita" | "recusada"
+  solicitadoEm: string
+  respondidoEm: string | null
+  usuarioSaida: Pessoa
+  usuarioEntrada: Pessoa
+  solicitadoPor: Pessoa
+}
 
 type Usuario = {
   id: string
@@ -10,6 +35,7 @@ type Usuario = {
   sigla?: string | null
   coordenador?: boolean
   posicao?: number | null
+  trocaPendente?: TrocaPendente | null
 }
 
 type Plantao = {
@@ -49,7 +75,64 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
+  const [historico, setHistorico] = useState<TrocaHistorico[]>([])
+  const [trocandoId, setTrocandoId] = useState<string | null>(null)
+  const [buscaTroca, setBuscaTroca] = useState("")
+  const [resultadosTroca, setResultadosTroca] = useState<Usuario[]>([])
+  const [buscandoTroca, setBuscandoTroca] = useState(false)
+  const [meuId, setMeuId] = useState<string | null>(null)
+
   const ehSocio = plantao.tipo === "socio"
+
+  useEffect(() => {
+    setMeuId(localStorage.getItem("userId"))
+  }, [])
+
+  useEffect(() => {
+    const token = localStorage.getItem("token")
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/trocas`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) return
+        const data = await res.json()
+        setHistorico(data)
+      })
+      .catch(() => {})
+  }, [plantao.id])
+
+  useEffect(() => {
+    const termo = buscaTroca.trim()
+
+    if (!termo || !trocandoId) {
+      setResultadosTroca([])
+      setBuscandoTroca(false)
+      return
+    }
+
+    setBuscandoTroca(true)
+    const timeoutId = setTimeout(() => {
+      const token = localStorage.getItem("token")
+      const params = new URLSearchParams({
+        search: termo,
+        role: "anestesita_plantonista,anestesita_socio",
+        data: plantao.data,
+        horaInicio: plantao.hora_inicio,
+        horaFim: plantao.hora_fim,
+      })
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(async (res) => {
+          const resultado = await res.json()
+          if (res.ok) setResultadosTroca(resultado)
+        })
+        .catch(() => {})
+        .finally(() => setBuscandoTroca(false))
+    }, 300)
+
+    return () => clearTimeout(timeoutId)
+  }, [buscaTroca, trocandoId])
 
   useEffect(() => {
     const termo = busca.trim()
@@ -61,16 +144,21 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
 
     setBuscando(true)
-    const roleEsperada = ehSocio ? "anestesita_socio" : "anestesita_plantonista"
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      const params = new URLSearchParams({ search: termo, role: roleEsperada })
+      const params = new URLSearchParams({
+        search: termo,
+        role: "anestesita_plantonista,anestesita_socio",
+        data: plantao.data,
+        horaInicio: plantao.hora_inicio,
+        horaFim: plantao.hora_fim,
+      })
       fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(async (res) => {
-          const data = await res.json()
-          if (res.ok) setResultados(data)
+          const resultado = await res.json()
+          if (res.ok) setResultados(resultado)
         })
         .catch(() => {})
         .finally(() => setBuscando(false))
@@ -101,6 +189,87 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     setHoraFim(plantao.hora_fim.slice(0, 5))
     setError("")
     setEditando(false)
+    setTrocandoId(null)
+    setBuscaTroca("")
+  }
+
+  async function solicitarTroca(usuarioSaidaId: string, usuarioEntrada: Usuario) {
+    setError("")
+    setTrocandoId(null)
+    setBuscaTroca("")
+    setResultadosTroca([])
+
+    try {
+      const token = localStorage.getItem("token")
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/trocas`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ usuario_saida: usuarioSaidaId, usuario_entrada: usuarioEntrada.id }),
+      })
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.error ?? "Não foi possível solicitar a troca.")
+      }
+
+      setSelecionados((prev) =>
+        prev.map((u) =>
+          u.id === usuarioSaidaId
+            ? {
+                ...u,
+                trocaPendente: {
+                  id: result.id,
+                  solicitadoEm: result.solicitadoEm,
+                  usuarioEntrada: result.usuarioEntrada,
+                  solicitadoPor: result.solicitadoPor,
+                },
+              }
+            : u
+        )
+      )
+      setHistorico((prev) => [result, ...prev])
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível solicitar a troca.")
+    }
+  }
+
+  async function responderTrocaAqui(trocaId: string, usuarioSaidaId: string, aceitar: boolean) {
+    setError("")
+
+    try {
+      const token = localStorage.getItem("token")
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/${trocaId}/${aceitar ? "aceitar" : "recusar"}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.error ?? "Não foi possível responder a essa solicitação.")
+      }
+
+      setSelecionados((prev) =>
+        prev.map((u) => {
+          if (u.id !== usuarioSaidaId) return u
+          if (!aceitar) return { ...u, trocaPendente: null }
+          return { ...result.usuarioEntrada, coordenador: u.coordenador, posicao: u.posicao, trocaPendente: null }
+        })
+      )
+      setHistorico((prev) => prev.map((h) => (h.id === trocaId ? result : h)))
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
+      onUpdated()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível responder a essa solicitação.")
+    }
   }
 
   function proximaPosicaoLivre(atual: Usuario[]) {
@@ -270,61 +439,158 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const rotuloLista = ehSocio ? "Fila de sócios" : "Equipe"
 
   function Chip({ u, editavel }: { u: Usuario; editavel: boolean }) {
+    const pendente = u.trocaPendente
+    const cor = pendente
+      ? "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
+      : u.coordenador
+      ? "bg-brand-700 text-white"
+      : "bg-brand-100 text-brand-800"
+
+    const resultadosFiltrados = resultadosTroca.filter(
+      (r) => r.id !== u.id && !selecionados.some((s) => s.id === r.id)
+    )
+
     return (
-      <span
-        className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${
-          u.coordenador ? "bg-brand-700 text-white" : "bg-brand-100 text-brand-800"
-        }`}
-      >
-        {ehSocio && u.posicao != null && (
-          <span className="w-4 h-4 rounded-full bg-white/80 text-brand-800 text-[9px] font-bold flex items-center justify-center">
-            {u.posicao}
-          </span>
-        )}
-        <SiglaBadge sigla={u.sigla} size="sm" />
-        {u.nome ?? u.email ?? u.id}
+      <div className="flex flex-col gap-1.5">
+        <span className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${cor}`}>
+          {ehSocio && u.posicao != null && (
+            <span className="w-4 h-4 rounded-full bg-white/80 text-brand-800 text-[9px] font-bold flex items-center justify-center">
+              {u.posicao}
+            </span>
+          )}
+          <SiglaBadge sigla={u.sigla} size="sm" />
+          {u.nome ?? u.email ?? u.id}
 
-        {editavel && ehSocio && (
-          <select
-            aria-label="Posição na fila"
-            value={u.posicao ?? ""}
-            onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
-            className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
-          >
-            {POSICOES.map((p) => (
-              <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
-                {p}
-              </option>
-            ))}
-          </select>
-        )}
+          {editavel && ehSocio && !pendente && (
+            <select
+              aria-label="Posição na fila"
+              value={u.posicao ?? ""}
+              onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
+              className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
+            >
+              {POSICOES.map((p) => (
+                <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          )}
 
-        {editavel && !ehSocio && (
-          <button
-            type="button"
-            onClick={() => tornarCoordenador(u.id)}
-            className={u.coordenador ? "text-white/80" : "text-brand-600 hover:text-brand-900"}
-            title="Definir como coordenador"
-          >
-            {u.coordenador ? "Coordenador" : "Tornar coordenador"}
-          </button>
-        )}
-        {!editavel && !ehSocio && u.coordenador && <span className="text-white/90">· Coordenador</span>}
+          {editavel && !ehSocio && !pendente && (
+            <button
+              type="button"
+              onClick={() => tornarCoordenador(u.id)}
+              className={u.coordenador ? "text-white/80" : "text-brand-600 hover:text-brand-900"}
+              title="Definir como coordenador"
+            >
+              {u.coordenador ? "Coordenador" : "Tornar coordenador"}
+            </button>
+          )}
+          {!editavel && !ehSocio && u.coordenador && !pendente && <span className="text-white/90">· Coordenador</span>}
 
-        {editavel && (
-          <button
-            type="button"
-            onClick={() => removerUsuario(u.id)}
-            aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
-            className={u.coordenador ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          {pendente && pendente.usuarioEntrada.id === meuId ? (
+            <>
+              <span className="italic">aguardando seu aceite</span>
+              <button
+                type="button"
+                onClick={() => responderTrocaAqui(pendente.id, u.id, true)}
+                className="text-green-600 hover:text-green-800 font-bold"
+              >
+                Aceitar
+              </button>
+              <button
+                type="button"
+                onClick={() => responderTrocaAqui(pendente.id, u.id, false)}
+                className="text-red-600 hover:text-red-800 font-bold"
+              >
+                Recusar
+              </button>
+            </>
+          ) : (
+            pendente && (
+              <span className="italic">
+                aguardando aceite de {pendente.usuarioEntrada.nome ?? pendente.usuarioEntrada.email}
+              </span>
+            )
+          )}
+
+          {editavel && !pendente && (
+            <button
+              type="button"
+              onClick={() => {
+                setTrocandoId(trocandoId === u.id ? null : u.id)
+                setBuscaTroca("")
+              }}
+              className={u.coordenador ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
+              title="Substituir por outro médico (precisa de aceite)"
+            >
+              Trocar
+            </button>
+          )}
+
+          {editavel && (
+            <button
+              type="button"
+              onClick={() => removerUsuario(u.id)}
+              aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
+              className={u.coordenador && !pendente ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </span>
+
+        {editavel && trocandoId === u.id && (
+          <div className="relative ml-2">
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                type="text"
+                value={buscaTroca}
+                onChange={(e) => setBuscaTroca(e.target.value)}
+                placeholder="Buscar médico para substituir"
+                autoComplete="off"
+                className="w-56 border border-gray-300 rounded-lg px-3 py-1.5 text-xs text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setTrocandoId(null)
+                  setBuscaTroca("")
+                }}
+                className="text-gray-400 hover:text-gray-600 text-xs"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            {buscaTroca.trim() && (
+              <div className="absolute z-20 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                {buscandoTroca ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">Buscando...</p>
+                ) : resultadosFiltrados.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">Nenhum médico encontrado.</p>
+                ) : (
+                  resultadosFiltrados.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => solicitarTroca(u.id, r)}
+                      className="w-full flex items-center gap-2 text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <SiglaBadge sigla={r.sigla} size="sm" />
+                      {r.nome ?? r.email ?? r.id}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         )}
-      </span>
+      </div>
     )
   }
 
@@ -537,6 +803,40 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                 Editar
               </button>
             )}
+          </div>
+        )}
+
+        {historico.length > 0 && (
+          <div className="mt-6 pt-4 border-t border-gray-100">
+            <p className="text-sm font-medium text-gray-700 mb-2">Histórico de trocas</p>
+            <ul className="space-y-2 max-h-40 overflow-y-auto">
+              {historico.map((t) => {
+                const cor =
+                  t.status === "pendente" ? "bg-amber-400" : t.status === "aceita" ? "bg-green-500" : "bg-red-500"
+                const nomeSaida = t.usuarioSaida.nome ?? t.usuarioSaida.email ?? t.usuarioSaida.id
+                const nomeEntrada = t.usuarioEntrada.nome ?? t.usuarioEntrada.email ?? t.usuarioEntrada.id
+                const nomeSolicitante = t.solicitadoPor.nome ?? t.solicitadoPor.email ?? t.solicitadoPor.id
+
+                return (
+                  <li key={t.id} className="flex items-start gap-2 text-xs text-gray-600">
+                    <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cor}`} />
+                    <span>
+                      <span className="font-semibold">{nomeSolicitante}</span> solicitou trocar{" "}
+                      <span className="font-semibold">{nomeSaida}</span> por{" "}
+                      <span className="font-semibold">{nomeEntrada}</span> em{" "}
+                      {new Date(t.solicitadoEm).toLocaleString("pt-BR")}
+                      {t.status === "pendente" && " — aguardando aceite"}
+                      {t.status === "aceita" && t.respondidoEm && (
+                        <> — aceita em {new Date(t.respondidoEm).toLocaleString("pt-BR")}</>
+                      )}
+                      {t.status === "recusada" && t.respondidoEm && (
+                        <> — recusada em {new Date(t.respondidoEm).toLocaleString("pt-BR")}</>
+                      )}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
           </div>
         )}
       </div>

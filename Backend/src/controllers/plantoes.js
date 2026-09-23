@@ -3,7 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const TIPOS_VALIDOS = ['plantonista', 'socio']
-const ROLE_POR_TIPO = { plantonista: 'anestesita_plantonista', socio: 'anestesita_socio' }
+const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
 exports.createPlantao = async (req, res) => {
   const { titulo, descricao, data, hora_inicio, hora_fim, tipo, usuarios, coordenador_id, fila } = req.body
@@ -16,11 +16,13 @@ exports.createPlantao = async (req, res) => {
     return res.status(400).json({ error: "tipo é obrigatório e deve ser 'plantonista' ou 'socio'" })
   }
 
+  const janela = { data, horaInicio: hora_inicio, horaFim: hora_fim }
+
   let membros
   try {
     membros = tipo === 'plantonista'
-      ? await validarEquipePlantonista(usuarios, coordenador_id)
-      : await validarFilaSocio(fila)
+      ? await validarEquipePlantonista(usuarios, coordenador_id, { janela })
+      : await validarFilaSocio(fila, { janela })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -58,7 +60,11 @@ exports.createPlantao = async (req, res) => {
 }
 
 exports.listPlantoes = async (req, res) => {
-  const { inicio, fim } = req.query
+  const { inicio, fim, tipo } = req.query
+
+  if (tipo !== undefined && !TIPOS_VALIDOS.includes(tipo)) {
+    return res.status(400).json({ error: "tipo deve ser 'plantonista' ou 'socio'" })
+  }
 
   let query = supabase
     .from('plantoes')
@@ -68,6 +74,7 @@ exports.listPlantoes = async (req, res) => {
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
+  if (tipo) query = query.eq('tipo', tipo)
 
   const { data, error } = await query
 
@@ -75,7 +82,8 @@ exports.listPlantoes = async (req, res) => {
 
   try {
     const perfis = await buscarPerfis(data.flatMap(row => row.plantao_usuarios.map(u => u.usuario_id)))
-    return res.json(data.map(row => formatPlantao(row, perfis)))
+    const trocasPendentes = await buscarTrocasPendentesPorSlot(data.map(row => row.id))
+    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes)))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -93,7 +101,8 @@ exports.getPlantao = async (req, res) => {
 
   try {
     const perfis = await buscarPerfis(data.plantao_usuarios.map(u => u.usuario_id))
-    return res.json(formatPlantao(data, perfis))
+    const trocasPendentes = await buscarTrocasPendentesPorSlot([data.id])
+    return res.json(formatPlantao(data, perfis, trocasPendentes))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -125,7 +134,8 @@ exports.updatePlantao = async (req, res) => {
 
   try {
     const perfis = await buscarPerfis(plantao.plantao_usuarios.map(u => u.usuario_id))
-    return res.json(formatPlantao(plantao, perfis))
+    const trocasPendentes = await buscarTrocasPendentesPorSlot([plantao.id])
+    return res.json(formatPlantao(plantao, perfis, trocasPendentes))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -153,24 +163,35 @@ exports.removeUsuario = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
+  const { error: trocaError } = await supabase
+    .from('plantao_trocas')
+    .delete()
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_saida', req.params.usuarioId)
+    .eq('status', 'pendente')
+
+  if (trocaError) return res.status(500).json({ error: trocaError.message })
+
   return res.status(204).send()
 }
 
 exports.addUsuarios = async (req, res) => {
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, tipo')
+    .select('id, tipo, data, hora_inicio, hora_fim')
     .eq('id', req.params.id)
     .maybeSingle()
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
+  const janela = { data: plantao.data, horaInicio: plantao.hora_inicio, horaFim: plantao.hora_fim, excluirPlantaoId: plantao.id }
+
   let membros
   try {
     membros = plantao.tipo === 'plantonista'
-      ? (await validarEquipePlantonista(req.body.usuarios, null, { exigirCoordenador: false }))
-      : await validarFilaSocio(req.body.fila)
+      ? (await validarEquipePlantonista(req.body.usuarios, null, { exigirCoordenador: false, janela }))
+      : await validarFilaSocio(req.body.fila, { janela })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -234,7 +255,164 @@ exports.definirCoordenador = async (req, res) => {
   return res.json({ message: 'Coordenador definido' })
 }
 
-async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoordenador = true } = {}) {
+exports.criarTroca = async (req, res) => {
+  const { usuario_saida, usuario_entrada } = req.body
+
+  if (!usuario_saida || !usuario_entrada) {
+    return res.status(400).json({ error: 'usuario_saida e usuario_entrada são obrigatórios' })
+  }
+  if (usuario_saida === usuario_entrada) {
+    return res.status(400).json({ error: 'usuario_saida e usuario_entrada devem ser diferentes' })
+  }
+
+  const { data: plantao, error: plantaoError } = await supabase
+    .from('plantoes')
+    .select('id, tipo, data, hora_inicio, hora_fim')
+    .eq('id', req.params.id)
+    .maybeSingle()
+
+  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+  const { data: slotSaida, error: slotError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', usuario_saida)
+    .maybeSingle()
+
+  if (slotError) return res.status(500).json({ error: slotError.message })
+  if (!slotSaida) return res.status(400).json({ error: 'usuario_saida não está nesse plantão' })
+
+  const { data: slotEntrada, error: slotEntradaError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .eq('plantao_id', req.params.id)
+    .eq('usuario_id', usuario_entrada)
+    .maybeSingle()
+
+  if (slotEntradaError) return res.status(500).json({ error: slotEntradaError.message })
+  if (slotEntrada) return res.status(400).json({ error: 'usuario_entrada já está nesse plantão' })
+
+  const invalidos = await usuariosSemRoleMedico([usuario_entrada])
+  if (invalidos.length > 0) {
+    return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
+  }
+
+  const ocupados = await usuariosComConflito([usuario_entrada], plantao.data, plantao.hora_inicio, plantao.hora_fim, plantao.id)
+  if (ocupados.size > 0) {
+    return res.status(400).json({ error: 'usuario_entrada já está escalado em outro plantão nesse horário' })
+  }
+
+  const { data: troca, error } = await supabase
+    .from('plantao_trocas')
+    .insert({
+      plantao_id: req.params.id,
+      usuario_saida,
+      usuario_entrada,
+      solicitado_por: req.user.id,
+    })
+    .select()
+    .single()
+
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma troca pendente para esse médico' })
+    return res.status(400).json({ error: error.message })
+  }
+
+  try {
+    const perfis = await buscarPerfis([usuario_saida, usuario_entrada, req.user.id])
+    return res.status(201).json(formatTroca(troca, perfis))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+exports.listarTrocasDoPlantao = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_trocas')
+    .select('*')
+    .eq('plantao_id', req.params.id)
+    .order('solicitado_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const ids = data.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por])
+    const perfis = await buscarPerfis(ids)
+    return res.json(data.map(t => formatTroca(t, perfis)))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+exports.listarTrocasPendentes = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_trocas')
+    .select('*, plantoes(id, titulo, data, hora_inicio, hora_fim)')
+    .eq('usuario_entrada', req.user.id)
+    .eq('status', 'pendente')
+    .order('solicitado_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const ids = data.flatMap(t => [t.usuario_saida, t.solicitado_por])
+    const perfis = await buscarPerfis(ids)
+    return res.json(data.map(({ plantoes: plantao, ...t }) => ({ ...formatTroca(t, perfis), plantao })))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+exports.responderTroca = (aceitar) => async (req, res) => {
+  const { data: troca, error: trocaError } = await supabase
+    .from('plantao_trocas')
+    .select('*')
+    .eq('id', req.params.trocaId)
+    .maybeSingle()
+
+  if (trocaError) return res.status(500).json({ error: trocaError.message })
+  if (!troca) return res.status(404).json({ error: 'Solicitação não encontrada' })
+  if (troca.usuario_entrada !== req.user.id) {
+    return res.status(403).json({ error: 'Só o médico convidado pode responder essa solicitação' })
+  }
+  if (troca.status !== 'pendente') {
+    return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+  }
+
+  if (aceitar) {
+    const { data: linhasAtualizadas, error: swapError } = await supabase
+      .from('plantao_usuarios')
+      .update({ usuario_id: troca.usuario_entrada })
+      .eq('plantao_id', troca.plantao_id)
+      .eq('usuario_id', troca.usuario_saida)
+      .select()
+
+    if (swapError) return res.status(400).json({ error: swapError.message })
+    if (!linhasAtualizadas || linhasAtualizadas.length === 0) {
+      return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
+    }
+  }
+
+  const { data: atualizada, error } = await supabase
+    .from('plantao_trocas')
+    .update({ status: aceitar ? 'aceita' : 'recusada', respondido_em: new Date().toISOString() })
+    .eq('id', req.params.trocaId)
+    .select()
+    .single()
+
+  if (error) return res.status(400).json({ error: error.message })
+
+  try {
+    const perfis = await buscarPerfis([atualizada.usuario_saida, atualizada.usuario_entrada, atualizada.solicitado_por])
+    return res.json(formatTroca(atualizada, perfis))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoordenador = true, janela } = {}) {
   if (!Array.isArray(usuarios) || usuarios.length === 0) {
     throw new Error('usuarios deve ser um array não vazio de ids')
   }
@@ -243,9 +421,16 @@ async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoorden
     throw new Error('coordenador_id é obrigatório e deve estar entre os usuarios')
   }
 
-  const invalidos = await usuariosSemRole(usuarios, ROLE_POR_TIPO.plantonista)
+  const invalidos = await usuariosSemRoleMedico(usuarios)
   if (invalidos.length > 0) {
-    throw new Error(`Usuários sem a role anestesita_plantonista: ${invalidos.join(', ')}`)
+    throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+  }
+
+  if (janela) {
+    const ocupados = await usuariosComConflito(usuarios, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
+    if (ocupados.size > 0) {
+      throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
+    }
   }
 
   return usuarios.map(usuario_id => ({
@@ -255,7 +440,7 @@ async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoorden
   }))
 }
 
-async function validarFilaSocio(fila) {
+async function validarFilaSocio(fila, { janela } = {}) {
   if (!Array.isArray(fila) || fila.length === 0) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
   }
@@ -277,27 +462,89 @@ async function validarFilaSocio(fila) {
     throw new Error('um médico não pode ocupar duas posições na mesma fila')
   }
 
-  const invalidos = await usuariosSemRole(usuarioIds, ROLE_POR_TIPO.socio)
+  const invalidos = await usuariosSemRoleMedico(usuarioIds)
   if (invalidos.length > 0) {
-    throw new Error(`Usuários sem a role anestesita_socio: ${invalidos.join(', ')}`)
+    throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+  }
+
+  if (janela) {
+    const ocupados = await usuariosComConflito(usuarioIds, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
+    if (ocupados.size > 0) {
+      throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
+    }
   }
 
   return fila.map(({ usuario_id, posicao }) => ({ usuario_id, is_coordenador: false, posicao }))
 }
 
-async function usuariosSemRole(usuarioIds, roleEsperada) {
+async function usuariosSemRoleMedico(usuarioIds) {
   const idsUnicos = [...new Set(usuarioIds)]
 
   const resultados = await Promise.all(
     idsUnicos.map(async id => {
       const { data, error } = await supabase.auth.admin.getUserById(id)
       const roles = data?.user?.app_metadata?.roles ?? []
-      const valido = !error && roles.includes(roleEsperada)
+      const valido = !error && roles.some(r => ROLES_MEDICO.includes(r))
       return { id, valido }
     })
   )
 
   return resultados.filter(r => !r.valido).map(r => r.id)
+}
+
+async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, excluirPlantaoId) {
+  const idsUnicos = [...new Set(usuarioIds)]
+  if (idsUnicos.length === 0) return new Set()
+
+  const alvo = calcularJanela(data, horaInicio, horaFim)
+  const dataAnterior = deslocarData(data, -1)
+  const dataSeguinte = deslocarData(data, 1)
+
+  const { data: plantoesProximos, error: plantoesError } = await supabase
+    .from('plantoes')
+    .select('id, data, hora_inicio, hora_fim')
+    .gte('data', dataAnterior)
+    .lte('data', dataSeguinte)
+
+  if (plantoesError) throw plantoesError
+
+  const plantoesConflitantes = plantoesProximos
+    .filter(p => p.id !== excluirPlantaoId)
+    .filter(p => seSobrepoe(alvo, calcularJanela(p.data, p.hora_inicio, p.hora_fim)))
+  if (plantoesConflitantes.length === 0) return new Set()
+
+  const { data: membros, error: membrosError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .in('plantao_id', plantoesConflitantes.map(p => p.id))
+    .in('usuario_id', idsUnicos)
+
+  if (membrosError) throw membrosError
+
+  return new Set(membros.map(m => m.usuario_id))
+}
+
+function calcularJanela(data, horaInicio, horaFim) {
+  const inicio = paraMinutosAbsolutos(data, horaInicio)
+  let fim = paraMinutosAbsolutos(data, horaFim)
+  if (fim <= inicio) fim += 24 * 60
+  return { inicio, fim }
+}
+
+function paraMinutosAbsolutos(data, hora) {
+  const diasEpoch = Math.floor(Date.parse(`${data}T00:00:00Z`) / 86400000)
+  const [h, m] = hora.split(':').map(Number)
+  return diasEpoch * 1440 + h * 60 + m
+}
+
+function seSobrepoe(a, b) {
+  return a.inicio < b.fim && b.inicio < a.fim
+}
+
+function deslocarData(data, dias) {
+  const d = new Date(`${data}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + dias)
+  return d.toISOString().slice(0, 10)
 }
 
 async function buscarPerfis(usuarioIds) {
@@ -314,13 +561,52 @@ async function buscarPerfis(usuarioIds) {
   return new Map(data.map(perfil => [perfil.id, perfil]))
 }
 
-function formatPlantao(row, perfis) {
+async function buscarTrocasPendentesPorSlot(plantaoIds) {
+  const idsUnicos = [...new Set(plantaoIds)]
+  if (idsUnicos.length === 0) return new Map()
+
+  const { data, error } = await supabase
+    .from('plantao_trocas')
+    .select('*')
+    .in('plantao_id', idsUnicos)
+    .eq('status', 'pendente')
+
+  if (error) throw error
+
+  const perfis = await buscarPerfis(data.flatMap(t => [t.usuario_entrada, t.solicitado_por]))
+
+  return new Map(data.map(t => [
+    `${t.plantao_id}:${t.usuario_saida}`,
+    {
+      id: t.id,
+      solicitadoEm: t.solicitado_em,
+      usuarioEntrada: perfis.get(t.usuario_entrada) ?? { id: t.usuario_entrada },
+      solicitadoPor: perfis.get(t.solicitado_por) ?? { id: t.solicitado_por },
+    },
+  ]))
+}
+
+function formatTroca(row, perfis) {
+  return {
+    id: row.id,
+    plantaoId: row.plantao_id,
+    status: row.status,
+    solicitadoEm: row.solicitado_em,
+    respondidoEm: row.respondido_em,
+    usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
+    usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
+    solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+  }
+}
+
+function formatPlantao(row, perfis, trocasPendentes = new Map()) {
   const { plantao_usuarios, ...plantao } = row
   const usuarios = plantao_usuarios
     .map(u => ({
       ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
       coordenador: u.is_coordenador ?? false,
       posicao: u.posicao ?? null,
+      trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
     }))
     .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
 

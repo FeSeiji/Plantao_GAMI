@@ -2,6 +2,11 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const UFS = [
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA',
+  'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+]
+
 exports.login = async (req, res) => {
   const { email, password } = req.body
 
@@ -36,7 +41,7 @@ exports.me = async (req, res) => {
 }
 
 exports.register = async (req, res) => {
-  const { email, password, nome, sigla, roles } = req.body
+  const { email, password, nome, sigla, roles, crm, crm_uf } = req.body
 
   // Validações básicas
   if (!email || !password || !nome || !sigla) {
@@ -79,6 +84,46 @@ exports.register = async (req, res) => {
     }
   }
 
+  // Anestesistas precisam informar o CRM (número + UF)
+  const rolesAnestesista = ['anestesita_socio', 'anestesita_plantonista']
+  const exigeCrm = (roles ?? []).some(r => rolesAnestesista.includes(r))
+
+  let crmNormalizado = null
+  let crmUfNormalizada = null
+
+  if (exigeCrm) {
+    if (!crm || !crm_uf) {
+      return res.status(400).json({ error: 'crm e crm_uf são obrigatórios para anestesistas' })
+    }
+
+    crmNormalizado = String(crm).replace(/\D/g, '')
+    crmUfNormalizada = String(crm_uf).toUpperCase()
+
+    if (!/^\d{1,7}$/.test(crmNormalizado)) {
+      return res.status(400).json({ error: 'crm deve conter apenas números (até 7 dígitos)' })
+    }
+
+    if (!UFS.includes(crmUfNormalizada)) {
+      return res.status(400).json({ error: 'crm_uf inválida' })
+    }
+
+    const { data: crmExistente, error: crmError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('crm', crmNormalizado)
+      .eq('crm_uf', crmUfNormalizada)
+      .maybeSingle()
+
+    if (crmError) {
+      console.error(crmError)
+      return res.status(500).json({ error: crmError.message })
+    }
+
+    if (crmExistente) {
+      return res.status(400).json({ error: 'CRM já cadastrado' })
+    }
+  }
+
   const { data, error } = await supabase.auth.admin.createUser({
     email,
     password,
@@ -93,6 +138,21 @@ exports.register = async (req, res) => {
   })
 
   if (error) return res.status(400).json({ error: error.message })
+
+  // O profile é criado pelo trigger on_auth_user_created; aqui só completamos o CRM
+  if (exigeCrm) {
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ crm: crmNormalizado, crm_uf: crmUfNormalizada })
+      .eq('id', data.user.id)
+
+    if (profileError) {
+      console.error(profileError)
+      // Desfaz a criação do usuário para não deixar anestesista sem CRM
+      await supabase.auth.admin.deleteUser(data.user.id)
+      return res.status(500).json({ error: 'Não foi possível salvar o CRM' })
+    }
+  }
 
   return res.status(201).json({ user: data.user })
 }

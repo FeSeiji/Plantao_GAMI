@@ -53,23 +53,27 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
 
     setBuscando(true)
-    const roleEsperada = tipo === "plantonista" ? "anestesita_plantonista" : "anestesita_socio"
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      const params = new URLSearchParams({ search: termo, role: roleEsperada })
+      const params = new URLSearchParams({ search: termo, role: "anestesita_plantonista,anestesita_socio" })
+      if (data && horaInicio && horaFim) {
+        params.set("data", data)
+        params.set("horaInicio", horaInicio)
+        params.set("horaFim", horaFim)
+      }
       fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(async (res) => {
-          const data = await res.json()
-          if (res.ok) setResultados(data)
+          const resultado = await res.json()
+          if (res.ok) setResultados(resultado)
         })
         .catch(() => {})
         .finally(() => setBuscando(false))
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [busca, tipo])
+  }, [busca, tipo, data, horaInicio, horaFim])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

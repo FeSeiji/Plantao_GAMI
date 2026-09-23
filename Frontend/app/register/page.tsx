@@ -8,8 +8,14 @@ const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
   { value: "tecnico", label: "Técnico" },
-  { value: "coordenador", label: "Coordenador" },
   { value: "admin", label: "Administrador" },
+]
+
+const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+
+const UFS = [
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
+  "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ]
 
 function EyeToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
@@ -46,9 +52,13 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [role, setRole] = useState("")
+  const [crm, setCrm] = useState("")
+  const [crmUf, setCrmUf] = useState("")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  const exigeCrm = ROLES_ANESTESISTA.includes(role)
 
   function handleContinue(e: React.FormEvent) {
     e.preventDefault()
@@ -77,6 +87,7 @@ export default function RegisterPage() {
           email,
           password,
           roles: role ? [role] : undefined,
+          ...(exigeCrm ? { crm, crm_uf: crmUf } : {}),
         }),
       })
 
@@ -306,6 +317,44 @@ export default function RegisterPage() {
                     ))}
                   </select>
                 </div>
+
+                {exigeCrm && (
+                  <div>
+                    <label htmlFor="crm" className="block text-sm font-medium text-gray-700 mb-1">
+                      CRM
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="crm"
+                        type="text"
+                        inputMode="numeric"
+                        required
+                        maxLength={7}
+                        value={crm}
+                        onChange={(e) => setCrm(e.target.value.replace(/\D/g, "").slice(0, 7))}
+                        placeholder="Número"
+                        className="flex-1 min-w-0 border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                      />
+                      <select
+                        id="crmUf"
+                        required
+                        value={crmUf}
+                        onChange={(e) => setCrmUf(e.target.value)}
+                        aria-label="UF do CRM"
+                        className="w-24 border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                      >
+                        <option value="" disabled>
+                          UF
+                        </option>
+                        {UFS.map((uf) => (
+                          <option key={uf} value={uf}>
+                            {uf}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
 
                 {error && (
                   <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
