@@ -6,9 +6,13 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { ROLES_GESTAO } from "./UsuarioModal"
 
+// Todos menos o plantonista — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
+
 const NAV_ITEMS = [
   { label: "Plantões", href: "/plantoes" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
+  { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]
 
 export default function Sidebar() {
