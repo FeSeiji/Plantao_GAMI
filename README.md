@@ -167,6 +167,11 @@ Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-m
 - **Visualizar:** `admin`, `anestesita_socio`, `tecnico`
 - **Editar:** `admin`, `tecnico` (o técnico não edita administradores)
 
+### Dashboard
+Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e papel na equipe/fila), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos. Os dados vêm de um único endpoint e mostram só o que é do próprio usuário.
+
+Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias (fila de sócio incompleta, plantão sem médico ou sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
+
 ### BM Financeiro
 Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado):
 - **Plantonista** — soma das **horas trabalhadas**. Plantões que viram a noite contam inteiros no mês em que começam.
@@ -228,6 +233,13 @@ Authorization: Bearer <access_token>
 | `GET` | `/plantoes/trocas/pendentes` | Trocas aguardando o aceite do usuário logado |
 | `PATCH` | `/plantoes/trocas/:trocaId/aceitar` | Aceita a troca |
 | `PATCH` | `/plantoes/trocas/:trocaId/recusar` | Recusa a troca |
+
+**Dashboard**
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/dashboard` | Próximo plantão, agenda de 7 dias, trocas pendentes e resumo do mês do usuário logado |
+| `GET` | `/dashboard/gestao` | Visão do hospital (`admin`, `tecnico`): plantões em andamento, alertas de cobertura, trocas pendentes, resumo/top 5 do mês e equipe |
 
 **BM Financeiro**
 

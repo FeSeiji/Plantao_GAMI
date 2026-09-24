@@ -17,5 +17,6 @@ app.use(authMiddleware)
 app.use('/users', require('./routes/users'))
 app.use('/plantoes', require('./routes/plantoes'))
 app.use('/bm-financeiro', require('./routes/bmFinanceiro'))
+app.use('/dashboard', require('./routes/dashboard'))
 
 module.exports = app
