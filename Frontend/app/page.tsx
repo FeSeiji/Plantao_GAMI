@@ -1,3 +1,4 @@
+import Image from "next/image"
 import Link from "next/link"
 
 const features = [
@@ -92,9 +93,7 @@ export default function HomePage() {
       <header className="bg-brand-800">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-              <span className="text-brand-800 font-bold text-sm">P</span>
-            </div>
+            <Image src="/logo.png" alt="GAMI" width={167} height={187} priority className="h-9 w-auto shrink-0" />
             <span className="text-white font-semibold text-lg tracking-wide">Plantão</span>
           </div>
           <Link
@@ -109,6 +108,9 @@ export default function HomePage() {
       {/* Hero */}
       <section className="bg-brand-800 text-white pt-16 pb-20 px-6">
         <div className="max-w-3xl mx-auto text-center">
+          <div className="bg-white rounded-2xl px-6 py-4 w-fit mx-auto mb-8 shadow-lg">
+            <Image src="/logotipo.png" alt="GAMI — Grupo Anestesia Materno Infantil" width={401} height={331} priority className="h-28 sm:h-32 w-auto" />
+          </div>
           <p className="text-brand-200 text-sm font-semibold uppercase tracking-widest mb-3">
             Gestão Hospitalar
           </p>
