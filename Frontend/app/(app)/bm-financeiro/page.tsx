@@ -35,6 +35,16 @@ function paraChaveMes(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
 }
 
+// Busca sem diferenciar maiúsculas nem acentos ("joao" encontra "João")
+function normalizar(texto: string) {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+}
+
+function correspondeBusca(linha: LinhaBase, termo: string) {
+  if (!termo) return true
+  return [linha.nome, linha.email, linha.sigla].some((campo) => campo && normalizar(campo).includes(termo))
+}
+
 function formatarHoras(minutos: number) {
   const h = Math.floor(minutos / 60)
   const m = minutos % 60
@@ -202,6 +212,7 @@ export default function BmFinanceiroPage() {
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1)
   })
   const [aba, setAba] = useState<Aba>("plantonista")
+  const [busca, setBusca] = useState("")
   const [resumo, setResumo] = useState<Resumo | null>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -256,11 +267,14 @@ export default function BmFinanceiroPage() {
     }
   }
 
-  const linhas = aba === "plantonista" ? resumo?.plantonistas ?? [] : resumo?.socios ?? []
+  const termo = normalizar(busca.trim())
+  const plantonistas = (resumo?.plantonistas ?? []).filter((l) => correspondeBusca(l, termo))
+  const socios = (resumo?.socios ?? []).filter((l) => correspondeBusca(l, termo))
+  const linhas = aba === "plantonista" ? plantonistas : socios
   const total =
     aba === "plantonista"
-      ? formatarHoras((resumo?.plantonistas ?? []).reduce((s, l) => s + l.minutos, 0))
-      : `${(resumo?.socios ?? []).reduce((s, l) => s + l.pontos, 0)} pts`
+      ? formatarHoras(plantonistas.reduce((s, l) => s + l.minutos, 0))
+      : `${socios.reduce((s, l) => s + l.pontos, 0)} pts`
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -304,28 +318,38 @@ export default function BmFinanceiroPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 mb-4">
-        <button
-          type="button"
-          onClick={() => mudarMes(-1)}
-          aria-label="Mês anterior"
-          className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-        <SeletorMes valor={mesReferencia} onChange={setMesReferencia} />
-        <button
-          type="button"
-          onClick={() => mudarMes(1)}
-          aria-label="Próximo mês"
-          className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => mudarMes(-1)}
+            aria-label="Mês anterior"
+            className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <SeletorMes valor={mesReferencia} onChange={setMesReferencia} />
+          <button
+            type="button"
+            onClick={() => mudarMes(1)}
+            aria-label="Próximo mês"
+            className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        </div>
+
+        <input
+          type="search"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar médico por nome, e-mail ou sigla"
+          className="w-full sm:w-72 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+        />
       </div>
 
       {error && (
@@ -363,7 +387,9 @@ export default function BmFinanceiroPage() {
             {!loading && linhas.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
-                  Nenhum plantão {aba === "plantonista" ? "de plantonista" : "de sócio"} neste mês.
+                  {termo
+                    ? `Nenhum médico encontrado para "${busca.trim()}".`
+                    : `Nenhum plantão ${aba === "plantonista" ? "de plantonista" : "de sócio"} neste mês.`}
                 </td>
               </tr>
             )}
