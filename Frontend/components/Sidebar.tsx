@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { ROLES_GESTAO } from "./UsuarioModal"
@@ -45,9 +46,7 @@ export default function Sidebar() {
           aria-label="Voltar para o dashboard"
           className="flex items-center gap-3"
         >
-          <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0">
-            <span className="text-brand-800 font-bold text-[9px]">PMP</span>
-          </div>
+          <Image src="/logo.png" alt="GAMI" width={167} height={187} className="h-8 w-auto shrink-0" />
           <span className="text-white font-semibold tracking-wide">Plantão</span>
         </Link>
         <button
@@ -80,9 +79,7 @@ export default function Sidebar() {
             aria-label="Voltar para o dashboard"
             className="flex items-center gap-3"
           >
-            <div className="w-9 h-9 bg-white rounded-full flex items-center justify-center shrink-0">
-              <span className="text-brand-800 font-bold text-[10px]">PMP</span>
-            </div>
+            <Image src="/logo.png" alt="GAMI" width={167} height={187} className="h-9 w-auto shrink-0" />
             <span className="text-white font-semibold text-lg tracking-wide">Plantão</span>
           </Link>
           <button onClick={() => setOpen(false)} aria-label="Fechar menu" className="text-white p-1 md:hidden">
