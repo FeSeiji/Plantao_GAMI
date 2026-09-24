@@ -443,7 +443,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     const cor = pendente
       ? "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
       : u.coordenador
-      ? "bg-brand-700 text-white"
+      ? "bg-purple-600 text-white"
       : "bg-brand-100 text-brand-800"
 
     const resultadosFiltrados = resultadosTroca.filter(

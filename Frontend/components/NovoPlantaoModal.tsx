@@ -330,7 +330,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                     <span
                       key={u.id}
                       className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${
-                        coordenadorId === u.id ? "bg-brand-700 text-white" : "bg-brand-100 text-brand-800"
+                        coordenadorId === u.id ? "bg-purple-600 text-white" : "bg-brand-100 text-brand-800"
                       }`}
                     >
                       <SiglaBadge sigla={u.sigla} size="sm" />
