@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const {
   createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removeUsuario, definirCoordenador,
-  criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca,
+  criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
 } = require('../controllers/plantoes')
 
 router.get('/', listPlantoes)
@@ -16,6 +16,7 @@ router.post('/:id/usuarios', addUsuarios)
 router.patch('/:id/coordenador', definirCoordenador)
 router.delete('/:id/usuarios/:usuarioId', removeUsuario)
 router.get('/:id/trocas', listarTrocasDoPlantao)
+router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.post('/:id/trocas', criarTroca)
 
 module.exports = router

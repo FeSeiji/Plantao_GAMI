@@ -1,7 +1,8 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
+import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
 
 type Pessoa = {
@@ -20,13 +21,26 @@ type TrocaPendente = {
 
 type TrocaHistorico = {
   id: string
-  status: "pendente" | "aceita" | "recusada"
+  status: "pendente" | "aceita" | "recusada" | "cancelada"
   solicitadoEm: string
   respondidoEm: string | null
   usuarioSaida: Pessoa
   usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
 }
+
+type RemocaoHistorico = {
+  id: string
+  removidoEm: string
+  eraCoordenador: boolean
+  posicao: number | null
+  usuario: Pessoa
+  removidoPor: Pessoa
+}
+
+type EventoHistorico =
+  | { tipo: "troca"; quando: string; troca: TrocaHistorico }
+  | { tipo: "remocao"; quando: string; remocao: RemocaoHistorico }
 
 type Usuario = {
   id: string
@@ -58,6 +72,10 @@ type Props = {
 
 const POSICOES = [1, 2, 3, 4, 5, 6, 7]
 
+function nomeDe(p: Pessoa) {
+  return p.nome ?? p.email ?? p.id
+}
+
 export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }: Props) {
   const [editando, setEditando] = useState(false)
 
@@ -76,6 +94,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const [loading, setLoading] = useState(false)
 
   const [historico, setHistorico] = useState<TrocaHistorico[]>([])
+  const [remocoes, setRemocoes] = useState<RemocaoHistorico[]>([])
+  const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
   const [trocandoId, setTrocandoId] = useState<string | null>(null)
   const [buscaTroca, setBuscaTroca] = useState("")
   const [resultadosTroca, setResultadosTroca] = useState<Usuario[]>([])
@@ -88,18 +108,20 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     setMeuId(localStorage.getItem("userId"))
   }, [])
 
-  useEffect(() => {
+  const carregarHistorico = useCallback(() => {
     const token = localStorage.getItem("token")
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/trocas`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        if (!res.ok) return
-        const data = await res.json()
-        setHistorico(data)
-      })
-      .catch(() => {})
+    const buscar = (caminho: string) =>
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/${caminho}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((res) => (res.ok ? res.json() : null))
+
+    buscar("trocas").then((data) => data && setHistorico(data)).catch(() => {})
+    buscar("remocoes").then((data) => data && setRemocoes(data)).catch(() => {})
   }, [plantao.id])
+
+  useEffect(() => {
+    carregarHistorico()
+  }, [carregarHistorico])
 
   useEffect(() => {
     const termo = buscaTroca.trim()
@@ -388,6 +410,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
       }
 
       onUpdated()
+      carregarHistorico()
     } catch (err) {
       setSelecionados(anterior)
       setError(err instanceof Error ? err.message : "Não foi possível remover o médico.")
@@ -531,7 +554,23 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
           {editavel && (
             <button
               type="button"
-              onClick={() => removerUsuario(u.id)}
+              onClick={() =>
+                setConfirmacao({
+                  titulo: "Remover médico?",
+                  mensagem: (
+                    <>
+                      <p>
+                        <span className="font-semibold">{u.nome ?? u.email ?? u.id}</span> será removido deste plantão
+                        {ehSocio && u.posicao != null ? ` (posição ${u.posicao})` : ""}. A remoção fica registrada no histórico.
+                      </p>
+                      {pendente && <p className="mt-2 text-amber-700">A troca pendente deste médico também será cancelada.</p>}
+                    </>
+                  ),
+                  rotuloConfirmar: "Remover",
+                  perigo: true,
+                  acao: () => removerUsuario(u.id),
+                })
+              }
               aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
               className={u.coordenador && !pendente ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
             >
@@ -578,7 +617,21 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                     <button
                       key={r.id}
                       type="button"
-                      onClick={() => solicitarTroca(u.id, r)}
+                      onClick={() =>
+                        setConfirmacao({
+                          titulo: "Solicitar troca?",
+                          mensagem: (
+                            <p>
+                              Trocar <span className="font-semibold">{u.nome ?? u.email ?? u.id}</span> por{" "}
+                              <span className="font-semibold">{r.nome ?? r.email ?? r.id}</span>
+                              {u.coordenador ? " (inclusive como coordenador)" : ""}. A troca só vale depois que{" "}
+                              {r.nome ?? r.email ?? r.id} aceitar.
+                            </p>
+                          ),
+                          rotuloConfirmar: "Solicitar troca",
+                          acao: () => solicitarTroca(u.id, r),
+                        })
+                      }
                       className="w-full flex items-center gap-2 text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
                     >
                       <SiglaBadge sigla={r.sigla} size="sm" />
@@ -593,6 +646,11 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
       </div>
     )
   }
+
+  const eventosHistorico: EventoHistorico[] = [
+    ...historico.map((troca) => ({ tipo: "troca" as const, quando: troca.solicitadoEm, troca })),
+    ...remocoes.map((remocao) => ({ tipo: "remocao" as const, quando: remocao.removidoEm, remocao })),
+  ].sort((a, b) => b.quando.localeCompare(a.quando))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
@@ -806,24 +864,41 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
           </div>
         )}
 
-        {historico.length > 0 && (
+        {eventosHistorico.length > 0 && (
           <div className="mt-6 pt-4 border-t border-gray-100">
-            <p className="text-sm font-medium text-gray-700 mb-2">Histórico de trocas</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Histórico do plantão</p>
             <ul className="space-y-2 max-h-40 overflow-y-auto">
-              {historico.map((t) => {
-                const cor =
-                  t.status === "pendente" ? "bg-amber-400" : t.status === "aceita" ? "bg-green-500" : "bg-red-500"
-                const nomeSaida = t.usuarioSaida.nome ?? t.usuarioSaida.email ?? t.usuarioSaida.id
-                const nomeEntrada = t.usuarioEntrada.nome ?? t.usuarioEntrada.email ?? t.usuarioEntrada.id
-                const nomeSolicitante = t.solicitadoPor.nome ?? t.solicitadoPor.email ?? t.solicitadoPor.id
+              {eventosHistorico.map((evento) => {
+                if (evento.tipo === "remocao") {
+                  const r = evento.remocao
+                  const papel = r.eraCoordenador ? " (coordenador)" : r.posicao != null ? ` (posição ${r.posicao})` : ""
+                  return (
+                    <li key={`remocao-${r.id}`} className="flex items-start gap-2 text-xs text-gray-600">
+                      <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-gray-500" />
+                      <span>
+                        <span className="font-semibold">{nomeDe(r.removidoPor)}</span> removeu{" "}
+                        <span className="font-semibold">{nomeDe(r.usuario)}</span>
+                        {papel} em {new Date(r.removidoEm).toLocaleString("pt-BR")}
+                      </span>
+                    </li>
+                  )
+                }
+
+                const t = evento.troca
+                const cor = {
+                  pendente: "bg-amber-400",
+                  aceita: "bg-green-500",
+                  recusada: "bg-red-500",
+                  cancelada: "bg-gray-400",
+                }[t.status]
 
                 return (
-                  <li key={t.id} className="flex items-start gap-2 text-xs text-gray-600">
+                  <li key={`troca-${t.id}`} className="flex items-start gap-2 text-xs text-gray-600">
                     <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cor}`} />
                     <span>
-                      <span className="font-semibold">{nomeSolicitante}</span> solicitou trocar{" "}
-                      <span className="font-semibold">{nomeSaida}</span> por{" "}
-                      <span className="font-semibold">{nomeEntrada}</span> em{" "}
+                      <span className="font-semibold">{nomeDe(t.solicitadoPor)}</span> solicitou trocar{" "}
+                      <span className="font-semibold">{nomeDe(t.usuarioSaida)}</span> por{" "}
+                      <span className="font-semibold">{nomeDe(t.usuarioEntrada)}</span> em{" "}
                       {new Date(t.solicitadoEm).toLocaleString("pt-BR")}
                       {t.status === "pendente" && " — aguardando aceite"}
                       {t.status === "aceita" && t.respondidoEm && (
@@ -831,6 +906,9 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                       )}
                       {t.status === "recusada" && t.respondidoEm && (
                         <> — recusada em {new Date(t.respondidoEm).toLocaleString("pt-BR")}</>
+                      )}
+                      {t.status === "cancelada" && t.respondidoEm && (
+                        <> — cancelada em {new Date(t.respondidoEm).toLocaleString("pt-BR")} (médico removido)</>
                       )}
                     </span>
                   </li>
@@ -840,6 +918,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
           </div>
         )}
       </div>
+
+      {confirmacao && <ConfirmacaoModal confirmacao={confirmacao} onClose={() => setConfirmacao(null)} />}
     </div>
   )
 }
