@@ -226,7 +226,8 @@ Authorization: Bearer <access_token>
 | `POST` | `/plantoes` | Cria plantão |
 | `PATCH` | `/plantoes/:id` | Edita plantão |
 | `POST` | `/plantoes/:id/usuarios` | Adiciona médicos à equipe/fila |
-| `DELETE` | `/plantoes/:id/usuarios/:usuarioId` | Remove médico |
+| `DELETE` | `/plantoes/:id/usuarios/:usuarioId` | Remove médico (registra no histórico e cancela a troca pendente do slot) |
+| `GET` | `/plantoes/:id/remocoes` | Histórico de remoções do plantão |
 | `PATCH` | `/plantoes/:id/coordenador` | Define o coordenador |
 | `GET` | `/plantoes/:id/trocas` | Histórico de trocas do plantão |
 | `POST` | `/plantoes/:id/trocas` | Solicita troca de médico |

@@ -144,14 +144,15 @@ exports.updatePlantao = async (req, res) => {
 exports.removeUsuario = async (req, res) => {
   const { data: membro, error: membroError } = await supabase
     .from('plantao_usuarios')
-    .select('is_coordenador')
+    .select('is_coordenador, posicao')
     .eq('plantao_id', req.params.id)
     .eq('usuario_id', req.params.usuarioId)
     .maybeSingle()
 
   if (membroError) return res.status(500).json({ error: membroError.message })
+  if (!membro) return res.status(404).json({ error: 'Médico não está neste plantão' })
 
-  if (membro?.is_coordenador) {
+  if (membro.is_coordenador) {
     return res.status(400).json({ error: 'Defina outro coordenador antes de remover o atual' })
   }
 
@@ -163,16 +164,54 @@ exports.removeUsuario = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
+  // A troca pendente do slot perde o sentido, mas continua no histórico como cancelada
   const { error: trocaError } = await supabase
     .from('plantao_trocas')
-    .delete()
+    .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
     .eq('plantao_id', req.params.id)
     .eq('usuario_saida', req.params.usuarioId)
     .eq('status', 'pendente')
 
   if (trocaError) return res.status(500).json({ error: trocaError.message })
 
+  // Registro no histórico do plantão, como acontece com as trocas
+  const { error: logError } = await supabase
+    .from('plantao_remocoes')
+    .insert({
+      plantao_id: req.params.id,
+      usuario_id: req.params.usuarioId,
+      removido_por: req.user.id,
+      era_coordenador: membro.is_coordenador ?? false,
+      posicao: membro.posicao ?? null,
+    })
+
+  if (logError) return res.status(500).json({ error: `Médico removido, mas o histórico não foi gravado: ${logError.message}` })
+
   return res.status(204).send()
+}
+
+exports.listarRemocoesDoPlantao = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_remocoes')
+    .select('*')
+    .eq('plantao_id', req.params.id)
+    .order('removido_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const perfis = await buscarPerfis(data.flatMap(r => [r.usuario_id, r.removido_por]))
+    return res.json(data.map(r => ({
+      id: r.id,
+      removidoEm: r.removido_em,
+      eraCoordenador: r.era_coordenador,
+      posicao: r.posicao,
+      usuario: perfis.get(r.usuario_id) ?? { id: r.usuario_id },
+      removidoPor: perfis.get(r.removido_por) ?? { id: r.removido_por },
+    })))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 exports.addUsuarios = async (req, res) => {
