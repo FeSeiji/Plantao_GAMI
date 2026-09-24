@@ -1,15 +1,35 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { ROLES_GESTAO } from "./UsuarioModal"
 
-const NAV_ITEMS = [{ label: "Plantões", href: "/plantoes" }]
+// Todos menos o plantonista — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
+
+const NAV_ITEMS = [
+  { label: "Plantões", href: "/plantoes" },
+  { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
+  { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
+]
 
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [roles, setRoles] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      setRoles(JSON.parse(localStorage.getItem("roles") ?? "[]"))
+    } catch {
+      setRoles([])
+    }
+  }, [])
+
+  const navItems = NAV_ITEMS.filter((item) => !item.roles || item.roles.some((r) => roles.includes(r)))
 
   function handleLogout() {
     localStorage.removeItem("token")
@@ -30,9 +50,7 @@ export default function Sidebar() {
           aria-label="Voltar para o dashboard"
           className="flex items-center gap-3"
         >
-          <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0">
-            <span className="text-brand-800 font-bold text-[9px]">PMP</span>
-          </div>
+          <Image src="/logo.png" alt="GAMI" width={167} height={187} className="h-8 w-auto shrink-0" />
           <span className="text-white font-semibold tracking-wide">Plantão</span>
         </Link>
         <button
@@ -65,9 +83,7 @@ export default function Sidebar() {
             aria-label="Voltar para o dashboard"
             className="flex items-center gap-3"
           >
-            <div className="w-9 h-9 bg-white rounded-full flex items-center justify-center shrink-0">
-              <span className="text-brand-800 font-bold text-[10px]">PMP</span>
-            </div>
+            <Image src="/logo.png" alt="GAMI" width={167} height={187} className="h-9 w-auto shrink-0" />
             <span className="text-white font-semibold text-lg tracking-wide">Plantão</span>
           </Link>
           <button onClick={() => setOpen(false)} aria-label="Fechar menu" className="text-white p-1 md:hidden">
@@ -79,7 +95,7 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 px-3 py-2 space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const active = pathname.startsWith(item.href)
             return (
               <Link

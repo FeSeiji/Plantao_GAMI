@@ -16,6 +16,11 @@ exports.authMiddleware = async (req, res, next) => {
     return res.status(401).json({ error: 'Token inválido ou expirado' })
   }
 
+  // Usuário desativado pela gestão de usuários: o token antigo ainda é válido até expirar
+  if (user.banned_until && new Date(user.banned_until) > new Date()) {
+    return res.status(401).json({ error: 'Usuário desativado' })
+  }
+
   req.user = user
   next()
 }

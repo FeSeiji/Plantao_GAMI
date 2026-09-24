@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
@@ -57,11 +58,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-brand-800 flex flex-col items-center justify-center px-4">
       {/* Logo */}
       <div className="mb-8 text-center">
-        <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg">
-          <span className="text-brand-800 font-bold text-sm">PMP</span>
+        <div className="bg-white rounded-2xl px-6 py-4 w-fit mx-auto mb-4 shadow-lg">
+          <Image src="/logotipo.png" alt="GAMI — Grupo Anestesia Materno Infantil" width={401} height={331} priority className="h-28 w-auto" />
         </div>
-        <h1 className="text-white font-bold text-2xl tracking-wide">Plantão</h1>
-        <p className="text-brand-200 text-sm mt-1">Gestão de Escalas Hospitalares</p>
       </div>
 
       {/* Card */}

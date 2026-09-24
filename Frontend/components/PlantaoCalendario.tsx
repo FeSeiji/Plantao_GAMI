@@ -35,7 +35,7 @@ export type Visualizacao = "semana" | "mes"
 function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
   return (
     <div className="relative shrink-0" title={usuario.trocaPendente ? "Troca pendente de aceite" : undefined}>
-      <div className={usuario.coordenador ? "rounded-full ring-2 ring-amber-400" : undefined}>
+      <div className={usuario.coordenador ? "rounded-full ring-2 ring-purple-600" : undefined}>
         <SiglaBadge sigla={usuario.sigla} size="sm" />
       </div>
       {usuario.trocaPendente && (
