@@ -16,6 +16,11 @@ exports.createPlantao = async (req, res) => {
     return res.status(400).json({ error: "tipo é obrigatório e deve ser 'plantonista' ou 'socio'" })
   }
 
+  const rolesCriador = req.user.app_metadata?.roles ?? []
+  if (tipo === 'socio' && rolesCriador.includes('anestesita_plantonista') && !rolesCriador.includes('anestesita_socio')) {
+    return res.status(403).json({ error: 'Médicos plantonistas não podem criar plantões de sócio' })
+  }
+
   const janela = { data, horaInicio: hora_inicio, horaFim: hora_fim }
 
   let membros

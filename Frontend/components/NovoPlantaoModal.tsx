@@ -45,6 +45,16 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [podeCriarSocio, setPodeCriarSocio] = useState(true)
+
+  useEffect(() => {
+    try {
+      const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
+      setPodeCriarSocio(!(roles.includes("anestesita_plantonista") && !roles.includes("anestesita_socio")))
+    } catch {
+      setPodeCriarSocio(true)
+    }
+  }, [])
 
   useEffect(() => {
     const termo = busca.trim()
@@ -241,29 +251,31 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 sm:px-8 pb-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de plantão</label>
-              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={() => trocarTipo("plantonista")}
-                  className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                    tipo === "plantonista" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  Plantonista
-                </button>
-                <button
-                  type="button"
-                  onClick={() => trocarTipo("socio")}
-                  className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                    tipo === "socio" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  Sócio
-                </button>
+            {podeCriarSocio && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de plantão</label>
+                <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => trocarTipo("plantonista")}
+                    className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
+                      tipo === "plantonista" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    Plantonista
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => trocarTipo("socio")}
+                    className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
+                      tipo === "socio" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    Sócio
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <label htmlFor="titulo" className="block text-sm font-medium text-gray-700 mb-1">
