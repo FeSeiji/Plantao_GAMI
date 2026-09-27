@@ -5,6 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { ROLES_GESTAO } from "./UsuarioModal"
+import { limparSessao } from "./sessao"
 
 // Todos menos o plantonista — mesma lista do backend em routes/bmFinanceiro.js
 const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
@@ -32,11 +33,7 @@ export default function Sidebar() {
   const navItems = NAV_ITEMS.filter((item) => !item.roles || item.roles.some((r) => roles.includes(r)))
 
   function handleLogout() {
-    localStorage.removeItem("token")
-    localStorage.removeItem("roles")
-    localStorage.removeItem("email")
-    localStorage.removeItem("nome")
-    localStorage.removeItem("sigla")
+    limparSessao()
     router.push("/login")
   }
 
