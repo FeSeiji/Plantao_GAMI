@@ -137,12 +137,16 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
       return
     }
 
+    // Em plantão de plantonista, sócios só entram no lugar do coordenador
+    const saiCoordenador = selecionados.some((u) => u.id === trocandoId && u.coordenador)
+    const role = ehSocio || saiCoordenador ? "anestesita_plantonista,anestesita_socio" : "anestesita_plantonista"
+
     setBuscandoTroca(true)
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
       const params = new URLSearchParams({
         search: termo,
-        role: "anestesita_plantonista,anestesita_socio",
+        role,
         data: plantao.data,
         horaInicio: plantao.hora_inicio,
         horaFim: plantao.hora_fim,
@@ -159,7 +163,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [buscaTroca, trocandoId])
+  }, [buscaTroca, trocandoId, selecionados, ehSocio])
 
   useEffect(() => {
     const termo = busca.trim()
@@ -173,9 +177,10 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     setBuscando(true)
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
+      // Adição em plantão de plantonista é sempre como membro, e sócios só entram como coordenador
       const params = new URLSearchParams({
         search: termo,
-        role: "anestesita_plantonista,anestesita_socio",
+        role: ehSocio ? "anestesita_plantonista,anestesita_socio" : "anestesita_plantonista",
         data: plantao.data,
         horaInicio: plantao.hora_inicio,
         horaFim: plantao.hora_fim,

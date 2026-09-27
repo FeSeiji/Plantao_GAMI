@@ -72,10 +72,14 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
       return
     }
 
+    // Em plantão de plantonista, sócios só entram como coordenador (o primeiro adicionado vira coordenador)
+    const vagaDeMembro = tipo === "plantonista" && coordenadorId != null && !adicionando?.coordenador
+    const role = vagaDeMembro ? "anestesita_plantonista" : "anestesita_plantonista,anestesita_socio"
+
     setBuscando(true)
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      const params = new URLSearchParams({ search: termo, role: "anestesita_plantonista,anestesita_socio" })
+      const params = new URLSearchParams({ search: termo, role })
       if (data && horaInicio && horaFim) {
         params.set("data", data)
         params.set("horaInicio", horaInicio)
@@ -93,7 +97,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [busca, tipo, data, horaInicio, horaFim])
+  }, [busca, tipo, data, horaInicio, horaFim, coordenadorId, adicionando])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -500,7 +504,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
               <p className="text-xs text-gray-400 mt-1">
                 {tipo === "plantonista"
-                  ? "Clique em + para adicionar médicos e em um médico para ver as opções. O coordenador é obrigatório."
+                  ? "Clique em + para adicionar médicos e em um médico para ver as opções. O coordenador é obrigatório e sócios só entram como coordenador."
                   : "Clique em uma vaga para preenchê-la e em um médico para ver as opções."}
               </p>
             </div>

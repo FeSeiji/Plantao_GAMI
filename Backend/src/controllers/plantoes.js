@@ -281,6 +281,20 @@ exports.definirCoordenador = async (req, res) => {
   if (membroError) return res.status(500).json({ error: membroError.message })
   if (!membro) return res.status(400).json({ error: 'O médico precisa estar na equipe do plantão para ser coordenador' })
 
+  const { data: atual, error: atualError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .eq('plantao_id', req.params.id)
+    .eq('is_coordenador', true)
+    .maybeSingle()
+
+  if (atualError) return res.status(500).json({ error: atualError.message })
+  if (atual && atual.usuario_id !== usuario_id && (await usuariosSoSocio([atual.usuario_id])).length > 0) {
+    return res.status(400).json({
+      error: 'O coordenador atual é sócio e não pode continuar na equipe como membro. Use "Trocar" para substituí-lo.'
+    })
+  }
+
   const { error: limparError } = await supabase
     .from('plantao_usuarios')
     .update({ is_coordenador: false })
@@ -320,7 +334,7 @@ exports.criarTroca = async (req, res) => {
 
   const { data: slotSaida, error: slotError } = await supabase
     .from('plantao_usuarios')
-    .select('usuario_id')
+    .select('usuario_id, is_coordenador')
     .eq('plantao_id', req.params.id)
     .eq('usuario_id', usuario_saida)
     .maybeSingle()
@@ -341,6 +355,10 @@ exports.criarTroca = async (req, res) => {
   const invalidos = await usuariosSemRoleMedico([usuario_entrada])
   if (invalidos.length > 0) {
     return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
+  }
+
+  if (plantao.tipo === 'plantonista' && !slotSaida.is_coordenador && (await usuariosSoSocio([usuario_entrada])).length > 0) {
+    return res.status(400).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
   }
 
   const ocupados = await usuariosComConflito([usuario_entrada], plantao.data, plantao.hora_inicio, plantao.hora_fim, plantao.id)
@@ -426,6 +444,18 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   }
 
   if (aceitar) {
+    const { data: slot, error: slotError } = await supabase
+      .from('plantao_usuarios')
+      .select('is_coordenador, plantoes(tipo)')
+      .eq('plantao_id', troca.plantao_id)
+      .eq('usuario_id', troca.usuario_saida)
+      .maybeSingle()
+
+    if (slotError) return res.status(500).json({ error: slotError.message })
+    if (slot?.plantoes?.tipo === 'plantonista' && !slot.is_coordenador && (await usuariosSoSocio([troca.usuario_entrada])).length > 0) {
+      return res.status(409).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
+    }
+
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
       .update({ usuario_id: troca.usuario_entrada })
@@ -468,6 +498,11 @@ async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoorden
   const invalidos = await usuariosSemRoleMedico(usuarios)
   if (invalidos.length > 0) {
     throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+  }
+
+  const socios = await usuariosSoSocio(usuarios.filter(id => id !== coordenadorId))
+  if (socios.length > 0) {
+    throw new Error('Sócios só podem entrar em plantão de plantonista como coordenador')
   }
 
   if (janela) {
@@ -534,6 +569,21 @@ async function usuariosSemRoleMedico(usuarioIds) {
   )
 
   return resultados.filter(r => !r.valido).map(r => r.id)
+}
+
+// Quem é só sócio (sem a role de plantonista) — em plantão de plantonista, só entra como coordenador
+async function usuariosSoSocio(usuarioIds) {
+  const idsUnicos = [...new Set(usuarioIds)]
+
+  const resultados = await Promise.all(
+    idsUnicos.map(async id => {
+      const { data } = await supabase.auth.admin.getUserById(id)
+      const roles = data?.user?.app_metadata?.roles ?? []
+      return { id, soSocio: roles.includes('anestesita_socio') && !roles.includes('anestesita_plantonista') }
+    })
+  )
+
+  return resultados.filter(r => r.soSocio).map(r => r.id)
 }
 
 async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, excluirPlantaoId) {
