@@ -64,7 +64,7 @@ exports.getUsers = async (req, res) => {
 exports.listarGestao = async (req, res) => {
   const { search } = req.query
 
-  let query = supabase.from('profiles').select('id, nome, email, sigla, crm, crm_uf').order('nome')
+  let query = supabase.from('profiles').select('id, nome, email, telefone, sigla, crm, crm_uf').order('nome')
 
   if (search) {
     const termo = `%${search}%`

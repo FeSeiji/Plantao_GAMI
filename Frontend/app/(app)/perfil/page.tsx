@@ -6,6 +6,7 @@ import SiglaBadge from "../../../components/SiglaBadge"
 import { INPUT_CLASS, ROLES, ROLES_ANESTESISTA, UFS } from "../../../components/UsuarioModal"
 import { EVENTO_PERFIL_ATUALIZADO } from "../../../components/sessao"
 import { DIAS_SEMANA } from "../../../components/disponibilidade"
+import { formatarTelefone } from "../../../components/telefone"
 
 type Perfil = {
   id: string
@@ -23,14 +24,6 @@ type Perfil = {
 const TODOS_OS_DIAS = DIAS_SEMANA.map((d) => d.valor)
 
 const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
-
-function formatarTelefone(telefone: string | null) {
-  if (!telefone) return null
-  const d = telefone.replace(/\D/g, "")
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
-  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
-  return telefone
-}
 
 function formatarData(data: string | null) {
   if (!data) return null

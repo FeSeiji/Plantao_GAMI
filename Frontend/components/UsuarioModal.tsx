@@ -6,6 +6,7 @@ export type UsuarioGestao = {
   id: string
   nome: string | null
   email: string | null
+  telefone: string | null
   sigla: string | null
   crm: string | null
   crm_uf: string | null
