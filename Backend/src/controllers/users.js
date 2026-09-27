@@ -2,6 +2,7 @@
 const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_VALIDAS, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { usuariosAfastados } = require('../services/afastamentos')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -47,17 +48,25 @@ exports.getUsers = async (req, res) => {
     return res.status(500).json({ error: error.message })
   }
 
-  if (dataAlvo && horaInicio && horaFim) {
-    try {
-      const ocupados = await usuariosComConflito(data.map(p => p.id), dataAlvo, horaInicio, horaFim)
-      return res.json(data.filter(p => !ocupados.has(p.id)))
-    } catch (err) {
-      console.error(err)
-      return res.status(500).json({ error: err.message })
-    }
-  }
+  try {
+    let resultado = data
 
-  return res.json(data)
+    if (dataAlvo && horaInicio && horaFim) {
+      const ocupados = await usuariosComConflito(resultado.map(p => p.id), dataAlvo, horaInicio, horaFim)
+      resultado = resultado.filter(p => !ocupados.has(p.id))
+    }
+
+    // Afastados (férias/congresso) continuam na lista, marcados, para o picker mostrar o motivo
+    if (dataAlvo) {
+      const afastados = await usuariosAfastados(resultado.map(p => p.id), dataAlvo)
+      resultado = resultado.map(p => ({ ...p, afastamento: afastados.get(p.id) ?? null }))
+    }
+
+    return res.json(resultado)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 // Gestão de usuários: lista completa com roles, CRM e status

@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
-import { AvisoIndisponivel } from "./disponibilidade"
+import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
 
 type Usuario = {
@@ -12,6 +12,7 @@ type Usuario = {
   email?: string
   sigla?: string
   dias_disponiveis?: number[] | null
+  afastamento?: Afastamento | null
 }
 
 type Tipo = "plantonista" | "socio"
@@ -80,8 +81,9 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
       const params = new URLSearchParams({ search: termo, role })
+      // Só a data já basta para marcar quem está de férias/congresso; o conflito de horário precisa das horas
+      if (data) params.set("data", data)
       if (data && horaInicio && horaFim) {
-        params.set("data", data)
         params.set("horaInicio", horaInicio)
         params.set("horaFim", horaFim)
       }
@@ -489,11 +491,16 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                               key={u.id}
                               type="button"
                               onClick={() => selecionarUsuario(u)}
-                              className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+                              disabled={!!u.afastamento}
+                              className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
                             >
                               <SiglaBadge sigla={u.sigla} size="sm" />
                               <span className="min-w-0 truncate">{u.nome ?? u.email ?? u.id}</span>
-                              <AvisoIndisponivel dias={u.dias_disponiveis} data={data} />
+                              {u.afastamento ? (
+                                <AvisoAfastamento afastamento={u.afastamento} />
+                              ) : (
+                                <AvisoIndisponivel dias={u.dias_disponiveis} data={data} />
+                              )}
                             </button>
                           ))
                       )}

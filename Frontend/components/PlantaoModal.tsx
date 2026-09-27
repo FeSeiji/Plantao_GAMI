@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { AcaoMenu, CelulaGrade } from "./GradeParticipantes"
-import { AvisoIndisponivel } from "./disponibilidade"
+import { Afastamento, AvisoAfastamento, AvisoIndisponivel, rotuloAfastamento } from "./disponibilidade"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
 
@@ -53,6 +53,7 @@ type Usuario = {
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
   dias_disponiveis?: number[] | null
+  afastamento?: Afastamento | null
 }
 
 type Plantao = {
@@ -535,12 +536,25 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
       pessoa: u,
       rotulo,
       larga: !ehSocio && u.coordenador,
-      destaque: pendente ? "pendente" : !ehSocio && u.coordenador ? "coordenador" : undefined,
-      status: pendente
-        ? souConvidado
-          ? "aguardando seu aceite"
-          : `aguardando aceite de ${nomeDe(pendente.usuarioEntrada)}`
+      // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
+      destaque: u.afastamento
+        ? "indisponivel"
+        : pendente
+        ? "pendente"
+        : !ehSocio && u.coordenador
+        ? "coordenador"
         : undefined,
+      status:
+        u.afastamento || pendente ? (
+          <>
+            {u.afastamento && <span className="block font-semibold not-italic">Indisponível: {rotuloAfastamento(u.afastamento)}</span>}
+            {pendente && (
+              <span className="block">
+                {souConvidado ? "aguardando seu aceite" : `aguardando aceite de ${nomeDe(pendente.usuarioEntrada)}`}
+              </span>
+            )}
+          </>
+        ) : undefined,
       extra: souConvidado && pendente && (
         <div className="flex gap-3 text-xs">
           <button
@@ -756,11 +770,16 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                               key={u.id}
                               type="button"
                               onClick={() => adicionarUsuario(u)}
-                              className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                              disabled={!!u.afastamento}
+                              className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
                             >
                               <SiglaBadge sigla={u.sigla} size="sm" />
                               <span className="min-w-0 truncate">{nomeDe(u)}</span>
-                              <AvisoIndisponivel dias={u.dias_disponiveis} data={plantao.data} />
+                              {u.afastamento ? (
+                                <AvisoAfastamento afastamento={u.afastamento} />
+                              ) : (
+                                <AvisoIndisponivel dias={u.dias_disponiveis} data={plantao.data} />
+                              )}
                             </button>
                           ))
                       )}
@@ -821,11 +840,16 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                                 acao: () => solicitarTroca(usuarioTrocando.id, r),
                               })
                             }
-                            className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                            disabled={!!r.afastamento}
+                            className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
                           >
                             <SiglaBadge sigla={r.sigla} size="sm" />
                             <span className="min-w-0 truncate">{nomeDe(r)}</span>
-                            <AvisoIndisponivel dias={r.dias_disponiveis} data={plantao.data} />
+                            {r.afastamento ? (
+                              <AvisoAfastamento afastamento={r.afastamento} />
+                            ) : (
+                              <AvisoIndisponivel dias={r.dias_disponiveis} data={plantao.data} />
+                            )}
                           </button>
                         ))
                       )}

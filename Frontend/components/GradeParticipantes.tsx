@@ -23,7 +23,7 @@ export type CelulaGrade =
       pessoa: Pessoa
       // Cabeçalho da célula: número da posição, "Coordenador" ou o select de posição
       rotulo?: React.ReactNode
-      destaque?: "coordenador" | "pendente"
+      destaque?: "coordenador" | "pendente" | "indisponivel"
       status?: React.ReactNode
       acoes?: AcaoMenu[]
       // Conteúdo sempre visível abaixo do nome (ex.: Aceitar/Recusar troca)
@@ -44,6 +44,7 @@ const CORES = {
   normal: "bg-brand-50 border-brand-100 text-brand-900",
   coordenador: "bg-purple-50 border-purple-300 text-purple-900",
   pendente: "bg-amber-50 border-amber-400 text-amber-900",
+  indisponivel: "bg-red-50 border-red-400 text-red-900",
 }
 
 export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[] }) {

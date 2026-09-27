@@ -28,3 +28,35 @@ export function AvisoIndisponivel({ dias, data }: { dias: number[] | null | unde
     </span>
   )
 }
+
+// Férias ou congresso: bloqueia a escala nesses dias (datas AAAA-MM-DD, inclusivas)
+export type Afastamento = {
+  id: string
+  tipo: "ferias" | "congresso"
+  data_inicio: string
+  data_fim: string
+}
+
+export const TIPOS_AFASTAMENTO = [
+  { valor: "ferias", rotulo: "Férias" },
+  { valor: "congresso", rotulo: "Congresso" },
+] as const
+
+export function formatarDataCurta(data: string) {
+  const [, mes, dia] = data.split("-")
+  return `${dia}/${mes}`
+}
+
+export function rotuloAfastamento(a: Afastamento) {
+  const tipo = a.tipo === "ferias" ? "férias" : "congresso"
+  return `${tipo} ${formatarDataCurta(a.data_inicio)}–${formatarDataCurta(a.data_fim)}`
+}
+
+// Motivo na lista de busca, onde o médico aparece mas não pode ser escolhido
+export function AvisoAfastamento({ afastamento }: { afastamento: Afastamento }) {
+  return (
+    <span className="ml-auto shrink-0 text-[11px] font-medium text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+      {afastamento.tipo === "ferias" ? "De férias" : "Em congresso"} até {formatarDataCurta(afastamento.data_fim)}
+    </span>
+  )
+}

@@ -1,6 +1,7 @@
 "use client"
 
 import SiglaBadge from "./SiglaBadge"
+import { Afastamento, rotuloAfastamento } from "./disponibilidade"
 
 export type TrocaPendente = {
   id: string
@@ -17,6 +18,7 @@ export type Usuario = {
   coordenador?: boolean
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
+  afastamento?: Afastamento | null
 }
 
 export type Plantao = {
@@ -40,12 +42,27 @@ const ESTILO_TIPO = {
 
 function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
   return (
-    <div className="relative shrink-0" title={usuario.trocaPendente ? "Troca pendente de aceite" : undefined}>
+    <div
+      className="relative shrink-0"
+      title={
+        [
+          usuario.afastamento && `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`,
+          usuario.trocaPendente && "Troca pendente de aceite",
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined
+      }
+    >
       <div className={usuario.coordenador ? "rounded-full ring-2 ring-purple-600" : undefined}>
         <SiglaBadge sigla={usuario.sigla} size="sm" />
       </div>
       {usuario.trocaPendente && (
         <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
+      )}
+      {usuario.afastamento && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          !
+        </span>
       )}
       {usuario.posicao != null && (
         <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
