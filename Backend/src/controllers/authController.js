@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js')
 
-const { validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_ANESTESISTA, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -19,7 +19,7 @@ exports.me = async (req, res) => {
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento')
+    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis')
     .eq('id', id)
     .maybeSingle()
 
@@ -37,6 +37,7 @@ exports.me = async (req, res) => {
     crm_uf: profile?.crm_uf ?? null,
     telefone: profile?.telefone ?? null,
     data_nascimento: profile?.data_nascimento ?? null,
+    dias_disponiveis: profile?.dias_disponiveis ?? null,
     roles: app_metadata?.roles ?? []
   })
 }
@@ -44,11 +45,11 @@ exports.me = async (req, res) => {
 // Edição do próprio cadastro. Email e roles ficam de fora: roles só a gestão altera.
 exports.atualizarMe = async (req, res) => {
   const { id, app_metadata } = req.user
-  const { nome, sigla, crm, crm_uf, telefone, data_nascimento } = req.body
+  const { nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis } = req.body
 
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento')
+    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis')
     .eq('id', id)
     .maybeSingle()
 
@@ -82,11 +83,28 @@ exports.atualizarMe = async (req, res) => {
     }
   }
 
+  // Dias da semana em que o médico prefere trabalhar (0 = domingo ... 6 = sábado).
+  // null = não preencheu ou marcou todos: disponível todos os dias. Só anestesistas têm.
+  const roles = app_metadata?.roles ?? []
+  let diasFinal = profile.dias_disponiveis
+  if (!roles.some(r => ROLES_ANESTESISTA.includes(r))) {
+    diasFinal = null
+  } else if (dias_disponiveis !== undefined) {
+    if (dias_disponiveis !== null && !Array.isArray(dias_disponiveis)) {
+      return res.status(400).json({ error: 'dias_disponiveis deve ser um array de 0 (domingo) a 6 (sábado)' })
+    }
+    const dias = [...new Set(dias_disponiveis ?? [])]
+    if (dias.some(d => !Number.isInteger(d) || d < 0 || d > 6)) {
+      return res.status(400).json({ error: 'dias_disponiveis deve ser um array de 0 (domingo) a 6 (sábado)' })
+    }
+    diasFinal = dias_disponiveis === null || dias.length === 7 ? null : dias.sort()
+  }
+
   let dados
   try {
     dados = await validarDadosUsuario({
       sigla: sigla ?? profile.sigla,
-      roles: app_metadata?.roles ?? [],
+      roles,
       crm: crm ?? profile.crm,
       crm_uf: crm_uf ?? profile.crm_uf
     }, id)
@@ -105,7 +123,8 @@ exports.atualizarMe = async (req, res) => {
       crm: dados.crm,
       crm_uf: dados.crm_uf,
       telefone: telefoneFinal,
-      data_nascimento: nascimentoFinal
+      data_nascimento: nascimentoFinal,
+      dias_disponiveis: diasFinal
     })
     .eq('id', id)
 

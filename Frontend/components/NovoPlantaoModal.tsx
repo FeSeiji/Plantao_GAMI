@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
+import { AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
 
 type Usuario = {
@@ -10,6 +11,7 @@ type Usuario = {
   nome?: string
   email?: string
   sigla?: string
+  dias_disponiveis?: number[] | null
 }
 
 type Tipo = "plantonista" | "socio"
@@ -486,7 +488,8 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                               className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100"
                             >
                               <SiglaBadge sigla={u.sigla} size="sm" />
-                              {u.nome ?? u.email ?? u.id}
+                              <span className="min-w-0 truncate">{u.nome ?? u.email ?? u.id}</span>
+                              <AvisoIndisponivel dias={u.dias_disponiveis} data={data} />
                             </button>
                           ))
                       )}

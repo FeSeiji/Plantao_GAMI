@@ -31,7 +31,7 @@ exports.getUsers = async (req, res) => {
     if (idsComRole.length === 0) return res.json([])
   }
 
-  let query = supabase.from('profiles').select('id, nome, email, sigla')
+  let query = supabase.from('profiles').select('id, nome, email, sigla, dias_disponiveis')
 
   if (search) {
     const termo = `%${search}%`

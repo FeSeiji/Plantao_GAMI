@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { AcaoMenu, CelulaGrade } from "./GradeParticipantes"
+import { AvisoIndisponivel } from "./disponibilidade"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
 
@@ -51,6 +52,7 @@ type Usuario = {
   coordenador?: boolean
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
+  dias_disponiveis?: number[] | null
 }
 
 type Plantao = {
@@ -752,7 +754,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                               className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                             >
                               <SiglaBadge sigla={u.sigla} size="sm" />
-                              {nomeDe(u)}
+                              <span className="min-w-0 truncate">{nomeDe(u)}</span>
+                              <AvisoIndisponivel dias={u.dias_disponiveis} data={plantao.data} />
                             </button>
                           ))
                       )}
@@ -816,7 +819,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                             className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                           >
                             <SiglaBadge sigla={r.sigla} size="sm" />
-                            {nomeDe(r)}
+                            <span className="min-w-0 truncate">{nomeDe(r)}</span>
+                            <AvisoIndisponivel dias={r.dias_disponiveis} data={plantao.data} />
                           </button>
                         ))
                       )}

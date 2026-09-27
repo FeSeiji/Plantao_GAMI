@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import { INPUT_CLASS, ROLES, ROLES_ANESTESISTA, UFS } from "../../../components/UsuarioModal"
 import { EVENTO_PERFIL_ATUALIZADO } from "../../../components/sessao"
+import { DIAS_SEMANA } from "../../../components/disponibilidade"
 
 type Perfil = {
   id: string
@@ -15,8 +16,11 @@ type Perfil = {
   crm_uf: string | null
   telefone: string | null
   data_nascimento: string | null
+  dias_disponiveis: number[] | null
   roles: string[]
 }
+
+const TODOS_OS_DIAS = DIAS_SEMANA.map((d) => d.valor)
 
 const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
 
@@ -53,6 +57,7 @@ export default function PerfilPage() {
   const [crmUf, setCrmUf] = useState("")
   const [telefone, setTelefone] = useState("")
   const [dataNascimento, setDataNascimento] = useState("")
+  const [dias, setDias] = useState<number[]>(TODOS_OS_DIAS)
 
   const [error, setError] = useState("")
   const [mensagem, setMensagem] = useState("")
@@ -65,6 +70,11 @@ export default function PerfilPage() {
     setCrmUf(p.crm_uf ?? "")
     setTelefone(p.telefone ?? "")
     setDataNascimento(p.data_nascimento ?? "")
+    setDias(p.dias_disponiveis ?? TODOS_OS_DIAS)
+  }
+
+  function alternarDia(dia: number) {
+    setDias((prev) => (prev.includes(dia) ? prev.filter((d) => d !== dia) : [...prev, dia]))
   }
 
   useEffect(() => {
@@ -98,6 +108,12 @@ export default function PerfilPage() {
     e.preventDefault()
     setError("")
     setMensagem("")
+
+    if (exigeCrm && dias.length === 0) {
+      setError("Marque ao menos um dia disponível.")
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -113,7 +129,9 @@ export default function PerfilPage() {
           sigla,
           telefone: telefone || null,
           data_nascimento: dataNascimento || null,
-          ...(exigeCrm ? { crm, crm_uf: crmUf } : {}),
+          ...(exigeCrm
+            ? { crm, crm_uf: crmUf, dias_disponiveis: dias.length === TODOS_OS_DIAS.length ? null : dias }
+            : {}),
         }),
       })
 
@@ -253,6 +271,32 @@ export default function PerfilPage() {
                 </div>
               )}
 
+              {exigeCrm && (
+                <div>
+                  <span className="block text-sm font-medium text-gray-700 mb-1">Dias disponíveis</span>
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {DIAS_SEMANA.map((d) => (
+                      <button
+                        key={d.valor}
+                        type="button"
+                        onClick={() => alternarDia(d.valor)}
+                        aria-pressed={dias.includes(d.valor)}
+                        className={`py-2 rounded-lg border text-xs font-semibold transition-colors ${
+                          dias.includes(d.valor)
+                            ? "border-brand-600 bg-brand-50 text-brand-800"
+                            : "border-gray-200 text-gray-400 hover:border-gray-300"
+                        }`}
+                      >
+                        {d.curto}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Quem montar um plantão ainda pode te escalar nos outros dias, mas verá um aviso.
+                  </p>
+                </div>
+              )}
+
               <p className="text-xs text-gray-400">E-mail e funções só podem ser alterados pela gestão de usuários.</p>
 
               {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
@@ -283,6 +327,33 @@ export default function PerfilPage() {
                 <Campo rotulo="Telefone" valor={formatarTelefone(perfil.telefone)} />
                 <Campo rotulo="Data de nascimento" valor={formatarData(perfil.data_nascimento)} />
                 {exigeCrm && <Campo rotulo="CRM" valor={perfil.crm ? `${perfil.crm}/${perfil.crm_uf}` : null} />}
+                {exigeCrm && (
+                  <div className="sm:col-span-2">
+                    <Campo
+                      rotulo="Dias disponíveis"
+                      valor={
+                        perfil.dias_disponiveis ? (
+                          <div className="flex flex-wrap gap-1.5 mt-1">
+                            {DIAS_SEMANA.map((d) => (
+                              <span
+                                key={d.valor}
+                                className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                                  perfil.dias_disponiveis?.includes(d.valor)
+                                    ? "bg-brand-100 text-brand-800"
+                                    : "bg-gray-100 text-gray-400 line-through"
+                                }`}
+                              >
+                                {d.curto}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          "Todos os dias"
+                        )
+                      }
+                    />
+                  </div>
+                )}
                 <div className="sm:col-span-2">
                   <Campo
                     rotulo="Funções"
