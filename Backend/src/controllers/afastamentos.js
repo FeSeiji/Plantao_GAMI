@@ -24,6 +24,19 @@ exports.listarMeus = async (req, res) => {
   return res.json(data)
 }
 
+// Gestão (admin/técnico) consulta os afastamentos atuais e futuros de um médico
+exports.listarDoUsuario = async (req, res) => {
+  const { data, error } = await supabase
+    .from('afastamentos')
+    .select('id, tipo, data_inicio, data_fim, observacao')
+    .eq('usuario_id', req.params.usuarioId)
+    .gte('data_fim', hojeLocal())
+    .order('data_inicio', { ascending: true })
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.json(data)
+}
+
 exports.criar = async (req, res) => {
   const roles = req.user.app_metadata?.roles ?? []
   if (!roles.some(r => ROLES_ANESTESISTA.includes(r))) {
