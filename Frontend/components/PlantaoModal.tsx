@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
+import GradeParticipantes, { AcaoMenu, CelulaGrade } from "./GradeParticipantes"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
 
@@ -101,6 +102,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const [resultadosTroca, setResultadosTroca] = useState<Usuario[]>([])
   const [buscandoTroca, setBuscandoTroca] = useState(false)
   const [meuId, setMeuId] = useState<string | null>(null)
+  // Célula "+" que abriu a busca de adição: a posição da fila (sócio) ou o fim da equipe (plantonista)
+  const [adicionando, setAdicionando] = useState<{ posicao?: number } | null>(null)
 
   const ehSocio = plantao.tipo === "socio"
 
@@ -211,8 +214,22 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     setHoraFim(plantao.hora_fim.slice(0, 5))
     setError("")
     setEditando(false)
-    setTrocandoId(null)
+    abrirAdicao(null)
+    abrirTroca(null)
+  }
+
+  function abrirAdicao(alvo: { posicao?: number } | null) {
+    setAdicionando(alvo)
+    setBusca("")
+    setResultados([])
+    if (alvo) setTrocandoId(null)
+  }
+
+  function abrirTroca(id: string | null) {
+    setTrocandoId(id)
     setBuscaTroca("")
+    setResultadosTroca([])
+    if (id) setAdicionando(null)
   }
 
   async function solicitarTroca(usuarioSaidaId: string, usuarioEntrada: Usuario) {
@@ -294,20 +311,15 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
   }
 
-  function proximaPosicaoLivre(atual: Usuario[]) {
-    const ocupadas = new Set(atual.map((u) => u.posicao))
-    return POSICOES.find((p) => !ocupadas.has(p)) ?? POSICOES[0]
-  }
-
   async function adicionarUsuario(usuario: Usuario) {
-    setBusca("")
-    setResultados([])
+    const alvo = adicionando
+    abrirAdicao(null)
     setError("")
 
-    if (selecionados.some((u) => u.id === usuario.id)) return
-    if (ehSocio && selecionados.length >= 7) return
+    if (!alvo || selecionados.some((u) => u.id === usuario.id)) return
 
-    const posicao = ehSocio ? proximaPosicaoLivre(selecionados) : null
+    const posicao = ehSocio ? alvo.posicao ?? null : null
+    if (ehSocio && (posicao == null || selecionados.some((u) => u.posicao === posicao))) return
     const anterior = selecionados
     setSelecionados((prev) => [...prev, { ...usuario, posicao, coordenador: false }])
 
@@ -455,197 +467,134 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
   }
 
-  const listaOrdenada = ehSocio
-    ? selecionados.slice().sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
-    : selecionados
-
   const rotuloLista = ehSocio ? "Fila de sócios" : "Equipe"
 
-  function Chip({ u, editavel }: { u: Usuario; editavel: boolean }) {
-    const pendente = u.trocaPendente
-    const cor = pendente
-      ? "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
-      : u.coordenador
-      ? "bg-purple-600 text-white"
-      : "bg-brand-100 text-brand-800"
-
-    const resultadosFiltrados = resultadosTroca.filter(
-      (r) => r.id !== u.id && !selecionados.some((s) => s.id === r.id)
-    )
-
-    return (
-      <div className="flex flex-col gap-1.5">
-        <span className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${cor}`}>
-          {ehSocio && u.posicao != null && (
-            <span className="w-4 h-4 rounded-full bg-white/80 text-brand-800 text-[9px] font-bold flex items-center justify-center">
-              {u.posicao}
-            </span>
-          )}
-          <SiglaBadge sigla={u.sigla} size="sm" />
-          {u.nome ?? u.email ?? u.id}
-
-          {editavel && ehSocio && !pendente && (
-            <select
-              aria-label="Posição na fila"
-              value={u.posicao ?? ""}
-              onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
-              className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
-            >
-              {POSICOES.map((p) => (
-                <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {editavel && !ehSocio && !pendente && (
-            <button
-              type="button"
-              onClick={() => tornarCoordenador(u.id)}
-              className={u.coordenador ? "text-white/80" : "text-brand-600 hover:text-brand-900"}
-              title="Definir como coordenador"
-            >
-              {u.coordenador ? "Coordenador" : "Tornar coordenador"}
-            </button>
-          )}
-          {!editavel && !ehSocio && u.coordenador && !pendente && <span className="text-white/90">· Coordenador</span>}
-
-          {pendente && pendente.usuarioEntrada.id === meuId ? (
-            <>
-              <span className="italic">aguardando seu aceite</span>
-              <button
-                type="button"
-                onClick={() => responderTrocaAqui(pendente.id, u.id, true)}
-                className="text-green-600 hover:text-green-800 font-bold"
-              >
-                Aceitar
-              </button>
-              <button
-                type="button"
-                onClick={() => responderTrocaAqui(pendente.id, u.id, false)}
-                className="text-red-600 hover:text-red-800 font-bold"
-              >
-                Recusar
-              </button>
-            </>
-          ) : (
-            pendente && (
-              <span className="italic">
-                aguardando aceite de {pendente.usuarioEntrada.nome ?? pendente.usuarioEntrada.email}
-              </span>
-            )
-          )}
-
-          {editavel && !pendente && (
-            <button
-              type="button"
-              onClick={() => {
-                setTrocandoId(trocandoId === u.id ? null : u.id)
-                setBuscaTroca("")
-              }}
-              className={u.coordenador ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
-              title="Substituir por outro médico (precisa de aceite)"
-            >
-              Trocar
-            </button>
-          )}
-
-          {editavel && (
-            <button
-              type="button"
-              onClick={() =>
-                setConfirmacao({
-                  titulo: "Remover médico?",
-                  mensagem: (
-                    <>
-                      <p>
-                        <span className="font-semibold">{u.nome ?? u.email ?? u.id}</span> será removido deste plantão
-                        {ehSocio && u.posicao != null ? ` (posição ${u.posicao})` : ""}. A remoção fica registrada no histórico.
-                      </p>
-                      {pendente && <p className="mt-2 text-amber-700">A troca pendente deste médico também será cancelada.</p>}
-                    </>
-                  ),
-                  rotuloConfirmar: "Remover",
-                  perigo: true,
-                  acao: () => removerUsuario(u.id),
-                })
-              }
-              aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
-              className={u.coordenador && !pendente ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
-        </span>
-
-        {editavel && trocandoId === u.id && (
-          <div className="relative ml-2">
-            <div className="flex items-center gap-1.5">
-              <input
-                autoFocus
-                type="text"
-                value={buscaTroca}
-                onChange={(e) => setBuscaTroca(e.target.value)}
-                placeholder="Buscar médico para substituir"
-                autoComplete="off"
-                className="w-56 border border-gray-300 rounded-lg px-3 py-1.5 text-xs text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setTrocandoId(null)
-                  setBuscaTroca("")
-                }}
-                className="text-gray-400 hover:text-gray-600 text-xs"
-              >
-                Cancelar
-              </button>
-            </div>
-
-            {buscaTroca.trim() && (
-              <div className="absolute z-20 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
-                {buscandoTroca ? (
-                  <p className="px-3 py-2 text-xs text-gray-400">Buscando...</p>
-                ) : resultadosFiltrados.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-gray-400">Nenhum médico encontrado.</p>
-                ) : (
-                  resultadosFiltrados.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() =>
-                        setConfirmacao({
-                          titulo: "Solicitar troca?",
-                          mensagem: (
-                            <p>
-                              Trocar <span className="font-semibold">{u.nome ?? u.email ?? u.id}</span> por{" "}
-                              <span className="font-semibold">{r.nome ?? r.email ?? r.id}</span>
-                              {u.coordenador ? " (inclusive como coordenador)" : ""}. A troca só vale depois que{" "}
-                              {r.nome ?? r.email ?? r.id} aceitar.
-                            </p>
-                          ),
-                          rotuloConfirmar: "Solicitar troca",
-                          acao: () => solicitarTroca(u.id, r),
-                        })
-                      }
-                      className="w-full flex items-center gap-2 text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      <SiglaBadge sigla={r.sigla} size="sm" />
-                      {r.nome ?? r.email ?? r.id}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    )
+  function confirmarRemocao(u: Usuario) {
+    setConfirmacao({
+      titulo: "Remover médico?",
+      mensagem: (
+        <>
+          <p>
+            <span className="font-semibold">{nomeDe(u)}</span> será removido deste plantão
+            {ehSocio && u.posicao != null ? ` (posição ${u.posicao})` : ""}. A remoção fica registrada no histórico.
+          </p>
+          {u.trocaPendente && <p className="mt-2 text-amber-700">A troca pendente deste médico também será cancelada.</p>}
+        </>
+      ),
+      rotuloConfirmar: "Remover",
+      perigo: true,
+      acao: () => removerUsuario(u.id),
+    })
   }
+
+  function celulaMedico(u: Usuario, editavel: boolean): CelulaGrade {
+    const pendente = u.trocaPendente
+    const souConvidado = pendente != null && pendente.usuarioEntrada.id === meuId
+
+    const acoes: AcaoMenu[] = []
+    if (editavel) {
+      if (!ehSocio && !u.coordenador && !pendente) {
+        acoes.push({ rotulo: "Tornar coordenador", onClick: () => tornarCoordenador(u.id) })
+      }
+      if (!pendente) acoes.push({ rotulo: "Trocar", onClick: () => abrirTroca(u.id) })
+      acoes.push({ rotulo: "Remover", perigo: true, onClick: () => confirmarRemocao(u) })
+    }
+
+    let rotulo: React.ReactNode = undefined
+    if (ehSocio && editavel && !pendente) {
+      rotulo = (
+        <select
+          aria-label="Posição na fila"
+          value={u.posicao ?? ""}
+          onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
+          className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
+        >
+          {POSICOES.map((p) => (
+            <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
+              {p}
+            </option>
+          ))}
+        </select>
+      )
+    } else if (ehSocio) {
+      rotulo = u.posicao
+    } else if (u.coordenador) {
+      rotulo = "Coordenador"
+    }
+
+    return {
+      tipo: "medico",
+      chave: u.id,
+      pessoa: u,
+      rotulo,
+      larga: !ehSocio && u.coordenador,
+      destaque: pendente ? "pendente" : !ehSocio && u.coordenador ? "coordenador" : undefined,
+      status: pendente
+        ? souConvidado
+          ? "aguardando seu aceite"
+          : `aguardando aceite de ${nomeDe(pendente.usuarioEntrada)}`
+        : undefined,
+      extra: souConvidado && pendente && (
+        <div className="flex gap-3 text-xs">
+          <button
+            type="button"
+            onClick={() => responderTrocaAqui(pendente.id, u.id, true)}
+            className="text-green-600 hover:text-green-800 font-bold"
+          >
+            Aceitar
+          </button>
+          <button
+            type="button"
+            onClick={() => responderTrocaAqui(pendente.id, u.id, false)}
+            className="text-red-600 hover:text-red-800 font-bold"
+          >
+            Recusar
+          </button>
+        </div>
+      ),
+      acoes,
+    }
+  }
+
+  function montarCelulas(editavel: boolean): CelulaGrade[] {
+    if (ehSocio) {
+      return POSICOES.map((p) => {
+        const u = selecionados.find((s) => s.posicao === p)
+        if (u) return celulaMedico(u, editavel)
+        return {
+          tipo: "vazia",
+          chave: `posicao-${p}`,
+          rotulo: `${p}`,
+          texto: "Vaga",
+          ativa: adicionando?.posicao === p,
+          onClick: editavel ? () => abrirAdicao({ posicao: p }) : undefined,
+        }
+      })
+    }
+
+    const coordenador = selecionados.find((u) => u.coordenador)
+    const celulas: CelulaGrade[] = [
+      coordenador
+        ? celulaMedico(coordenador, editavel)
+        : { tipo: "vazia", chave: "coordenador", rotulo: "Coordenador", texto: "Sem coordenador", larga: true },
+      ...selecionados.filter((u) => !u.coordenador).map((u) => celulaMedico(u, editavel)),
+    ]
+    if (editavel) {
+      celulas.push({
+        tipo: "vazia",
+        chave: "adicionar",
+        texto: "Adicionar",
+        ativa: adicionando != null,
+        onClick: () => abrirAdicao({}),
+      })
+    }
+    return celulas
+  }
+
+  const usuarioTrocando = selecionados.find((u) => u.id === trocandoId)
+  const resultadosTrocaFiltrados = resultadosTroca.filter(
+    (r) => r.id !== trocandoId && !selecionados.some((s) => s.id === r.id)
+  )
 
   const eventosHistorico: EventoHistorico[] = [
     ...historico.map((troca) => ({ tipo: "troca" as const, quando: troca.solicitadoEm, troca })),
@@ -757,53 +706,124 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
             </div>
 
             <div>
-              <label htmlFor="buscaUsuario" className="block text-sm font-medium text-gray-700 mb-1">
-                {rotuloLista}
-              </label>
+              <p className="block text-sm font-medium text-gray-700 mb-2">{rotuloLista}</p>
 
-              {listaOrdenada.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {listaOrdenada.map((u) => (
-                    <Chip key={u.id} u={u} editavel />
-                  ))}
+              <GradeParticipantes celulas={montarCelulas(true)} />
+
+              {adicionando && (
+                <div className="relative mt-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="buscaUsuario" className="text-xs font-semibold text-brand-700">
+                      {adicionando.posicao != null ? `Adicionar na posição ${adicionando.posicao}` : "Adicionar à equipe"}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => abrirAdicao(null)}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                  <input
+                    id="buscaUsuario"
+                    autoFocus
+                    type="text"
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar por nome ou e-mail"
+                    autoComplete="off"
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                  />
+
+                  {busca.trim() && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {buscando ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
+                      ) : resultados.filter((u) => !selecionados.some((s) => s.id === u.id)).length === 0 ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
+                      ) : (
+                        resultados
+                          .filter((u) => !selecionados.some((s) => s.id === u.id))
+                          .map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => adicionarUsuario(u)}
+                              className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              <SiglaBadge sigla={u.sigla} size="sm" />
+                              {nomeDe(u)}
+                            </button>
+                          ))
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className="relative">
-                <input
-                  id="buscaUsuario"
-                  type="text"
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder={ehSocio && selecionados.length >= 7 ? "Fila completa (7/7)" : "Buscar por nome ou e-mail"}
-                  autoComplete="off"
-                  disabled={ehSocio && selecionados.length >= 7}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-400"
-                />
+              {usuarioTrocando && (
+                <div className="relative mt-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="buscaTroca" className="text-xs font-semibold text-brand-700">
+                      Substituir {nomeDe(usuarioTrocando)}
+                      {usuarioTrocando.coordenador ? " (coordenador)" : ""}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => abrirTroca(null)}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                  <input
+                    id="buscaTroca"
+                    autoFocus
+                    type="text"
+                    value={buscaTroca}
+                    onChange={(e) => setBuscaTroca(e.target.value)}
+                    placeholder="Buscar médico para substituir"
+                    autoComplete="off"
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                  />
 
-                {busca.trim() && !(ehSocio && selecionados.length >= 7) && (
-                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                    {buscando ? (
-                      <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
-                    ) : resultados.filter((u) => !selecionados.some((s) => s.id === u.id)).length === 0 ? (
-                      <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
-                    ) : (
-                      resultados
-                        .filter((u) => !selecionados.some((s) => s.id === u.id))
-                        .map((u) => (
+                  {buscaTroca.trim() && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {buscandoTroca ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
+                      ) : resultadosTrocaFiltrados.length === 0 ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
+                      ) : (
+                        resultadosTrocaFiltrados.map((r) => (
                           <button
-                            key={u.id}
+                            key={r.id}
                             type="button"
-                            onClick={() => adicionarUsuario(u)}
-                            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                            onClick={() =>
+                              setConfirmacao({
+                                titulo: "Solicitar troca?",
+                                mensagem: (
+                                  <p>
+                                    Trocar <span className="font-semibold">{nomeDe(usuarioTrocando)}</span> por{" "}
+                                    <span className="font-semibold">{nomeDe(r)}</span>
+                                    {usuarioTrocando.coordenador ? " (inclusive como coordenador)" : ""}. A troca só vale
+                                    depois que {nomeDe(r)} aceitar.
+                                  </p>
+                                ),
+                                rotuloConfirmar: "Solicitar troca",
+                                acao: () => solicitarTroca(usuarioTrocando.id, r),
+                              })
+                            }
+                            className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                           >
-                            {u.nome ?? u.email ?? u.id}
+                            <SiglaBadge sigla={r.sigla} size="sm" />
+                            {nomeDe(r)}
                           </button>
                         ))
-                    )}
-                  </div>
-                )}
-              </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {error && (
@@ -835,14 +855,10 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
             <div>
               <p className="text-sm font-medium text-gray-700 mb-2">{rotuloLista}</p>
-              {listaOrdenada.length === 0 ? (
+              {!ehSocio && selecionados.length === 0 ? (
                 <p className="text-sm text-gray-400">Nenhum médico atribuído.</p>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {listaOrdenada.map((u) => (
-                    <Chip key={u.id} u={u} editavel={false} />
-                  ))}
-                </div>
+                <GradeParticipantes celulas={montarCelulas(false)} />
               )}
             </div>
 

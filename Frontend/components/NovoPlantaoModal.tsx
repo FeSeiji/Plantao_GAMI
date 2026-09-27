@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
+import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { useViewportVisivel } from "./useViewportVisivel"
 
 type Usuario = {
@@ -17,6 +18,9 @@ type FilaItem = {
   usuario: Usuario
   posicao: number
 }
+
+// Qual célula "+" abriu a busca: uma posição da fila, a vaga de coordenador ou o fim da equipe
+type Adicionando = { posicao?: number; coordenador?: boolean }
 
 type Props = {
   onClose: () => void
@@ -42,6 +46,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const [coordenadorId, setCoordenadorId] = useState<string | null>(null)
 
   const [fila, setFila] = useState<FilaItem[]>([])
+  const [adicionando, setAdicionando] = useState<Adicionando | null>(null)
 
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -107,13 +112,13 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     setEquipe([])
     setCoordenadorId(null)
     setFila([])
-    setBusca("")
-    setResultados([])
+    abrirBusca(null)
   }
 
-  function proximaPosicaoLivre(atual: FilaItem[]) {
-    const ocupadas = new Set(atual.map((f) => f.posicao))
-    return POSICOES.find((p) => !ocupadas.has(p)) ?? POSICOES[0]
+  function abrirBusca(alvo: Adicionando | null) {
+    setAdicionando(alvo)
+    setBusca("")
+    setResultados([])
   }
 
   // Com o teclado aberto sobra pouco espaço: leva a busca para o topo da área rolável,
@@ -123,22 +128,20 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   }
 
   function selecionarUsuario(usuario: Usuario) {
-    setBusca("")
-    setResultados([])
-    // Os chips acima crescem a cada médico adicionado e empurram a busca para baixo
-    rolarBuscaParaTopo()
+    const alvo = adicionando
+    abrirBusca(null)
+    if (!alvo) return
 
     if (tipo === "plantonista") {
-      setEquipe((prev) => {
-        if (prev.some((u) => u.id === usuario.id)) return prev
-        const proxima = [...prev, usuario]
-        if (!coordenadorId) setCoordenadorId(usuario.id)
-        return proxima
-      })
+      if (equipe.some((u) => u.id === usuario.id)) return
+      setEquipe((prev) => [...prev, usuario])
+      if (alvo.coordenador || !coordenadorId) setCoordenadorId(usuario.id)
     } else {
+      const posicao = alvo.posicao
+      if (posicao == null) return
       setFila((prev) => {
-        if (prev.some((f) => f.usuario.id === usuario.id) || prev.length >= 7) return prev
-        return [...prev, { usuario, posicao: proximaPosicaoLivre(prev) }]
+        if (prev.some((f) => f.usuario.id === usuario.id || f.posicao === posicao)) return prev
+        return [...prev, { usuario, posicao }]
       })
     }
   }
@@ -221,7 +224,92 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   }
 
   const jaSelecionados = tipo === "plantonista" ? equipe.map((u) => u.id) : fila.map((f) => f.usuario.id)
-  const buscaDesabilitada = tipo === "socio" && fila.length >= 7
+
+  const coordenador = equipe.find((u) => u.id === coordenadorId)
+  const celulas: CelulaGrade[] =
+    tipo === "plantonista"
+      ? [
+          coordenador
+            ? {
+                tipo: "medico",
+                chave: coordenador.id,
+                pessoa: coordenador,
+                rotulo: "Coordenador",
+                destaque: "coordenador",
+                larga: true,
+                acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(coordenador.id) }],
+              }
+            : {
+                tipo: "vazia",
+                chave: "coordenador",
+                rotulo: "Coordenador",
+                texto: "Definir coordenador",
+                larga: true,
+                ativa: adicionando?.coordenador,
+                onClick: () => abrirBusca({ coordenador: true }),
+              },
+          ...equipe
+            .filter((u) => u.id !== coordenadorId)
+            .map(
+              (u): CelulaGrade => ({
+                tipo: "medico",
+                chave: u.id,
+                pessoa: u,
+                acoes: [
+                  { rotulo: "Tornar coordenador", onClick: () => setCoordenadorId(u.id) },
+                  { rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(u.id) },
+                ],
+              })
+            ),
+          {
+            tipo: "vazia",
+            chave: "adicionar",
+            texto: "Adicionar",
+            ativa: adicionando != null && !adicionando.coordenador,
+            onClick: () => abrirBusca({}),
+          },
+        ]
+      : POSICOES.map((p): CelulaGrade => {
+          const f = fila.find((item) => item.posicao === p)
+          if (!f) {
+            return {
+              tipo: "vazia",
+              chave: `posicao-${p}`,
+              rotulo: `${p}`,
+              texto: "Vaga",
+              ativa: adicionando?.posicao === p,
+              onClick: () => abrirBusca({ posicao: p }),
+            }
+          }
+          return {
+            tipo: "medico",
+            chave: f.usuario.id,
+            pessoa: f.usuario,
+            rotulo: (
+              <select
+                aria-label="Posição na fila"
+                value={f.posicao}
+                onChange={(e) => alterarPosicao(f.usuario.id, Number(e.target.value))}
+                className="bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
+              >
+                {POSICOES.map((op) => (
+                  <option key={op} value={op} disabled={op !== f.posicao && fila.some((o) => o.posicao === op)}>
+                    {op}
+                  </option>
+                ))}
+              </select>
+            ),
+            acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaFila(f.usuario.id) }],
+          }
+        })
+
+  const rotuloBusca = !adicionando
+    ? ""
+    : adicionando.coordenador
+    ? "Adicionar coordenador"
+    : adicionando.posicao != null
+    ? `Adicionar na posição ${adicionando.posicao}`
+    : "Adicionar à equipe"
 
   return (
     <div
@@ -349,132 +437,68 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
             </div>
 
             <div>
-              <label htmlFor="buscaMedico" className="block text-sm font-medium text-gray-700 mb-1">
+              <p className="block text-sm font-medium text-gray-700 mb-1">
                 {tipo === "plantonista" ? "Equipe" : "Fila de sócios"}
-              </label>
+              </p>
 
-              {tipo === "plantonista" ? (
-                equipe.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {equipe.map((u) => (
-                      <span
-                        key={u.id}
-                        className={`flex items-center gap-1.5 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full ${
-                          coordenadorId === u.id ? "bg-purple-600 text-white" : "bg-brand-100 text-brand-800"
-                        }`}
-                      >
-                        <SiglaBadge sigla={u.sigla} size="sm" />
-                        {u.nome ?? u.email ?? u.id}
-                        <button
-                          type="button"
-                          onClick={() => setCoordenadorId(u.id)}
-                          className={coordenadorId === u.id ? "text-white/80" : "text-brand-600 hover:text-brand-900"}
-                          title="Definir como coordenador"
-                        >
-                          {coordenadorId === u.id ? "Coordenador" : "Tornar coordenador"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removerDaEquipe(u.id)}
-                          aria-label={`Remover ${u.nome ?? u.email ?? u.id}`}
-                          className={coordenadorId === u.id ? "text-white/80 hover:text-white" : "text-brand-600 hover:text-brand-900"}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                      </span>
-                    ))}
+              <GradeParticipantes celulas={celulas} />
+
+              {adicionando && (
+                <div ref={buscaRef} className="scroll-mt-2 mt-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="buscaMedico" className="text-xs font-semibold text-brand-700">
+                      {rotuloBusca}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => abrirBusca(null)}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Cancelar
+                    </button>
                   </div>
-                )
-              ) : (
-                fila.length > 0 && (
-                  <div className="flex flex-col gap-2 mb-2">
-                    {fila
-                      .slice()
-                      .sort((a, b) => a.posicao - b.posicao)
-                      .map((f) => (
-                        <div
-                          key={f.usuario.id}
-                          className="flex items-center gap-2 bg-brand-100 text-brand-800 text-xs font-semibold pl-1.5 pr-2 py-1 rounded-full"
-                        >
-                          <SiglaBadge sigla={f.usuario.sigla} size="sm" />
-                          <span className="flex-1">{f.usuario.nome ?? f.usuario.email ?? f.usuario.id}</span>
-                          <label className="sr-only" htmlFor={`posicao-${f.usuario.id}`}>
-                            Posição na fila
-                          </label>
-                          <select
-                            id={`posicao-${f.usuario.id}`}
-                            value={f.posicao}
-                            onChange={(e) => alterarPosicao(f.usuario.id, Number(e.target.value))}
-                            className="bg-white border border-brand-200 rounded-md text-xs px-1.5 py-0.5"
-                          >
-                            {POSICOES.map((p) => (
-                              <option key={p} value={p} disabled={p !== f.posicao && fila.some((o) => o.posicao === p)}>
-                                {p}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => removerDaFila(f.usuario.id)}
-                            aria-label={`Remover ${f.usuario.nome ?? f.usuario.email ?? f.usuario.id}`}
-                            className="text-brand-600 hover:text-brand-900"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                )
+                  <input
+                    id="buscaMedico"
+                    autoFocus
+                    onFocus={rolarBuscaParaTopo}
+                    type="text"
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar por nome ou e-mail"
+                    autoComplete="off"
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                  />
+
+                  {busca.trim() && (
+                    <div className="mt-1 w-full bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+                      {buscando ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
+                      ) : resultados.filter((u) => !jaSelecionados.includes(u.id)).length === 0 ? (
+                        <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
+                      ) : (
+                        resultados
+                          .filter((u) => !jaSelecionados.includes(u.id))
+                          .map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => selecionarUsuario(u)}
+                              className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+                            >
+                              <SiglaBadge sigla={u.sigla} size="sm" />
+                              {u.nome ?? u.email ?? u.id}
+                            </button>
+                          ))
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
-
-              <div ref={buscaRef} className="scroll-mt-2">
-                <input
-                  id="buscaMedico"
-                  onFocus={rolarBuscaParaTopo}
-                  type="text"
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder={buscaDesabilitada ? "Fila completa (7/7)" : "Buscar por nome ou e-mail"}
-                  autoComplete="off"
-                  disabled={buscaDesabilitada}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-400"
-                />
-
-                {busca.trim() && !buscaDesabilitada && (
-                  <div className="mt-1 w-full bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
-                    {buscando ? (
-                      <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
-                    ) : resultados.filter((u) => !jaSelecionados.includes(u.id)).length === 0 ? (
-                      <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
-                    ) : (
-                      resultados
-                        .filter((u) => !jaSelecionados.includes(u.id))
-                        .map((u) => (
-                          <button
-                            key={u.id}
-                            type="button"
-                            onClick={() => selecionarUsuario(u)}
-                            className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100"
-                          >
-                            <SiglaBadge sigla={u.sigla} size="sm" />
-                            {u.nome ?? u.email ?? u.id}
-                          </button>
-                        ))
-                    )}
-                  </div>
-                )}
-              </div>
 
               <p className="text-xs text-gray-400 mt-1">
                 {tipo === "plantonista"
-                  ? "Clique em \"Tornar coordenador\" para marcar quem coordena a equipe (obrigatório)."
-                  : "Escolha a posição (1 a 7) de cada médico na fila."}
+                  ? "Clique em + para adicionar médicos e em um médico para ver as opções. O coordenador é obrigatório."
+                  : "Clique em uma vaga para preenchê-la e em um médico para ver as opções."}
               </p>
             </div>
 
