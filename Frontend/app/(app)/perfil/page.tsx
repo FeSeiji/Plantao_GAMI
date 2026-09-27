@@ -283,7 +283,7 @@ export default function PerfilPage() {
                         aria-pressed={dias.includes(d.valor)}
                         className={`py-2 rounded-lg border text-xs font-semibold transition-colors ${
                           dias.includes(d.valor)
-                            ? "border-brand-600 bg-brand-50 text-brand-800"
+                            ? "border-green-600 bg-green-50 text-green-800"
                             : "border-gray-200 text-gray-400 hover:border-gray-300"
                         }`}
                       >
@@ -339,7 +339,7 @@ export default function PerfilPage() {
                                 key={d.valor}
                                 className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                                   perfil.dias_disponiveis?.includes(d.valor)
-                                    ? "bg-brand-100 text-brand-800"
+                                    ? "bg-green-100 text-green-800"
                                     : "bg-gray-100 text-gray-400 line-through"
                                 }`}
                               >
