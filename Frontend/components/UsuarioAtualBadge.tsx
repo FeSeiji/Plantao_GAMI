@@ -1,10 +1,11 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "./SiglaBadge"
 import { ROLES } from "./UsuarioModal"
-import { limparSessao } from "./sessao"
+import { EVENTO_PERFIL_ATUALIZADO, limparSessao } from "./sessao"
 
 type Perfil = {
   nome: string | null
@@ -24,18 +25,24 @@ export default function UsuarioAtualBadge() {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    let roles: string[] = []
-    try {
-      roles = JSON.parse(localStorage.getItem("roles") ?? "[]")
-    } catch {
-      roles = []
+    function carregarPerfil() {
+      let roles: string[] = []
+      try {
+        roles = JSON.parse(localStorage.getItem("roles") ?? "[]")
+      } catch {
+        roles = []
+      }
+      setPerfil({
+        nome: localStorage.getItem("nome") || null,
+        email: localStorage.getItem("email") || null,
+        sigla: localStorage.getItem("sigla") || null,
+        roles,
+      })
     }
-    setPerfil({
-      nome: localStorage.getItem("nome") || null,
-      email: localStorage.getItem("email") || null,
-      sigla: localStorage.getItem("sigla") || null,
-      roles,
-    })
+
+    carregarPerfil()
+    window.addEventListener(EVENTO_PERFIL_ATUALIZADO, carregarPerfil)
+    return () => window.removeEventListener(EVENTO_PERFIL_ATUALIZADO, carregarPerfil)
   }, [])
 
   useEffect(() => {
@@ -95,6 +102,17 @@ export default function UsuarioAtualBadge() {
           )}
 
           <div className="p-1.5">
+            <Link
+              href="/perfil"
+              onClick={() => setAberto(false)}
+              className="w-full flex items-center gap-2 text-left rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+              Meu perfil
+            </Link>
             <button
               type="button"
               onClick={handleLogout}

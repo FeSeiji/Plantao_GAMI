@@ -24,14 +24,14 @@ export const ROLES = [
 export const ROLES_GESTAO = ["admin", "anestesita_socio", "tecnico"]
 export const ROLES_EDICAO = ["admin", "tecnico"]
 
-const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+export const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
 
-const UFS = [
+export const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
   "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ]
 
-const INPUT_CLASS =
+export const INPUT_CLASS =
   "w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-500"
 
 type Props = {
