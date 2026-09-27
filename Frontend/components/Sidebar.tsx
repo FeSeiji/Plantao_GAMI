@@ -11,7 +11,7 @@ import { limparSessao } from "./sessao"
 const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
 
 const NAV_ITEMS = [
-  { label: "Plantões", href: "/plantoes" },
+  { label: "Calendário", href: "/plantoes" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
   { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]
