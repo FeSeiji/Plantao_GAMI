@@ -6,7 +6,7 @@ const {
 } = require('../controllers/users')
 
 const podeVerGestao = requireRole('admin', 'anestesita_socio', 'tecnico')
-// Técnico também edita, mas o controller o impede de mexer em admins
+// Técnico também edita (inclusive admins), mas o controller o impede de conceder ou remover a role admin
 const podeEditarGestao = requireRole('admin', 'tecnico')
 
 router.get('/', getUsers)

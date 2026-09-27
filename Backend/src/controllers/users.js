@@ -139,8 +139,9 @@ exports.atualizarUsuario = async (req, res) => {
     return res.status(404).json({ error: 'Usuário não encontrado' })
   }
 
-  if (!ehAdmin(req.user) && (ehAdmin(auth.user) || (roles ?? []).includes('admin'))) {
-    return res.status(403).json({ error: 'Apenas administradores podem alterar a role admin ou editar um administrador' })
+  // Técnico edita os dados de um admin, mas não concede nem retira a role admin
+  if (!ehAdmin(req.user) && roles !== undefined && Array.isArray(roles) && roles.includes('admin') !== ehAdmin(auth.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover a role admin' })
   }
 
   if (nome !== undefined && !String(nome).trim()) {
@@ -211,9 +212,6 @@ exports.alterarAtivo = async (req, res) => {
     return res.status(400).json({ error: 'Você não pode desativar a própria conta' })
   }
 
-  const bloqueio = await bloqueioAlvoAdmin(req.user, id)
-  if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error })
-
   const { error } = await supabase.auth.admin.updateUserById(id, {
     ban_duration: ativo ? 'none' : DURACAO_DESATIVACAO
   })
@@ -233,10 +231,6 @@ exports.enviarResetSenha = async (req, res) => {
   const { data, error } = await supabase.auth.admin.getUserById(id)
   if (error || !data?.user) return res.status(404).json({ error: 'Usuário não encontrado' })
 
-  if (!ehAdmin(req.user) && ehAdmin(data.user)) {
-    return res.status(403).json({ error: 'Apenas administradores podem alterar outro administrador' })
-  }
-
   const { error: resetError } = await supabase.auth.resetPasswordForEmail(data.user.email, {
     redirectTo: `${process.env.FRONTEND_URL}/reset-password`
   })
@@ -251,17 +245,6 @@ exports.enviarResetSenha = async (req, res) => {
 
 function ehAdmin(user) {
   return (user?.app_metadata?.roles ?? []).includes('admin')
-}
-
-// Técnico gerencia usuários, mas não pode agir sobre um administrador
-async function bloqueioAlvoAdmin(quemEdita, alvoId) {
-  if (ehAdmin(quemEdita)) return null
-
-  const { data, error } = await supabase.auth.admin.getUserById(alvoId)
-  if (error || !data?.user) return { status: 404, error: 'Usuário não encontrado' }
-  if (ehAdmin(data.user)) return { status: 403, error: 'Apenas administradores podem alterar outro administrador' }
-
-  return null
 }
 
 function estaDesativado(authUser) {

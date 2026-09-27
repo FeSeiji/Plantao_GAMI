@@ -21,7 +21,7 @@ export const ROLES = [
   { value: "admin", label: "Administrador" },
 ]
 
-// Quem pode abrir a tela de usuários e quem pode editar (técnico não mexe em admins)
+// Quem pode abrir a tela de usuários e quem pode editar (técnico não concede nem remove a role admin)
 export const ROLES_GESTAO = ["admin", "anestesita_socio", "tecnico"]
 export const ROLES_EDICAO = ["admin", "tecnico"]
 
@@ -38,7 +38,7 @@ export const INPUT_CLASS =
 type Props = {
   // null = criar novo usuário
   usuario: UsuarioGestao | null
-  // false = esconde a role admin (técnico não pode conceder)
+  // false = técnico: não concede nem remove a role admin (só a vê, travada, em quem já é admin)
   podeGerenciarAdmin: boolean
   onClose: () => void
   onSaved: () => void
@@ -235,17 +235,27 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
           <div>
             <span className="block text-sm font-medium text-gray-700 mb-1">Funções</span>
             <div className="grid grid-cols-2 gap-2">
-              {ROLES.filter((r) => podeGerenciarAdmin || r.value !== "admin").map((r) => (
-                <label
-                  key={r.value}
-                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
-                    roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"
-                  }`}
-                >
-                  <input type="checkbox" checked={roles.includes(r.value)} onChange={() => alternarRole(r.value)} className="accent-brand-700" />
-                  {r.label}
-                </label>
-              ))}
+              {ROLES.filter((r) => podeGerenciarAdmin || r.value !== "admin" || usuario?.roles.includes("admin")).map((r) => {
+                const travada = r.value === "admin" && !podeGerenciarAdmin
+                return (
+                  <label
+                    key={r.value}
+                    title={travada ? "Só administradores podem conceder ou remover esta função" : undefined}
+                    className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
+                      travada ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                    } ${roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={roles.includes(r.value)}
+                      disabled={travada}
+                      onChange={() => alternarRole(r.value)}
+                      className="accent-brand-700"
+                    />
+                    {r.label}
+                  </label>
+                )
+              })}
             </div>
           </div>
 

@@ -108,8 +108,7 @@ export default function UsuariosPage() {
           </thead>
           <tbody>
             {usuarios.map((u) => {
-              // Técnico edita usuários, mas não administradores
-              const editavel = podeEditar && (isAdmin || !u.roles.includes("admin"))
+              const editavel = podeEditar
               return (
                 <tr
                   key={u.id}
