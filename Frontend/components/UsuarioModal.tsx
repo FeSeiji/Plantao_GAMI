@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
+import { TIPOS_AFASTAMENTO } from "./disponibilidade"
 
 export type UsuarioGestao = {
   id: string
   nome: string | null
   email: string | null
+  telefone: string | null
   sigla: string | null
   crm: string | null
   crm_uf: string | null
@@ -20,24 +22,36 @@ export const ROLES = [
   { value: "admin", label: "Administrador" },
 ]
 
-// Quem pode abrir a tela de usuários e quem pode editar (técnico não mexe em admins)
+// Quem pode abrir a tela de usuários e quem pode editar (técnico não concede nem remove a role admin)
 export const ROLES_GESTAO = ["admin", "anestesita_socio", "tecnico"]
 export const ROLES_EDICAO = ["admin", "tecnico"]
 
-const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+export const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
 
-const UFS = [
+export const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
   "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ]
 
-const INPUT_CLASS =
+export const INPUT_CLASS =
   "w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition disabled:bg-gray-50 disabled:text-gray-500"
+
+type AfastamentoGestao = {
+  id: string
+  tipo: string
+  data_inicio: string
+  data_fim: string
+  observacao: string | null
+}
+
+function formatarData(data: string) {
+  return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
+}
 
 type Props = {
   // null = criar novo usuário
   usuario: UsuarioGestao | null
-  // false = esconde a role admin (técnico não pode conceder)
+  // false = técnico: não concede nem remove a role admin (só a vê, travada, em quem já é admin)
   podeGerenciarAdmin: boolean
   onClose: () => void
   onSaved: () => void
@@ -58,8 +72,22 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   const [mensagem, setMensagem] = useState("")
   const [loading, setLoading] = useState(false)
   const [confirmandoAtivo, setConfirmandoAtivo] = useState(false)
+  const [afastamentos, setAfastamentos] = useState<AfastamentoGestao[] | null>(null)
 
   const exigeCrm = roles.some((r) => ROLES_ANESTESISTA.includes(r))
+  const ehAnestesista = usuario?.roles.some((r) => ROLES_ANESTESISTA.includes(r)) ?? false
+
+  // Férias e congressos do médico: só leitura aqui, quem cadastra é o próprio médico no perfil
+  useEffect(() => {
+    if (!usuario || !ehAnestesista) return
+    const token = localStorage.getItem("token")
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/usuario/${usuario.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then(setAfastamentos)
+      .catch(() => setAfastamentos([]))
+  }, [usuario, ehAnestesista])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -234,17 +262,27 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
           <div>
             <span className="block text-sm font-medium text-gray-700 mb-1">Funções</span>
             <div className="grid grid-cols-2 gap-2">
-              {ROLES.filter((r) => podeGerenciarAdmin || r.value !== "admin").map((r) => (
-                <label
-                  key={r.value}
-                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
-                    roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"
-                  }`}
-                >
-                  <input type="checkbox" checked={roles.includes(r.value)} onChange={() => alternarRole(r.value)} className="accent-brand-700" />
-                  {r.label}
-                </label>
-              ))}
+              {ROLES.filter((r) => podeGerenciarAdmin || r.value !== "admin" || usuario?.roles.includes("admin")).map((r) => {
+                const travada = r.value === "admin" && !podeGerenciarAdmin
+                return (
+                  <label
+                    key={r.value}
+                    title={travada ? "Só administradores podem conceder ou remover esta função" : undefined}
+                    className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
+                      travada ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                    } ${roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={roles.includes(r.value)}
+                      disabled={travada}
+                      onChange={() => alternarRole(r.value)}
+                      className="accent-brand-700"
+                    />
+                    {r.label}
+                  </label>
+                )
+              })}
             </div>
           </div>
 
@@ -278,6 +316,35 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                   ))}
                 </select>
               </div>
+            </div>
+          )}
+
+          {!criando && ehAnestesista && (
+            <div>
+              <span className="block text-sm font-medium text-gray-700 mb-1">Férias e congressos</span>
+              {afastamentos === null ? (
+                <p className="text-sm text-gray-400">Carregando...</p>
+              ) : afastamentos.length === 0 ? (
+                <p className="text-sm text-gray-400">Nenhum período atual ou futuro.</p>
+              ) : (
+                <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+                  {afastamentos.map((a) => (
+                    <li key={a.id} className="flex items-center gap-3 px-3 py-2">
+                      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-red-50 text-red-700">
+                        {TIPOS_AFASTAMENTO.find((t) => t.valor === a.tipo)?.rotulo ?? a.tipo}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm text-gray-800">
+                          {formatarData(a.data_inicio)}
+                          {a.data_fim !== a.data_inicio && ` a ${formatarData(a.data_fim)}`}
+                        </p>
+                        {a.observacao && <p className="text-xs text-gray-500 truncate">{a.observacao}</p>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-gray-400 mt-1">Cadastrados pelo próprio médico no perfil.</p>
             </div>
           )}
 

@@ -63,12 +63,13 @@ export default function PlantoesPage() {
   }, [carregarPlantoes])
 
   return (
-    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+    <main className="max-w-screen-2xl mx-auto px-3 sm:px-6 py-6 sm:py-12">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 sm:mb-6">
         <h1 className="text-xl font-bold text-gray-800">Plantões</h1>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+        {/* No celular o filtro e o botão ocupam a linha toda, abaixo do título */}
+        <div className="flex w-full sm:w-auto items-center gap-3">
+          <div className="flex flex-1 sm:flex-none items-center bg-gray-100 rounded-lg p-0.5">
             {(
               [
                 { valor: "todos", rotulo: "Todos" },
@@ -80,7 +81,7 @@ export default function PlantoesPage() {
                 key={opcao.valor}
                 type="button"
                 onClick={() => setFiltroTipo(opcao.valor)}
-                className={`text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
+                className={`flex-1 sm:flex-none text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
                   filtroTipo === opcao.valor ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
                 }`}
               >
@@ -91,7 +92,7 @@ export default function PlantoesPage() {
 
           <button
             onClick={() => setShowModal(true)}
-            className="bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
           >
             + Novo plantão
           </button>

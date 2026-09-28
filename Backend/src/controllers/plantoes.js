@@ -2,6 +2,8 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
+
 const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
@@ -14,6 +16,11 @@ exports.createPlantao = async (req, res) => {
 
   if (!TIPOS_VALIDOS.includes(tipo)) {
     return res.status(400).json({ error: "tipo é obrigatório e deve ser 'plantonista' ou 'socio'" })
+  }
+
+  const rolesCriador = req.user.app_metadata?.roles ?? []
+  if (tipo === 'socio' && rolesCriador.includes('anestesita_plantonista') && !rolesCriador.includes('anestesita_socio')) {
+    return res.status(403).json({ error: 'Médicos plantonistas não podem criar plantões de sócio' })
   }
 
   const janela = { data, horaInicio: hora_inicio, horaFim: hora_fim }
@@ -53,7 +60,8 @@ exports.createPlantao = async (req, res) => {
 
   try {
     const perfis = await buscarPerfis(membros.map(m => m.usuario_id))
-    return res.status(201).json(formatPlantao({ ...plantao, plantao_usuarios: membros }, perfis))
+    const linha = { ...plantao, plantao_usuarios: membros }
+    return res.status(201).json(formatPlantao(linha, perfis, new Map(), await buscarAfastamentosDosPlantoes([linha])))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -83,7 +91,8 @@ exports.listPlantoes = async (req, res) => {
   try {
     const perfis = await buscarPerfis(data.flatMap(row => row.plantao_usuarios.map(u => u.usuario_id)))
     const trocasPendentes = await buscarTrocasPendentesPorSlot(data.map(row => row.id))
-    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes)))
+    const afastamentos = await buscarAfastamentosDosPlantoes(data)
+    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes, afastamentos)))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -102,7 +111,7 @@ exports.getPlantao = async (req, res) => {
   try {
     const perfis = await buscarPerfis(data.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([data.id])
-    return res.json(formatPlantao(data, perfis, trocasPendentes))
+    return res.json(formatPlantao(data, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([data])))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -135,7 +144,7 @@ exports.updatePlantao = async (req, res) => {
   try {
     const perfis = await buscarPerfis(plantao.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([plantao.id])
-    return res.json(formatPlantao(plantao, perfis, trocasPendentes))
+    return res.json(formatPlantao(plantao, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([plantao])))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -276,6 +285,20 @@ exports.definirCoordenador = async (req, res) => {
   if (membroError) return res.status(500).json({ error: membroError.message })
   if (!membro) return res.status(400).json({ error: 'O médico precisa estar na equipe do plantão para ser coordenador' })
 
+  const { data: atual, error: atualError } = await supabase
+    .from('plantao_usuarios')
+    .select('usuario_id')
+    .eq('plantao_id', req.params.id)
+    .eq('is_coordenador', true)
+    .maybeSingle()
+
+  if (atualError) return res.status(500).json({ error: atualError.message })
+  if (atual && atual.usuario_id !== usuario_id && (await usuariosSoSocio([atual.usuario_id])).length > 0) {
+    return res.status(400).json({
+      error: 'O coordenador atual é sócio e não pode continuar na equipe como membro. Use "Trocar" para substituí-lo.'
+    })
+  }
+
   const { error: limparError } = await supabase
     .from('plantao_usuarios')
     .update({ is_coordenador: false })
@@ -315,7 +338,7 @@ exports.criarTroca = async (req, res) => {
 
   const { data: slotSaida, error: slotError } = await supabase
     .from('plantao_usuarios')
-    .select('usuario_id')
+    .select('usuario_id, is_coordenador')
     .eq('plantao_id', req.params.id)
     .eq('usuario_id', usuario_saida)
     .maybeSingle()
@@ -338,9 +361,19 @@ exports.criarTroca = async (req, res) => {
     return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
   }
 
+  if (plantao.tipo === 'plantonista' && !slotSaida.is_coordenador && (await usuariosSoSocio([usuario_entrada])).length > 0) {
+    return res.status(400).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
+  }
+
   const ocupados = await usuariosComConflito([usuario_entrada], plantao.data, plantao.hora_inicio, plantao.hora_fim, plantao.id)
   if (ocupados.size > 0) {
     return res.status(400).json({ error: 'usuario_entrada já está escalado em outro plantão nesse horário' })
+  }
+
+  try {
+    await validarSemAfastamento([usuario_entrada], plantao.data)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
   }
 
   const { data: troca, error } = await supabase
@@ -421,6 +454,22 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   }
 
   if (aceitar) {
+    const { data: slot, error: slotError } = await supabase
+      .from('plantao_usuarios')
+      .select('is_coordenador, plantoes(tipo, data)')
+      .eq('plantao_id', troca.plantao_id)
+      .eq('usuario_id', troca.usuario_saida)
+      .maybeSingle()
+
+    if (slotError) return res.status(500).json({ error: slotError.message })
+    if (slot?.plantoes?.tipo === 'plantonista' && !slot.is_coordenador && (await usuariosSoSocio([troca.usuario_entrada])).length > 0) {
+      return res.status(409).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
+    }
+
+    if (slot?.plantoes?.data && (await usuariosAfastados([troca.usuario_entrada], slot.plantoes.data)).size > 0) {
+      return res.status(409).json({ error: 'Você está de férias ou em congresso no dia desse plantão' })
+    }
+
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
       .update({ usuario_id: troca.usuario_entrada })
@@ -465,11 +514,17 @@ async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoorden
     throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
   }
 
+  const socios = await usuariosSoSocio(usuarios.filter(id => id !== coordenadorId))
+  if (socios.length > 0) {
+    throw new Error('Sócios só podem entrar em plantão de plantonista como coordenador')
+  }
+
   if (janela) {
     const ocupados = await usuariosComConflito(usuarios, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
     if (ocupados.size > 0) {
       throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
     }
+    await validarSemAfastamento(usuarios, janela.data)
   }
 
   return usuarios.map(usuario_id => ({
@@ -511,6 +566,7 @@ async function validarFilaSocio(fila, { janela } = {}) {
     if (ocupados.size > 0) {
       throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
     }
+    await validarSemAfastamento(usuarioIds, janela.data)
   }
 
   return fila.map(({ usuario_id, posicao }) => ({ usuario_id, is_coordenador: false, posicao }))
@@ -529,6 +585,21 @@ async function usuariosSemRoleMedico(usuarioIds) {
   )
 
   return resultados.filter(r => !r.valido).map(r => r.id)
+}
+
+// Quem é só sócio (sem a role de plantonista) — em plantão de plantonista, só entra como coordenador
+async function usuariosSoSocio(usuarioIds) {
+  const idsUnicos = [...new Set(usuarioIds)]
+
+  const resultados = await Promise.all(
+    idsUnicos.map(async id => {
+      const { data } = await supabase.auth.admin.getUserById(id)
+      const roles = data?.user?.app_metadata?.roles ?? []
+      return { id, soSocio: roles.includes('anestesita_socio') && !roles.includes('anestesita_plantonista') }
+    })
+  )
+
+  return resultados.filter(r => r.soSocio).map(r => r.id)
 }
 
 async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, excluirPlantaoId) {
@@ -586,6 +657,27 @@ function deslocarData(data, dias) {
   return d.toISOString().slice(0, 10)
 }
 
+// Afastamentos (férias/congresso) dos médicos escalados, no intervalo de datas desses plantões
+async function buscarAfastamentosDosPlantoes(rows) {
+  if (rows.length === 0) return []
+  const datas = rows.map(r => r.data).sort()
+  const ids = rows.flatMap(r => (r.plantao_usuarios ?? []).map(u => u.usuario_id))
+  return buscarAfastamentosNoPeriodo(ids, datas[0], datas[datas.length - 1])
+}
+
+// Erro se algum dos médicos estiver de férias ou em congresso nessa data
+async function validarSemAfastamento(usuarioIds, data) {
+  const afastados = await usuariosAfastados(usuarioIds, data)
+  if (afastados.size === 0) return
+
+  const perfis = await buscarPerfis([...afastados.keys()])
+  const descricao = [...afastados].map(([id, a]) => {
+    const nome = perfis.get(id)?.nome ?? perfis.get(id)?.email ?? id
+    return `${nome} (${ROTULO_TIPO[a.tipo]} até ${a.data_fim.split('-').reverse().join('/')})`
+  })
+  throw new Error(`Médico(s) indisponível(is) nesse dia: ${descricao.join(', ')}`)
+}
+
 async function buscarPerfis(usuarioIds) {
   const idsUnicos = [...new Set(usuarioIds)]
   if (idsUnicos.length === 0) return new Map()
@@ -638,7 +730,7 @@ function formatTroca(row, perfis) {
   }
 }
 
-function formatPlantao(row, perfis, trocasPendentes = new Map()) {
+function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = []) {
   const { plantao_usuarios, ...plantao } = row
   const usuarios = plantao_usuarios
     .map(u => ({
@@ -646,6 +738,7 @@ function formatPlantao(row, perfis, trocasPendentes = new Map()) {
       coordenador: u.is_coordenador ?? false,
       posicao: u.posicao ?? null,
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
+      afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
     }))
     .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
 

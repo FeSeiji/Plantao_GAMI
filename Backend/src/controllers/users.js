@@ -2,6 +2,7 @@
 const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_VALIDAS, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { usuariosAfastados } = require('../services/afastamentos')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -31,7 +32,7 @@ exports.getUsers = async (req, res) => {
     if (idsComRole.length === 0) return res.json([])
   }
 
-  let query = supabase.from('profiles').select('id, nome, email, sigla')
+  let query = supabase.from('profiles').select('id, nome, email, sigla, dias_disponiveis')
 
   if (search) {
     const termo = `%${search}%`
@@ -47,24 +48,32 @@ exports.getUsers = async (req, res) => {
     return res.status(500).json({ error: error.message })
   }
 
-  if (dataAlvo && horaInicio && horaFim) {
-    try {
-      const ocupados = await usuariosComConflito(data.map(p => p.id), dataAlvo, horaInicio, horaFim)
-      return res.json(data.filter(p => !ocupados.has(p.id)))
-    } catch (err) {
-      console.error(err)
-      return res.status(500).json({ error: err.message })
-    }
-  }
+  try {
+    let resultado = data
 
-  return res.json(data)
+    if (dataAlvo && horaInicio && horaFim) {
+      const ocupados = await usuariosComConflito(resultado.map(p => p.id), dataAlvo, horaInicio, horaFim)
+      resultado = resultado.filter(p => !ocupados.has(p.id))
+    }
+
+    // Afastados (férias/congresso) continuam na lista, marcados, para o picker mostrar o motivo
+    if (dataAlvo) {
+      const afastados = await usuariosAfastados(resultado.map(p => p.id), dataAlvo)
+      resultado = resultado.map(p => ({ ...p, afastamento: afastados.get(p.id) ?? null }))
+    }
+
+    return res.json(resultado)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
+  }
 }
 
 // Gestão de usuários: lista completa com roles, CRM e status
 exports.listarGestao = async (req, res) => {
   const { search } = req.query
 
-  let query = supabase.from('profiles').select('id, nome, email, sigla, crm, crm_uf').order('nome')
+  let query = supabase.from('profiles').select('id, nome, email, telefone, sigla, crm, crm_uf').order('nome')
 
   if (search) {
     const termo = `%${search}%`
@@ -139,8 +148,9 @@ exports.atualizarUsuario = async (req, res) => {
     return res.status(404).json({ error: 'Usuário não encontrado' })
   }
 
-  if (!ehAdmin(req.user) && (ehAdmin(auth.user) || (roles ?? []).includes('admin'))) {
-    return res.status(403).json({ error: 'Apenas administradores podem alterar a role admin ou editar um administrador' })
+  // Técnico edita os dados de um admin, mas não concede nem retira a role admin
+  if (!ehAdmin(req.user) && roles !== undefined && Array.isArray(roles) && roles.includes('admin') !== ehAdmin(auth.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover a role admin' })
   }
 
   if (nome !== undefined && !String(nome).trim()) {
@@ -211,9 +221,6 @@ exports.alterarAtivo = async (req, res) => {
     return res.status(400).json({ error: 'Você não pode desativar a própria conta' })
   }
 
-  const bloqueio = await bloqueioAlvoAdmin(req.user, id)
-  if (bloqueio) return res.status(bloqueio.status).json({ error: bloqueio.error })
-
   const { error } = await supabase.auth.admin.updateUserById(id, {
     ban_duration: ativo ? 'none' : DURACAO_DESATIVACAO
   })
@@ -233,10 +240,6 @@ exports.enviarResetSenha = async (req, res) => {
   const { data, error } = await supabase.auth.admin.getUserById(id)
   if (error || !data?.user) return res.status(404).json({ error: 'Usuário não encontrado' })
 
-  if (!ehAdmin(req.user) && ehAdmin(data.user)) {
-    return res.status(403).json({ error: 'Apenas administradores podem alterar outro administrador' })
-  }
-
   const { error: resetError } = await supabase.auth.resetPasswordForEmail(data.user.email, {
     redirectTo: `${process.env.FRONTEND_URL}/reset-password`
   })
@@ -251,17 +254,6 @@ exports.enviarResetSenha = async (req, res) => {
 
 function ehAdmin(user) {
   return (user?.app_metadata?.roles ?? []).includes('admin')
-}
-
-// Técnico gerencia usuários, mas não pode agir sobre um administrador
-async function bloqueioAlvoAdmin(quemEdita, alvoId) {
-  if (ehAdmin(quemEdita)) return null
-
-  const { data, error } = await supabase.auth.admin.getUserById(alvoId)
-  if (error || !data?.user) return { status: 404, error: 'Usuário não encontrado' }
-  if (ehAdmin(data.user)) return { status: 403, error: 'Apenas administradores podem alterar outro administrador' }
-
-  return null
 }
 
 function estaDesativado(authUser) {

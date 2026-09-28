@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import UsuarioModal, { ROLES, ROLES_EDICAO, ROLES_GESTAO, UsuarioGestao } from "../../../components/UsuarioModal"
+import { formatarTelefone } from "../../../components/telefone"
 
 const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
 
@@ -99,6 +100,7 @@ export default function UsuariosPage() {
           <thead>
             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
               <th className="px-4 py-3">Usuário</th>
+              <th className="px-4 py-3">Contato</th>
               <th className="px-4 py-3">Funções</th>
               <th className="px-4 py-3">CRM</th>
               <th className="px-4 py-3">Status</th>
@@ -106,8 +108,7 @@ export default function UsuariosPage() {
           </thead>
           <tbody>
             {usuarios.map((u) => {
-              // Técnico edita usuários, mas não administradores
-              const editavel = podeEditar && (isAdmin || !u.roles.includes("admin"))
+              const editavel = podeEditar
               return (
                 <tr
                   key={u.id}
@@ -121,8 +122,26 @@ export default function UsuariosPage() {
                       <SiglaBadge sigla={u.sigla} />
                       <div className="min-w-0">
                         <p className="font-medium text-gray-800 truncate">{u.nome ?? "—"}</p>
-                        <p className="text-gray-400 text-xs truncate">{u.email}</p>
                       </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {/* stopPropagation: clicar no link não abre o modal de edição da linha */}
+                    <div className="flex flex-col gap-0.5 text-xs whitespace-nowrap">
+                      {u.email ? (
+                        <a href={`mailto:${u.email}`} onClick={(e) => e.stopPropagation()} className="text-gray-600 hover:text-brand-700 hover:underline">
+                          {u.email}
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                      {u.telefone ? (
+                        <a href={`tel:+55${u.telefone}`} onClick={(e) => e.stopPropagation()} className="text-gray-600 hover:text-brand-700 hover:underline">
+                          {formatarTelefone(u.telefone)}
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">Sem telefone</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -153,7 +172,7 @@ export default function UsuariosPage() {
             })}
             {!loading && usuarios.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
                   Nenhum usuário encontrado.
                 </td>
               </tr>

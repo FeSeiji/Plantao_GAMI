@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js')
 
-const { validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_ANESTESISTA, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -19,7 +19,7 @@ exports.me = async (req, res) => {
 
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('nome, sigla')
+    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis')
     .eq('id', id)
     .maybeSingle()
 
@@ -33,8 +33,107 @@ exports.me = async (req, res) => {
     email,
     nome: profile?.nome ?? null,
     sigla: profile?.sigla ?? null,
+    crm: profile?.crm ?? null,
+    crm_uf: profile?.crm_uf ?? null,
+    telefone: profile?.telefone ?? null,
+    data_nascimento: profile?.data_nascimento ?? null,
+    dias_disponiveis: profile?.dias_disponiveis ?? null,
     roles: app_metadata?.roles ?? []
   })
+}
+
+// Edição do próprio cadastro. Email e roles ficam de fora: roles só a gestão altera.
+exports.atualizarMe = async (req, res) => {
+  const { id, app_metadata } = req.user
+  const { nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis } = req.body
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('nome, sigla, crm, crm_uf, telefone, data_nascimento, dias_disponiveis')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (profileError) {
+    console.error(profileError)
+    return res.status(500).json({ error: profileError.message })
+  }
+  if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' })
+
+  if (nome !== undefined && !String(nome).trim()) {
+    return res.status(400).json({ error: 'nome não pode ser vazio' })
+  }
+
+  let telefoneFinal = profile.telefone
+  if (telefone !== undefined) {
+    telefoneFinal = telefone ? String(telefone).replace(/\D/g, '') : null
+    if (telefoneFinal && !/^\d{10,11}$/.test(telefoneFinal)) {
+      return res.status(400).json({ error: 'telefone deve ter DDD + número (10 ou 11 dígitos)' })
+    }
+  }
+
+  let nascimentoFinal = profile.data_nascimento
+  if (data_nascimento !== undefined) {
+    nascimentoFinal = data_nascimento || null
+    if (nascimentoFinal) {
+      const valida = /^\d{4}-\d{2}-\d{2}$/.test(nascimentoFinal) && !isNaN(new Date(nascimentoFinal).getTime())
+      if (!valida) return res.status(400).json({ error: 'data_nascimento inválida (use AAAA-MM-DD)' })
+      if (new Date(nascimentoFinal) > new Date()) {
+        return res.status(400).json({ error: 'data_nascimento não pode ser no futuro' })
+      }
+    }
+  }
+
+  // Dias da semana em que o médico prefere trabalhar (0 = domingo ... 6 = sábado).
+  // null = não preencheu ou marcou todos: disponível todos os dias. Só anestesistas têm.
+  const roles = app_metadata?.roles ?? []
+  let diasFinal = profile.dias_disponiveis
+  if (!roles.some(r => ROLES_ANESTESISTA.includes(r))) {
+    diasFinal = null
+  } else if (dias_disponiveis !== undefined) {
+    if (dias_disponiveis !== null && !Array.isArray(dias_disponiveis)) {
+      return res.status(400).json({ error: 'dias_disponiveis deve ser um array de 0 (domingo) a 6 (sábado)' })
+    }
+    const dias = [...new Set(dias_disponiveis ?? [])]
+    if (dias.some(d => !Number.isInteger(d) || d < 0 || d > 6)) {
+      return res.status(400).json({ error: 'dias_disponiveis deve ser um array de 0 (domingo) a 6 (sábado)' })
+    }
+    diasFinal = dias_disponiveis === null || dias.length === 7 ? null : dias.sort()
+  }
+
+  let dados
+  try {
+    dados = await validarDadosUsuario({
+      sigla: sigla ?? profile.sigla,
+      roles,
+      crm: crm ?? profile.crm,
+      crm_uf: crm_uf ?? profile.crm_uf
+    }, id)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
+  }
+
+  if (dados.error) return res.status(400).json({ error: dados.error })
+
+  const { error: updateError } = await supabase
+    .from('profiles')
+    .update({
+      nome: nome !== undefined ? String(nome).trim() : profile.nome,
+      sigla: dados.sigla,
+      crm: dados.crm,
+      crm_uf: dados.crm_uf,
+      telefone: telefoneFinal,
+      data_nascimento: nascimentoFinal,
+      dias_disponiveis: diasFinal
+    })
+    .eq('id', id)
+
+  if (updateError) {
+    console.error(updateError)
+    return res.status(500).json({ error: updateError.message })
+  }
+
+  return exports.me(req, res)
 }
 
 exports.register = async (req, res) => {

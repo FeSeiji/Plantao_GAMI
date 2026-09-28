@@ -1,6 +1,7 @@
 "use client"
 
 import SiglaBadge from "./SiglaBadge"
+import { Afastamento, rotuloAfastamento } from "./disponibilidade"
 
 export type TrocaPendente = {
   id: string
@@ -17,6 +18,7 @@ export type Usuario = {
   coordenador?: boolean
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
+  afastamento?: Afastamento | null
 }
 
 export type Plantao = {
@@ -32,14 +34,35 @@ export type Plantao = {
 
 export type Visualizacao = "semana" | "mes"
 
+// Cor de cada tipo de plantão: faixa à esquerda do card, etiqueta e legenda
+const ESTILO_TIPO = {
+  plantonista: { rotulo: "Plantonista", faixa: "border-l-sky-500", etiqueta: "bg-sky-100 text-sky-800", ponto: "bg-sky-500" },
+  socio: { rotulo: "Sócio", faixa: "border-l-teal-500", etiqueta: "bg-teal-100 text-teal-800", ponto: "bg-teal-500" },
+}
+
 function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
   return (
-    <div className="relative shrink-0" title={usuario.trocaPendente ? "Troca pendente de aceite" : undefined}>
+    <div
+      className="relative shrink-0"
+      title={
+        [
+          usuario.afastamento && `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`,
+          usuario.trocaPendente && "Troca pendente de aceite",
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined
+      }
+    >
       <div className={usuario.coordenador ? "rounded-full ring-2 ring-purple-600" : undefined}>
         <SiglaBadge sigla={usuario.sigla} size="sm" />
       </div>
       {usuario.trocaPendente && (
         <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
+      )}
+      {usuario.afastamento && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          !
+        </span>
       )}
       {usuario.posicao != null && (
         <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
@@ -181,9 +204,19 @@ export default function PlantaoCalendario({
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5">
+    <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h2 className="font-semibold text-gray-800 capitalize">{rotuloPeriodo(dataReferencia, visualizacao)}</h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <h2 className="font-semibold text-gray-800 capitalize">{rotuloPeriodo(dataReferencia, visualizacao)}</h2>
+          <div className="flex items-center gap-3">
+            {Object.values(ESTILO_TIPO).map((e) => (
+              <span key={e.rotulo} className="flex items-center gap-1.5 text-xs text-gray-500">
+                <span className={`w-2.5 h-2.5 rounded-full ${e.ponto}`} />
+                {e.rotulo}
+              </span>
+            ))}
+          </div>
+        </div>
 
         <div className="flex items-center gap-2">
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
@@ -240,8 +273,9 @@ export default function PlantaoCalendario({
       </div>
 
       {visualizacao === "semana" ? (
-        <div className="overflow-x-auto">
-          <div className="min-w-[720px] grid grid-cols-7 gap-2 items-start">
+        <div className="md:overflow-x-auto">
+          {/* No celular os dias ficam empilhados; a partir do md, 7 colunas lado a lado */}
+          <div className="grid grid-cols-1 gap-4 md:min-w-[980px] md:grid-cols-7 md:gap-2 items-start">
             {gerarCelulasSemana(dataReferencia).map((data) => {
               const chave = formatarDataLocal(data)
               const doDia = (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
@@ -249,7 +283,7 @@ export default function PlantaoCalendario({
 
               return (
                 <div key={chave} className="flex flex-col">
-                  <div className="flex items-baseline justify-center gap-1.5 mb-2">
+                  <div className="flex items-baseline justify-start md:justify-center gap-1.5 mb-2">
                     <span className="text-xs font-semibold text-gray-400">{DIAS_SEMANA[data.getDay()]}</span>
                     <span
                       className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
@@ -260,9 +294,9 @@ export default function PlantaoCalendario({
                     </span>
                   </div>
 
-                  <div className="min-h-[56px] max-h-[420px] overflow-y-auto space-y-1.5 bg-gray-50 rounded-lg p-1.5 border border-gray-100">
+                  <div className="md:min-h-[56px] md:max-h-[560px] md:overflow-y-auto space-y-2 md:space-y-1.5 bg-gray-50 rounded-lg p-2 md:p-1.5 border border-gray-100">
                     {doDia.length === 0 && (
-                      <p className="text-[10px] text-gray-300 text-center py-3">Sem plantões</p>
+                      <p className="text-xs md:text-[10px] text-gray-300 text-center py-2 md:py-3">Sem plantões</p>
                     )}
                     {doDia.map((p) => (
                       <button
@@ -270,19 +304,24 @@ export default function PlantaoCalendario({
                         type="button"
                         onClick={() => onSelectPlantao(p)}
                         title={p.titulo}
-                        className="w-full text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 rounded-lg px-2 py-1.5 transition-colors"
+                        className={`w-full md:min-h-[104px] flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TIPO[p.tipo].faixa} rounded-lg px-3 py-3 md:px-2.5 md:py-2.5 transition-colors`}
                       >
-                        <p className="text-[10px] font-medium text-gray-400 mb-1">
-                          {p.hora_inicio.slice(0, 5)}–{p.hora_fim.slice(0, 5)}
-                        </p>
-                        <div className="flex items-center gap-1 flex-wrap mb-1">
+                        <div className="flex items-center justify-between gap-1 mb-1.5">
+                          <p className="text-xs md:text-[11px] font-medium text-gray-400">
+                            {p.hora_inicio.slice(0, 5)}–{p.hora_fim.slice(0, 5)}
+                          </p>
+                          <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${ESTILO_TIPO[p.tipo].etiqueta}`}>
+                            {ESTILO_TIPO[p.tipo].rotulo}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 md:gap-1 flex-wrap mb-2 md:mb-1.5">
                           {p.usuarios.length === 0 ? (
                             <SiglaBadge sigla={null} size="sm" />
                           ) : (
                             p.usuarios.map((u) => <BadgeComMarcador key={u.id} usuario={u} />)
                           )}
                         </div>
-                        <p className="text-[11px] text-gray-600 truncate">{p.titulo}</p>
+                        <p className="mt-auto text-sm md:text-xs text-gray-600 truncate">{p.titulo}</p>
                       </button>
                     ))}
                   </div>
@@ -327,8 +366,8 @@ export default function PlantaoCalendario({
                           key={p.id}
                           type="button"
                           onClick={() => onSelectPlantao(p)}
-                          title={p.titulo}
-                          className="w-full flex items-center gap-1 text-left bg-brand-50 hover:bg-brand-100 px-1 py-0.5 rounded transition-colors"
+                          title={`${p.titulo} · ${ESTILO_TIPO[p.tipo].rotulo}`}
+                          className={`w-full flex items-center gap-1 text-left bg-brand-50 hover:bg-brand-100 border-l-[3px] ${ESTILO_TIPO[p.tipo].faixa} px-1 py-0.5 rounded transition-colors`}
                         >
                           <div className="flex -space-x-1 shrink-0">
                             {p.usuarios.slice(0, 3).map((u) => (

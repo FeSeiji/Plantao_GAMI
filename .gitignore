@@ -1,0 +1,5 @@
+# macOS
+.DS_Store
+
+# Cache do TypeScript (regerado a cada typecheck/build)
+*.tsbuildinfo
