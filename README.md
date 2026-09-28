@@ -1,6 +1,6 @@
 # 🏥 Plantão — GAMI
 
-Sistema de gestão de plantões hospitalares do **GAMI (Grupo Anestesia Materno Infantil)**: escala de plantões, trocas entre médicos, gestão de usuários e o BM Financeiro mensal.
+Sistema de gestão de plantões hospitalares do **GAMI (Grupo Anestesia Materno Infantil)**: escala de plantões, trocas entre médicos, férias e congressos, gestão de usuários e o BM Financeiro mensal.
 
 O projeto é dividido em duas aplicações:
 
@@ -35,15 +35,18 @@ Plantão/
 ├── Backend/
 │   ├── src/
 │   │   ├── controllers/
-│   │   │   ├── authController.js   # Login, cadastro, /me e redefinição de senha
+│   │   │   ├── authController.js   # Login, cadastro, /me (ver e editar o próprio perfil) e redefinição de senha
 │   │   │   ├── users.js            # Busca de médicos e gestão de usuários
 │   │   │   ├── plantoes.js         # Plantões, equipes/filas e trocas
+│   │   │   ├── afastamentos.js     # Férias e congressos dos médicos
+│   │   │   ├── dashboard.js        # Painel pessoal e visão da gestão
 │   │   │   └── bmFinanceiro.js     # Resumo mensal de horas e pontos
 │   │   ├── services/
-│   │   │   └── usuarios.js         # Validação de sigla, roles e CRM
+│   │   │   ├── usuarios.js         # Validação de sigla, roles e CRM
+│   │   │   └── afastamentos.js     # Consulta de férias/congressos por data
 │   │   ├── middleware/
 │   │   │   └── auth.js             # Validação do JWT e checagem de roles
-│   │   ├── routes/                 # auth, users, plantoes, bmFinanceiro
+│   │   ├── routes/                 # auth, users, plantoes, afastamentos, dashboard, bmFinanceiro
 │   │   ├── app.js                  # Configuração do Express
 │   │   └── server.js               # Entrypoint — sobe o servidor
 │   ├── Dockerfile
@@ -56,9 +59,10 @@ Plantão/
 │   │   └── (app)/                  # Área logada (com sidebar)
 │   │       ├── dashboard/
 │   │       ├── plantoes/           # Calendário de plantões
+│   │       ├── perfil/             # Meu perfil (dados, dias disponíveis, férias e congressos)
 │   │       ├── usuarios/           # Gestão de usuários
 │   │       └── bm-financeiro/      # BM Financeiro
-│   ├── components/                 # Modais, calendário, sidebar, badges
+│   ├── components/                 # Modais, calendário, grid de participantes, sidebar, badges
 │   ├── public/                     # Logos da GAMI
 │   ├── .env.example
 │   └── package.json
@@ -98,7 +102,10 @@ NEXT_PUBLIC_API_URL=http://localhost:3000
 
 ### Banco de dados
 
-O projeto **não tem migrations**. Mudanças de schema (tabelas `profiles`, `plantoes`, `plantao_usuarios`, `plantao_trocas`) são aplicadas manualmente pelo **SQL Editor** do Supabase.
+O projeto **não tem migrations**. Mudanças de schema (tabelas `profiles`, `plantoes`, `plantao_usuarios`, `plantao_trocas`, `afastamentos`) são aplicadas manualmente pelo **SQL Editor** do Supabase.
+
+- `profiles.dias_disponiveis` (`smallint[]`, 0 = domingo … 6 = sábado): dias da semana em que o médico prefere trabalhar. `null` = todos os dias.
+- `afastamentos`: períodos de férias ou congresso de cada médico (`tipo`, `data_inicio`, `data_fim`, `observacao`).
 
 ---
 
@@ -139,9 +146,9 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 
 | Role | Descrição |
 |------|-----------|
-| `anestesita_socio` | Anestesista sócio — trabalha em plantões de sócio (fila por posição) |
-| `anestesita_plantonista` | Anestesista plantonista — trabalha em plantões de plantonista (equipe) |
-| `tecnico` | Técnico — gestão de usuários |
+| `anestesita_socio` | Anestesista sócio — trabalha em plantões de sócio (fila por posição) e pode coordenar plantões de plantonista |
+| `anestesita_plantonista` | Anestesista plantonista — trabalha em plantões de plantonista (equipe) e de sócio |
+| `tecnico` | Técnico — gestão de usuários (inclusive de administradores, exceto a role admin) |
 | `admin` | Administrador |
 
 - As roles ficam em `app_metadata` no Supabase — só a service role key consegue alterá-las.
@@ -157,15 +164,30 @@ Existem dois tipos de plantão:
 - **Plantonista** — uma equipe de médicos, sem limite de tamanho, com **um coordenador obrigatório**.
 - **Sócio** — uma fila de até 7 médicos, cada um numa **posição de 1 a 7**.
 
-Qualquer anestesista pode entrar em qualquer tipo de plantão, e um médico não pode estar em dois plantões com horários sobrepostos. O calendário tem visões de **semana** e **mês** e filtro por tipo.
+Regras de escala:
+- Em plantão de **plantonista**, quem é só sócio entra **apenas como coordenador**. Quem tem as duas roles pode ser membro.
+- Médico que é só plantonista **não cria** plantão de sócio.
+- Um médico não pode estar em dois plantões com horários sobrepostos.
+- Médico de **férias ou em congresso** não pode ser escalado nesses dias (veja abaixo).
+
+Os participantes aparecem num **grid**: no sócio, 7 células fixas (clique numa vaga para preenchê-la); no plantonista, o coordenador em destaque, a equipe e uma célula **+** para crescer. As ações de cada médico (tornar coordenador, trocar, remover) ficam num menu ao clicar na célula.
+
+O calendário tem visões de **semana** e **mês**, filtro por tipo e uma **cor por tipo** (azul-claro = plantonista, verde-água = sócio). No celular, a semana mostra os dias empilhados.
 
 ### Trocas de plantão
 Substituir um médico num slot já ocupado cria uma **solicitação de troca**. A troca só vale depois que o médico que entra **aceita**, e enquanto isso o médico que sai continua no plantão. Adicionar alguém num slot vazio não precisa de aceite. O sino de notificações mostra as trocas pendentes para o usuário logado.
 
+### Meu perfil
+Acessado pelo menu da sigla (canto superior). Cada usuário vê seus dados e edita nome, sigla, telefone, data de nascimento e CRM. E-mail e funções só a gestão altera. Anestesistas também têm:
+- **Dias disponíveis** — dias da semana em que preferem trabalhar. Quem monta o plantão ainda pode escalá-lo em outro dia, mas a busca mostra um aviso.
+- **Férias e congressos** — períodos (data inicial a final) em que o médico **não pode ser escalado**: na busca ele aparece desabilitado, com o motivo. Se já estiver escalado, o plantão ganha um indicador vermelho no calendário e no grid, para a gestão resolver.
+
+Plantões que viram a noite contam pelo dia em que começam.
+
 ### Gestão de usuários
-Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-mail de redefinição de senha.
+Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-mail de redefinição de senha. A lista mostra o contato (e-mail e telefone) de cada usuário, e o modal do médico mostra suas férias e congressos (só leitura).
 - **Visualizar:** `admin`, `anestesita_socio`, `tecnico`
-- **Editar:** `admin`, `tecnico` (o técnico não edita administradores)
+- **Editar:** `admin`, `tecnico` (o técnico edita administradores, mas não concede nem remove a role admin)
 
 ### Dashboard
 Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e papel na equipe/fila), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos. Os dados vêm de um único endpoint e mostram só o que é do próprio usuário.
@@ -204,13 +226,14 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`) |
+| `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`, CRM, telefone, data de nascimento, dias disponíveis) |
+| `PATCH` | `/auth/me` | Edita o próprio cadastro (nome, sigla, telefone, data de nascimento, CRM, dias disponíveis) |
 
 **Usuários**
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/users` | Busca de médicos (`?search=`, `?role=`, filtro de conflito de horário) |
+| `GET` | `/users` | Busca de médicos (`?search=`, `?role=`). Com `?data=` marca quem está de férias/congresso; com `?horaInicio=&horaFim=` também tira quem tem conflito de horário |
 | `GET` | `/users/gestao` | Lista para a gestão de usuários |
 | `POST` | `/users` | Cria usuário |
 | `PATCH` | `/users/:id` | Edita nome, sigla, roles e CRM |
@@ -234,6 +257,15 @@ Authorization: Bearer <access_token>
 | `GET` | `/plantoes/trocas/pendentes` | Trocas aguardando o aceite do usuário logado |
 | `PATCH` | `/plantoes/trocas/:trocaId/aceitar` | Aceita a troca |
 | `PATCH` | `/plantoes/trocas/:trocaId/recusar` | Recusa a troca |
+
+**Férias e congressos**
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/afastamentos/me` | Períodos atuais e futuros do usuário logado |
+| `POST` | `/afastamentos` | Cadastra férias ou congresso (só anestesistas) — retorna os plantões já escalados no período |
+| `DELETE` | `/afastamentos/:id` | Remove um período próprio |
+| `GET` | `/afastamentos/usuario/:usuarioId` | Períodos atuais e futuros de um médico (`admin`, `tecnico`) |
 
 **Dashboard**
 
