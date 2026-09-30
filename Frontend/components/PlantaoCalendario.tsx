@@ -2,6 +2,7 @@
 
 import SiglaBadge from "./SiglaBadge"
 import { Afastamento, rotuloAfastamento } from "./disponibilidade"
+import { rotuloPosicaoCurto } from "./posicoes"
 
 export type TrocaPendente = {
   id: string
@@ -65,8 +66,8 @@ function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
         </span>
       )}
       {usuario.posicao != null && (
-        <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          {usuario.posicao}
+        <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          {rotuloPosicaoCurto(usuario.posicao)}
         </span>
       )}
     </div>

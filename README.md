@@ -162,7 +162,7 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 ### Plantões
 Existem dois tipos de plantão:
 - **Plantonista** — uma equipe de médicos, sem limite de tamanho, com **um coordenador obrigatório**.
-- **Sócio** — uma fila de até 7 médicos, cada um numa **posição de 1 a 7**.
+- **Sócio** — uma fila de até 8 médicos: **posições de 1 a 7** e, no fim, o **intermediário** (gravado como posição 8).
 
 Regras de escala:
 - Em plantão de **plantonista**, quem é só sócio entra **apenas como coordenador**. Quem tem as duas roles pode ser membro.
@@ -192,12 +192,12 @@ Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-m
 ### Dashboard
 Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e papel na equipe/fila), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos. Os dados vêm de um único endpoint e mostram só o que é do próprio usuário.
 
-Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias (fila de sócio incompleta, plantão sem médico ou sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
+Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias (plantão sem médico ou sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
 
 ### BM Financeiro
 Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado):
 - **Plantonista** — soma das **horas trabalhadas**. Plantões que viram a noite contam inteiros no mês em que começam.
-- **Sócio** — soma de **pontos por posição**: posição 1 = 7 pts, 2 = 6 pts … 7 = 1 pt.
+- **Sócio** — soma de **pontos por posição**: posição 1 = 7 pts, 2 = 6 pts … 7 = 1 pt; intermediário = 7 pts.
 
 Tem seletor de mês, busca por médico e **exportação para Excel** (uma aba por tipo). Acesso: `admin`, `anestesita_socio` e `tecnico`.
 

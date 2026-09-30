@@ -6,6 +6,7 @@ import GradeParticipantes, { AcaoMenu, CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel, rotuloAfastamento } from "./disponibilidade"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino"
+import { POSICOES, descreverPosicao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
 
 type Pessoa = {
   id: string
@@ -74,7 +75,6 @@ type Props = {
   onUpdated: () => void
 }
 
-const POSICOES = [1, 2, 3, 4, 5, 6, 7]
 
 function nomeDe(p: Pessoa) {
   return p.nome ?? p.email ?? p.id
@@ -484,7 +484,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
         <>
           <p>
             <span className="font-semibold">{nomeDe(u)}</span> será removido deste plantão
-            {ehSocio && u.posicao != null ? ` (posição ${u.posicao})` : ""}. A remoção fica registrada no histórico.
+            {ehSocio && u.posicao != null ? ` (${descreverPosicao(u.posicao)})` : ""}. A remoção fica registrada no histórico.
           </p>
           {u.trocaPendente && <p className="mt-2 text-amber-700">A troca pendente deste médico também será cancelada.</p>}
         </>
@@ -519,13 +519,13 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
         >
           {POSICOES.map((p) => (
             <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
-              {p}
+              {rotuloPosicaoCurto(p)}
             </option>
           ))}
         </select>
       )
     } else if (ehSocio) {
-      rotulo = u.posicao
+      rotulo = u.posicao != null ? rotuloPosicao(u.posicao) : undefined
     } else if (u.coordenador) {
       rotulo = "Coordenador"
     }
@@ -585,7 +585,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
         return {
           tipo: "vazia",
           chave: `posicao-${p}`,
-          rotulo: `${p}`,
+          rotulo: rotuloPosicao(p),
           texto: "Vaga",
           ativa: adicionando?.posicao === p,
           onClick: editavel ? () => abrirAdicao({ posicao: p }) : undefined,
@@ -735,7 +735,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                 <div className="relative mt-3">
                   <div className="flex items-center justify-between mb-1">
                     <label htmlFor="buscaUsuario" className="text-xs font-semibold text-brand-700">
-                      {adicionando.posicao != null ? `Adicionar na posição ${adicionando.posicao}` : "Adicionar à equipe"}
+                      {adicionando.posicao != null ? `Adicionar: ${descreverPosicao(adicionando.posicao)}` : "Adicionar à equipe"}
                     </label>
                     <button
                       type="button"
@@ -920,7 +920,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
               {eventosHistorico.map((evento) => {
                 if (evento.tipo === "remocao") {
                   const r = evento.remocao
-                  const papel = r.eraCoordenador ? " (coordenador)" : r.posicao != null ? ` (posição ${r.posicao})` : ""
+                  const papel = r.eraCoordenador ? " (coordenador)" : r.posicao != null ? ` (${descreverPosicao(r.posicao)})` : ""
                   return (
                     <li key={`remocao-${r.id}`} className="flex items-start gap-2 text-xs text-gray-600">
                       <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-gray-500" />

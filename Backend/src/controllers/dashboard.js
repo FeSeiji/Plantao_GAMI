@@ -2,8 +2,13 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1 — mesma regra do BM Financeiro
-const PONTOS_MAXIMOS = 8
+// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8) vale 7 — mesma regra do BM Financeiro
+const POSICAO_INTERMEDIARIO = 8
+
+function pontosDaPosicao(posicao) {
+  if (posicao == null) return 0
+  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
+}
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
 
@@ -81,7 +86,7 @@ exports.resumo = async (req, res) => {
     } else {
       const posicao = p.eu[0]?.posicao
       meuMes.socio.plantoes += 1
-      meuMes.socio.pontos += posicao != null ? PONTOS_MAXIMOS - posicao : 0
+      meuMes.socio.pontos += pontosDaPosicao(posicao)
     }
   }
 
@@ -105,7 +110,6 @@ exports.resumo = async (req, res) => {
   }
 }
 
-const TAMANHO_FILA_SOCIO = 7
 const TOP_N = 5
 
 // Visão da gestão (admin/técnico): hospital como um todo, não só o usuário logado.
@@ -210,12 +214,12 @@ exports.gestao = async (req, res) => {
 function problemaDeCobertura(p) {
   const n = p.plantao_usuarios.length
   if (n === 0) return 'Sem nenhum médico'
-  if (p.tipo === 'socio' && n < TAMANHO_FILA_SOCIO) return `Fila incompleta (${n}/${TAMANHO_FILA_SOCIO})`
+  // Alerta de fila de sócio incompleta desligado por enquanto
   if (p.tipo === 'plantonista' && !p.plantao_usuarios.some(u => u.is_coordenador)) return 'Sem coordenador'
   return null
 }
 
-// Mesmas regras do BM Financeiro: horas somadas por médico, pontos = 8 − posição
+// Mesmas regras do BM Financeiro: horas somadas por médico, pontos por posição
 function resumirMes(plantoes, { inicio, fim }) {
   const horas = new Map()
   const pontos = new Map()
@@ -232,7 +236,7 @@ function resumirMes(plantoes, { inicio, fim }) {
       }
     } else {
       for (const u of p.plantao_usuarios) {
-        const pts = u.posicao != null ? PONTOS_MAXIMOS - u.posicao : 0
+        const pts = pontosDaPosicao(u.posicao)
         pontos.set(u.usuario_id, (pontos.get(u.usuario_id) ?? 0) + pts)
         totais.pontos += pts
       }

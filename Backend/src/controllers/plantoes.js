@@ -540,10 +540,10 @@ async function validarFilaSocio(fila, { janela } = {}) {
   }
 
   const posicaoInvalida = fila.some(
-    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 7
+    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 8
   )
   if (posicaoInvalida) {
-    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 7)')
+    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)')
   }
 
   const posicoes = fila.map(f => f.posicao)
