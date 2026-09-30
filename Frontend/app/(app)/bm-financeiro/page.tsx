@@ -361,14 +361,14 @@ export default function BmFinanceiroPage() {
           <thead>
             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
               <th className="px-4 py-3">Médico</th>
-              <th className="px-4 py-3 text-right">Plantões</th>
-              <th className="px-4 py-3 text-right">{aba === "plantonista" ? "Horas trabalhadas" : "Pontos"}</th>
+              <th className="px-4 py-3 text-right whitespace-nowrap">Plantões</th>
+              <th className="px-4 py-3 text-right whitespace-nowrap">{aba === "plantonista" ? "Horas" : "Pontos"}</th>
             </tr>
           </thead>
           <tbody>
             {linhas.map((l) => (
               <tr key={l.id} className="border-b border-gray-100 last:border-0">
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 max-w-0 w-full">
                   <div className="flex items-center gap-3">
                     <SiglaBadge sigla={l.sigla} />
                     <div className="min-w-0">
@@ -378,7 +378,7 @@ export default function BmFinanceiroPage() {
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right text-gray-700 tabular-nums">{l.plantoes}</td>
-                <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums">
+                <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
                   {"minutos" in l ? formatarHoras(l.minutos) : `${l.pontos} pts`}
                 </td>
               </tr>

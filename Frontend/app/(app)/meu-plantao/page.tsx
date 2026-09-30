@@ -1,9 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
-import { Plantao, calcularIntervaloVisivel, formatarDataLocal } from "../../../components/PlantaoCalendario"
+import {
+  Plantao,
+  TURNOS,
+  calcularIntervaloVisivel,
+  formatarDataLocal,
+  turnoDe,
+} from "../../../components/PlantaoCalendario"
 import { POSICOES, POSICAO_INTERMEDIARIO, rotuloPosicao, rotuloPosicaoCurto } from "../../../components/posicoes"
 
 // Por enquanto só sócios veem esta tela — mesma lista em components/Sidebar.tsx
@@ -83,7 +89,7 @@ export default function MeuPlantaoPage() {
       .finally(() => setLoading(false))
   }, [inicio, fim])
 
-  // Plantões de cada dia, em ordem de horário (normalmente um só)
+  // Plantões de cada dia, em ordem de horário
   const plantoesPorDia = useMemo(() => {
     const mapa = new Map<string, Plantao[]>()
     ;[...plantoes]
@@ -91,6 +97,15 @@ export default function MeuPlantaoPage() {
       .forEach((p) => mapa.set(p.data, [...(mapa.get(p.data) ?? []), p]))
     return mapa
   }, [plantoes])
+
+  function doTurno(chave: string, turno: string) {
+    return (plantoesPorDia.get(chave) ?? []).filter((p) => turnoDe(p.hora_inicio) === turno)
+  }
+
+  // Um bloco de posições por turno: manhã e noite sempre, tarde só se a semana tiver plantão nela
+  const turnosVisiveis = TURNOS.filter(
+    (t) => t.valor !== "tarde" || plantoes.some((p) => turnoDe(p.hora_inicio) === "tarde")
+  )
 
   const hoje = formatarDataLocal(new Date())
 
@@ -144,14 +159,13 @@ export default function MeuPlantaoPage() {
           loading ? "opacity-60" : ""
         }`}
       >
-        <table className="w-full min-w-[420px] table-fixed text-sm">
+        <table className="w-full min-w-[320px] table-fixed text-sm">
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="w-12 sm:w-28" />
+              <th className="w-9 sm:w-28" />
               {dias.map((dia) => {
                 const chave = formatarDataLocal(dia)
                 const ehHoje = chave === hoje
-                const doDia = plantoesPorDia.get(chave) ?? []
                 return (
                   <th key={chave} className={`py-2.5 text-center ${ehHoje ? "bg-brand-50" : ""}`}>
                     <div className={`text-xs font-semibold ${ehHoje ? "text-brand-700" : "text-gray-500"}`}>
@@ -160,55 +174,72 @@ export default function MeuPlantaoPage() {
                     <div className={`text-base font-bold ${ehHoje ? "text-brand-700" : "text-gray-800"}`}>
                       {dia.getDate()}
                     </div>
-                    {doDia.length > 1 && (
-                      <div className="text-[10px] font-normal text-gray-400">
-                        {doDia.map((p) => p.hora_inicio.slice(0, 5)).join(" · ")}
-                      </div>
-                    )}
                   </th>
                 )
               })}
             </tr>
           </thead>
           <tbody>
-            {POSICOES.map((posicao) => (
-              <tr
-                key={posicao}
-                className={`border-b border-gray-100 last:border-0 ${
-                  posicao === POSICAO_INTERMEDIARIO ? "border-t-2 border-t-gray-200" : ""
-                }`}
-              >
-                <td className="py-2.5 text-center text-xs font-semibold text-gray-400">
-                  <span className="sm:hidden">{rotuloPosicaoCurto(posicao)}</span>
-                  <span className="hidden sm:inline">{rotuloPosicao(posicao)}</span>
-                </td>
-                {dias.map((dia) => {
-                  const chave = formatarDataLocal(dia)
-                  const doDia = plantoesPorDia.get(chave) ?? []
-                  const ocupantes = doDia.flatMap((p) => p.usuarios.filter((u) => u.posicao === posicao))
-                  return (
-                    <td key={chave} className={`py-2.5 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
-                      <div className="flex items-center justify-center gap-1">
-                        {ocupantes.length > 0 ? (
-                          ocupantes.map((usuario) => (
-                            <div
-                              key={usuario.id}
-                              className={`inline-flex rounded-full ${
-                                usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
-                              }`}
-                              title={usuario.nome ?? usuario.email ?? undefined}
-                            >
-                              <SiglaBadge sigla={usuario.sigla} />
-                            </div>
-                          ))
-                        ) : doDia.length > 0 ? (
-                          <span className="text-gray-300">—</span>
-                        ) : null}
-                      </div>
+            {turnosVisiveis.map((turno) => (
+              <Fragment key={turno.valor}>
+                <tr className="bg-gray-50 border-y border-gray-200">
+                  <td className="py-1.5 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                    {turno.rotulo}
+                  </td>
+                  {dias.map((dia) => {
+                    const chave = formatarDataLocal(dia)
+                    return (
+                      <td key={chave} className="py-1.5 text-center text-[11px] text-gray-500 leading-tight">
+                        {doTurno(chave, turno.valor).map((p) => (
+                          <div key={p.id}>
+                            {p.hora_inicio.slice(0, 5)}
+                            <span className="hidden sm:inline">–{p.hora_fim.slice(0, 5)}</span>
+                          </div>
+                        ))}
+                      </td>
+                    )
+                  })}
+                </tr>
+                {POSICOES.map((posicao) => (
+                  <tr
+                    key={posicao}
+                    className={`border-b border-gray-100 ${
+                      posicao === POSICAO_INTERMEDIARIO ? "border-t-2 border-t-gray-200" : ""
+                    }`}
+                  >
+                    <td className="py-2 text-center text-xs font-semibold text-gray-400">
+                      <span className="sm:hidden">{rotuloPosicaoCurto(posicao)}</span>
+                      <span className="hidden sm:inline">{rotuloPosicao(posicao)}</span>
                     </td>
-                  )
-                })}
-              </tr>
+                    {dias.map((dia) => {
+                      const chave = formatarDataLocal(dia)
+                      const plantoesDoTurno = doTurno(chave, turno.valor)
+                      const ocupantes = plantoesDoTurno.flatMap((p) => p.usuarios.filter((u) => u.posicao === posicao))
+                      return (
+                        <td key={chave} className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
+                          <div className="flex items-center justify-center gap-1">
+                            {ocupantes.length > 0 ? (
+                              ocupantes.map((usuario) => (
+                                <div
+                                  key={usuario.id}
+                                  className={`inline-flex rounded-full ${
+                                    usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
+                                  }`}
+                                  title={usuario.nome ?? usuario.email ?? undefined}
+                                >
+                                  <SiglaBadge sigla={usuario.sigla} size="responsivo" />
+                                </div>
+                              ))
+                            ) : plantoesDoTurno.length > 0 ? (
+                              <span className="text-gray-300">—</span>
+                            ) : null}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>

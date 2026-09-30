@@ -1,5 +1,6 @@
 "use client"
 
+import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
 import { Afastamento, rotuloAfastamento } from "./disponibilidade"
 import { rotuloPosicaoCurto } from "./posicoes"
@@ -147,6 +148,49 @@ function gerarCelulasSemana(dataReferencia: Date) {
   })
 }
 
+// Turno pelo horário de início — organiza a semana em linhas (normalmente um matinal e um noturno por dia)
+export type Turno = "manha" | "tarde" | "noite"
+export const TURNOS: { valor: Turno; rotulo: string }[] = [
+  { valor: "manha", rotulo: "Manhã" },
+  { valor: "tarde", rotulo: "Tarde" },
+  { valor: "noite", rotulo: "Noite" },
+]
+
+export function turnoDe(horaInicio: string): Turno {
+  const hora = Number(horaInicio.slice(0, 2))
+  if (hora >= 5 && hora < 12) return "manha"
+  if (hora >= 12 && hora < 18) return "tarde"
+  return "noite"
+}
+
+function CartaoPlantao({ plantao: p, onClick }: { plantao: Plantao; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={p.titulo}
+      className={`w-full flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TIPO[p.tipo].faixa} rounded-lg px-3 py-3 md:px-2.5 md:py-2.5 transition-colors`}
+    >
+      <div className="flex items-center justify-between gap-1 mb-1.5">
+        <p className="text-xs md:text-[11px] font-medium text-gray-400">
+          {p.hora_inicio.slice(0, 5)}–{p.hora_fim.slice(0, 5)}
+        </p>
+        <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${ESTILO_TIPO[p.tipo].etiqueta}`}>
+          {ESTILO_TIPO[p.tipo].rotulo}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5 md:gap-1 flex-wrap mb-2 md:mb-1.5">
+        {p.usuarios.length === 0 ? (
+          <SiglaBadge sigla={null} size="sm" />
+        ) : (
+          p.usuarios.map((u) => <BadgeComMarcador key={u.id} usuario={u} />)
+        )}
+      </div>
+      <p className="mt-auto text-sm md:text-xs text-gray-600 truncate">{p.titulo}</p>
+    </button>
+  )
+}
+
 function rotuloPeriodo(dataReferencia: Date, visualizacao: Visualizacao) {
   if (visualizacao === "mes") {
     return dataReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
@@ -179,6 +223,18 @@ export default function PlantaoCalendario({
     lista.push(p)
     plantoesPorDia.set(p.data, lista)
   }
+
+  function doDia(chave: string) {
+    return (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
+  }
+
+  const diasSemana = gerarCelulasSemana(dataReferencia)
+  // Manhã e noite sempre aparecem; a tarde só quando a semana tem plantão nesse turno
+  const turnosVisiveis = TURNOS.filter(
+    (t) =>
+      t.valor !== "tarde" ||
+      diasSemana.some((d) => doDia(formatarDataLocal(d)).some((p) => turnoDe(p.hora_inicio) === "tarde"))
+  )
 
   function anterior() {
     if (visualizacao === "semana") {
@@ -274,17 +330,18 @@ export default function PlantaoCalendario({
       </div>
 
       {visualizacao === "semana" ? (
-        <div className="md:overflow-x-auto">
-          {/* No celular os dias ficam empilhados; a partir do md, 7 colunas lado a lado */}
-          <div className="grid grid-cols-1 gap-4 md:min-w-[980px] md:grid-cols-7 md:gap-2 items-start">
-            {gerarCelulasSemana(dataReferencia).map((data) => {
-              const chave = formatarDataLocal(data)
-              const doDia = (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
-              const ehHoje = chave === hojeChave
-
-              return (
-                <div key={chave} className="flex flex-col">
-                  <div className="flex items-baseline justify-start md:justify-center gap-1.5 mb-2">
+        <>
+          {/* Desktop: dias nas colunas e turnos nas linhas, para os plantões do mesmo turno ficarem alinhados */}
+          <div className="hidden md:block overflow-x-auto">
+            <div
+              className="grid md:min-w-[980px] gap-2"
+              style={{ gridTemplateColumns: "3.5rem repeat(7, minmax(0, 1fr))" }}
+            >
+              <div />
+              {diasSemana.map((data) => {
+                const ehHoje = formatarDataLocal(data) === hojeChave
+                return (
+                  <div key={data.toISOString()} className="flex items-baseline justify-center gap-1.5">
                     <span className="text-xs font-semibold text-gray-400">{DIAS_SEMANA[data.getDay()]}</span>
                     <span
                       className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
@@ -294,46 +351,65 @@ export default function PlantaoCalendario({
                       {data.getDate()}
                     </span>
                   </div>
+                )
+              })}
 
-                  <div className="md:min-h-[56px] md:max-h-[560px] md:overflow-y-auto space-y-2 md:space-y-1.5 bg-gray-50 rounded-lg p-2 md:p-1.5 border border-gray-100">
-                    {doDia.length === 0 && (
-                      <p className="text-xs md:text-[10px] text-gray-300 text-center py-2 md:py-3">Sem plantões</p>
-                    )}
-                    {doDia.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => onSelectPlantao(p)}
-                        title={p.titulo}
-                        className={`w-full md:min-h-[104px] flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TIPO[p.tipo].faixa} rounded-lg px-3 py-3 md:px-2.5 md:py-2.5 transition-colors`}
+              {turnosVisiveis.map((turno) => (
+                <Fragment key={turno.valor}>
+                  <div className="pt-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{turno.rotulo}</div>
+                  {diasSemana.map((data) => {
+                    const chave = formatarDataLocal(data)
+                    const doTurno = doDia(chave).filter((p) => turnoDe(p.hora_inicio) === turno.valor)
+                    return (
+                      <div
+                        key={chave}
+                        className={`min-h-[120px] space-y-1.5 rounded-lg p-1.5 border ${
+                          chave === hojeChave ? "bg-brand-50/60 border-brand-100" : "bg-gray-50 border-gray-100"
+                        }`}
                       >
-                        <div className="flex items-center justify-between gap-1 mb-1.5">
-                          <p className="text-xs md:text-[11px] font-medium text-gray-400">
-                            {p.hora_inicio.slice(0, 5)}–{p.hora_fim.slice(0, 5)}
-                          </p>
-                          <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${ESTILO_TIPO[p.tipo].etiqueta}`}>
-                            {ESTILO_TIPO[p.tipo].rotulo}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 md:gap-1 flex-wrap mb-2 md:mb-1.5">
-                          {p.usuarios.length === 0 ? (
-                            <SiglaBadge sigla={null} size="sm" />
-                          ) : (
-                            p.usuarios.map((u) => <BadgeComMarcador key={u.id} usuario={u} />)
-                          )}
-                        </div>
-                        <p className="mt-auto text-sm md:text-xs text-gray-600 truncate">{p.titulo}</p>
-                      </button>
+                        {doTurno.map((p) => (
+                          <CartaoPlantao key={p.id} plantao={p} onClick={() => onSelectPlantao(p)} />
+                        ))}
+                      </div>
+                    )
+                  })}
+                </Fragment>
+              ))}
+            </div>
+          </div>
+
+          {/* Celular: dias empilhados */}
+          <div className="md:hidden space-y-4">
+            {diasSemana.map((data) => {
+              const chave = formatarDataLocal(data)
+              const plantoesDoDia = doDia(chave)
+              const ehHoje = chave === hojeChave
+              return (
+                <div key={chave}>
+                  <div className="flex items-baseline gap-1.5 mb-2">
+                    <span className="text-xs font-semibold text-gray-400">{DIAS_SEMANA[data.getDay()]}</span>
+                    <span
+                      className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold ${
+                        ehHoje ? "bg-brand-700 text-white" : "text-gray-700"
+                      }`}
+                    >
+                      {data.getDate()}
+                    </span>
+                  </div>
+                  <div className="space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-100">
+                    {plantoesDoDia.length === 0 && <p className="text-xs text-gray-300 text-center py-2">Sem plantões</p>}
+                    {plantoesDoDia.map((p) => (
+                      <CartaoPlantao key={p.id} plantao={p} onClick={() => onSelectPlantao(p)} />
                     ))}
                   </div>
                 </div>
               )
             })}
           </div>
-        </div>
+        </>
       ) : (
         <div className="overflow-x-auto">
-          <div className="min-w-[560px]">
+          <div className="sm:min-w-[560px]">
             <div className="grid grid-cols-7 mb-1">
               {DIAS_SEMANA.map((dia) => (
                 <div key={dia} className="text-center text-xs font-semibold text-gray-400 py-1">
@@ -345,44 +421,44 @@ export default function PlantaoCalendario({
             <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden border border-gray-200">
               {gerarCelulasMes(dataReferencia).map(({ data, noMes }) => {
                 const chave = formatarDataLocal(data)
-                const doDia = (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
+                const plantoesDoDia = doDia(chave)
                 const ehHoje = chave === hojeChave
 
                 return (
                   <div
-                    key={chave + (noMes ? "-fora" : "")}
-                    className={`min-h-[72px] sm:min-h-[92px] p-1.5 flex flex-col gap-1 ${noMes ? "bg-gray-50" : "bg-white"}`}
+                    key={chave + (noMes ? "" : "-fora")}
+                    className={`min-h-[72px] sm:min-h-[124px] p-1 sm:p-1.5 flex flex-col gap-1 ${noMes ? "bg-white" : "bg-gray-50"}`}
                   >
                     <span
                       className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-medium ${
-                        ehHoje ? "bg-brand-700 text-white" : noMes ? "text-gray-300" : "text-gray-600"
+                        ehHoje ? "bg-brand-700 text-white" : noMes ? "text-gray-600" : "text-gray-300"
                       }`}
                     >
                       {data.getDate()}
                     </span>
 
                     <div className="flex-1 space-y-1 overflow-hidden">
-                      {doDia.slice(0, 3).map((p) => (
+                      {plantoesDoDia.slice(0, 3).map((p) => (
                         <button
                           key={p.id}
                           type="button"
                           onClick={() => onSelectPlantao(p)}
                           title={`${p.titulo} · ${ESTILO_TIPO[p.tipo].rotulo}`}
-                          className={`w-full flex items-center gap-1 text-left bg-brand-50 hover:bg-brand-100 border-l-[3px] ${ESTILO_TIPO[p.tipo].faixa} px-1 py-0.5 rounded transition-colors`}
+                          className={`w-full flex items-center gap-1 text-left bg-brand-50 hover:bg-brand-100 border-l-[3px] ${ESTILO_TIPO[p.tipo].faixa} px-0.5 sm:px-1 py-0.5 rounded transition-colors`}
                         >
-                          <div className="flex -space-x-1 shrink-0">
+                          <div className="hidden sm:flex -space-x-1 shrink-0">
                             {p.usuarios.slice(0, 3).map((u) => (
                               <BadgeComMarcador key={u.id} usuario={u} />
                             ))}
                           </div>
                           {p.usuarios.length > 3 && (
-                            <span className="text-[9px] text-gray-400 shrink-0">+{p.usuarios.length - 3}</span>
+                            <span className="hidden sm:inline text-[9px] text-gray-400 shrink-0">+{p.usuarios.length - 3}</span>
                           )}
-                          <span className="text-[10px] text-gray-500 truncate">{p.hora_inicio.slice(0, 5)}</span>
+                          <span className="text-[9px] sm:text-[10px] tracking-tight text-gray-500 truncate">{p.hora_inicio.slice(0, 5)}</span>
                         </button>
                       ))}
-                      {doDia.length > 3 && (
-                        <p className="text-[10px] text-gray-400 px-1.5">+{doDia.length - 3} mais</p>
+                      {plantoesDoDia.length > 3 && (
+                        <p className="text-[10px] text-gray-400 px-1.5">+{plantoesDoDia.length - 3} mais</p>
                       )}
                     </div>
                   </div>

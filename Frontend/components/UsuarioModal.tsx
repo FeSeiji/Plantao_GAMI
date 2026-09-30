@@ -381,7 +381,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
             </button>
 
             {confirmandoAtivo ? (
-              <div className="flex items-center gap-3 text-sm">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="text-gray-700">
                   {usuario.ativo ? "Desativar este usuário? Ele não conseguirá mais entrar." : "Reativar este usuário?"}
                 </span>

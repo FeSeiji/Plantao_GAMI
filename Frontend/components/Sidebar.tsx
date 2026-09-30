@@ -13,8 +13,8 @@ const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
 const ROLES_MEU_PLANTAO = ["anestesita_socio"]
 
 const NAV_ITEMS = [
-  { label: "Calendário", href: "/plantoes" },
   { label: "Meu plantão", href: "/meu-plantao", roles: ROLES_MEU_PLANTAO },
+  { label: "Calendário", href: "/plantoes" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
   { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]
