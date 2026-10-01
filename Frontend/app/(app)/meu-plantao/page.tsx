@@ -1,8 +1,9 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
+import PlantaoModal from "../../../components/PlantaoModal"
 import {
   Plantao,
   TURNOS,
@@ -49,6 +50,7 @@ export default function MeuPlantaoPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [meuId, setMeuId] = useState<string | null>(null)
+  const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
 
   const { inicio, fim } = useMemo(() => calcularIntervaloVisivel(dataReferencia, "semana"), [dataReferencia])
 
@@ -70,7 +72,7 @@ export default function MeuPlantaoPage() {
     setMeuId(localStorage.getItem("userId"))
   }, [router])
 
-  useEffect(() => {
+  const carregarPlantoes = useCallback(() => {
     const token = localStorage.getItem("token")
     if (!token) return
 
@@ -88,6 +90,10 @@ export default function MeuPlantaoPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [inicio, fim])
+
+  useEffect(() => {
+    carregarPlantoes()
+  }, [carregarPlantoes])
 
   // Plantões de cada dia, em ordem de horário
   const plantoesPorDia = useMemo(() => {
@@ -190,12 +196,15 @@ export default function MeuPlantaoPage() {
                     const chave = formatarDataLocal(dia)
                     return (
                       <td key={chave} className="py-1.5 text-center text-[11px] text-gray-500 leading-tight">
-                        {doTurno(chave, turno.valor).map((p) => (
-                          <div key={p.id}>
-                            {p.hora_inicio.slice(0, 5)}
-                            <span className="hidden sm:inline">–{p.hora_fim.slice(0, 5)}</span>
-                          </div>
-                        ))}
+                        {/* Um plantão por subcoluna, alinhada com as siglas abaixo */}
+                        <div className="flex">
+                          {doTurno(chave, turno.valor).map((p) => (
+                            <div key={p.id} className="flex-1 min-w-0">
+                              {p.hora_inicio.slice(0, 5)}
+                              <span className="hidden sm:block">{p.hora_fim.slice(0, 5)}</span>
+                            </div>
+                          ))}
+                        </div>
                       </td>
                     )
                   })}
@@ -213,26 +222,30 @@ export default function MeuPlantaoPage() {
                     </td>
                     {dias.map((dia) => {
                       const chave = formatarDataLocal(dia)
-                      const plantoesDoTurno = doTurno(chave, turno.valor)
-                      const ocupantes = plantoesDoTurno.flatMap((p) => p.usuarios.filter((u) => u.posicao === posicao))
                       return (
                         <td key={chave} className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
-                          <div className="flex items-center justify-center gap-1">
-                            {ocupantes.length > 0 ? (
-                              ocupantes.map((usuario) => (
-                                <div
-                                  key={usuario.id}
-                                  className={`inline-flex rounded-full ${
-                                    usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
-                                  }`}
-                                  title={usuario.nome ?? usuario.email ?? undefined}
-                                >
-                                  <SiglaBadge sigla={usuario.sigla} size="responsivo" />
+                          <div className="flex items-center">
+                            {doTurno(chave, turno.valor).map((p) => {
+                              const usuario = p.usuarios.find((u) => u.posicao === posicao)
+                              return (
+                                <div key={p.id} className="flex-1 min-w-0 flex justify-center">
+                                  {usuario ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPlantaoSelecionado(p)}
+                                      className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
+                                        usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
+                                      }`}
+                                      title={usuario.nome ?? usuario.email ?? undefined}
+                                    >
+                                      <SiglaBadge sigla={usuario.sigla} size="responsivo" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-300">—</span>
+                                  )}
                                 </div>
-                              ))
-                            ) : plantoesDoTurno.length > 0 ? (
-                              <span className="text-gray-300">—</span>
-                            ) : null}
+                              )
+                            })}
                           </div>
                         </td>
                       )
@@ -244,6 +257,15 @@ export default function MeuPlantaoPage() {
           </tbody>
         </table>
       </div>
+
+      {plantaoSelecionado && (
+        <PlantaoModal
+          plantao={plantaoSelecionado}
+          podeEditar
+          onClose={() => setPlantaoSelecionado(null)}
+          onUpdated={carregarPlantoes}
+        />
+      )}
     </main>
   )
 }
