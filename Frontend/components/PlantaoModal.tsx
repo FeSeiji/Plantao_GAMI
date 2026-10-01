@@ -41,9 +41,23 @@ type RemocaoHistorico = {
   removidoPor: Pessoa
 }
 
+type MudancaPosicaoHistorico = {
+  id: string
+  alteradoEm: string
+  posicaoAnterior: number | null
+  posicaoNova: number
+  usuario: Pessoa
+  usuarioTrocado: Pessoa | null
+  alteradoPor: Pessoa
+}
+
 type EventoHistorico =
   | { tipo: "troca"; quando: string; troca: TrocaHistorico }
   | { tipo: "remocao"; quando: string; remocao: RemocaoHistorico }
+  | { tipo: "posicao"; quando: string; mudanca: MudancaPosicaoHistorico }
+
+// Quem pode mudar a ordem da fila de sócios — mesma lista do requireRole em Backend/src/routes/plantoes.js
+const ROLES_MUDAR_POSICAO = ["admin", "anestesita_socio", "tecnico"]
 
 type Usuario = {
   id: string
@@ -99,6 +113,8 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
   const [historico, setHistorico] = useState<TrocaHistorico[]>([])
   const [remocoes, setRemocoes] = useState<RemocaoHistorico[]>([])
+  const [mudancasPosicao, setMudancasPosicao] = useState<MudancaPosicaoHistorico[]>([])
+  const [podeMudarPosicao, setPodeMudarPosicao] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
   const [trocandoId, setTrocandoId] = useState<string | null>(null)
   const [buscaTroca, setBuscaTroca] = useState("")
@@ -112,6 +128,12 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
   useEffect(() => {
     setMeuId(localStorage.getItem("userId"))
+    try {
+      const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
+      setPodeMudarPosicao(roles.some((r) => ROLES_MUDAR_POSICAO.includes(r)))
+    } catch {
+      setPodeMudarPosicao(false)
+    }
   }, [])
 
   const carregarHistorico = useCallback(() => {
@@ -123,6 +145,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
 
     buscar("trocas").then((data) => data && setHistorico(data)).catch(() => {})
     buscar("remocoes").then((data) => data && setRemocoes(data)).catch(() => {})
+    buscar("mudancas-posicao").then((data) => data && setMudancasPosicao(data)).catch(() => {})
   }, [plantao.id])
 
   useEffect(() => {
@@ -356,20 +379,28 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
   }
 
+  // Se a posição escolhida estiver ocupada, os dois médicos trocam de lugar
   async function alterarPosicao(id: string, novaPosicao: number) {
     setError("")
     const anterior = selecionados
-    setSelecionados((prev) => prev.map((u) => (u.id === id ? { ...u, posicao: novaPosicao } : u)))
+    const posicaoAtual = selecionados.find((u) => u.id === id)?.posicao ?? null
+    setSelecionados((prev) =>
+      prev.map((u) => {
+        if (u.id === id) return { ...u, posicao: novaPosicao }
+        if (u.posicao === novaPosicao) return { ...u, posicao: posicaoAtual }
+        return u
+      })
+    )
 
     try {
       const token = localStorage.getItem("token")
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/usuarios`, {
-        method: "POST",
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/posicao`, {
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ fila: [{ usuario_id: id, posicao: novaPosicao }] }),
+        body: JSON.stringify({ usuario_id: id, posicao: novaPosicao }),
       })
 
       if (!res.ok) {
@@ -378,6 +409,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
       }
 
       onUpdated()
+      carregarHistorico()
     } catch (err) {
       setSelecionados(anterior)
       setError(err instanceof Error ? err.message : "Não foi possível alterar a posição.")
@@ -509,7 +541,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
     }
 
     let rotulo: React.ReactNode = undefined
-    if (ehSocio && editavel && !pendente) {
+    if (ehSocio && editavel && !pendente && podeMudarPosicao) {
       rotulo = (
         <select
           aria-label="Posição na fila"
@@ -518,8 +550,9 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
           className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
           {POSICOES.map((p) => (
-            <option key={p} value={p} disabled={p !== u.posicao && selecionados.some((o) => o.posicao === p)}>
+            <option key={p} value={p}>
               {rotuloPosicaoCurto(p)}
+              {p !== u.posicao && selecionados.some((o) => o.posicao === p) ? " (trocar)" : ""}
             </option>
           ))}
         </select>
@@ -620,6 +653,7 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
   const eventosHistorico: EventoHistorico[] = [
     ...historico.map((troca) => ({ tipo: "troca" as const, quando: troca.solicitadoEm, troca })),
     ...remocoes.map((remocao) => ({ tipo: "remocao" as const, quando: remocao.removidoEm, remocao })),
+    ...mudancasPosicao.map((mudanca) => ({ tipo: "posicao" as const, quando: mudanca.alteradoEm, mudanca })),
   ].sort((a, b) => b.quando.localeCompare(a.quando))
 
   return (
@@ -928,6 +962,32 @@ export default function PlantaoModal({ plantao, podeEditar, onClose, onUpdated }
                         <span className="font-semibold">{nomeDe(r.removidoPor)}</span> removeu{" "}
                         <span className="font-semibold">{nomeDe(r.usuario)}</span>
                         {papel} em {new Date(r.removidoEm).toLocaleString("pt-BR")}
+                      </span>
+                    </li>
+                  )
+                }
+
+                if (evento.tipo === "posicao") {
+                  const m = evento.mudanca
+                  return (
+                    <li key={`posicao-${m.id}`} className="flex items-start gap-2 text-xs text-gray-600">
+                      <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-brand-500" />
+                      <span>
+                        <span className="font-semibold">{nomeDe(m.alteradoPor)}</span>{" "}
+                        {m.usuarioTrocado ? (
+                          <>
+                            trocou <span className="font-semibold">{nomeDe(m.usuario)}</span>
+                            {m.posicaoAnterior != null && ` (${descreverPosicao(m.posicaoAnterior)})`} com{" "}
+                            <span className="font-semibold">{nomeDe(m.usuarioTrocado)}</span> ({descreverPosicao(m.posicaoNova)})
+                          </>
+                        ) : (
+                          <>
+                            moveu <span className="font-semibold">{nomeDe(m.usuario)}</span>
+                            {m.posicaoAnterior != null && ` de ${descreverPosicao(m.posicaoAnterior)}`} para{" "}
+                            {descreverPosicao(m.posicaoNova)}
+                          </>
+                        )}{" "}
+                        em {new Date(m.alteradoEm).toLocaleString("pt-BR")}
                       </span>
                     </li>
                   )
