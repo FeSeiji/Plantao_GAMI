@@ -7,14 +7,57 @@ import PlantaoModal from "../../../components/PlantaoModal"
 import {
   Plantao,
   TURNOS,
+  Usuario,
   calcularIntervaloVisivel,
   formatarDataLocal,
   turnoDe,
 } from "../../../components/PlantaoCalendario"
 import { POSICOES, POSICAO_INTERMEDIARIO, rotuloPosicao, rotuloPosicaoCurto } from "../../../components/posicoes"
+import { apiFetch } from "../../../components/sessao"
 
-// Por enquanto só sócios veem esta tela — mesma lista em components/Sidebar.tsx
-const ROLES_MEU_PLANTAO = ["anestesita_socio"]
+// Sócios e plantonistas veem esta tela — mesma lista em components/Sidebar.tsx
+const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista"]
+
+type Visao = "socio" | "plantonista"
+
+// Uma linha da grade: o rótulo à esquerda e quem ocupa aquele lugar em cada plantão
+type Linha = {
+  chave: string
+  rotulo: string
+  rotuloCurto: string
+  separador?: boolean
+  ocupante: (p: Plantao) => Usuario | undefined
+}
+
+const LINHAS_SOCIO: Linha[] = POSICOES.map((posicao) => ({
+  chave: `posicao-${posicao}`,
+  rotulo: rotuloPosicao(posicao),
+  rotuloCurto: rotuloPosicaoCurto(posicao),
+  separador: posicao === POSICAO_INTERMEDIARIO,
+  ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
+}))
+
+const membrosDaEquipe = (p: Plantao) => p.usuarios.filter((u) => !u.coordenador)
+
+// Coordenador no topo e uma linha por membro, até o tamanho da maior equipe da semana
+function linhasPlantonista(plantoes: Plantao[]): Linha[] {
+  const maiorEquipe = Math.max(1, ...plantoes.map((p) => membrosDaEquipe(p).length))
+  return [
+    {
+      chave: "coordenador",
+      rotulo: "Coordenador",
+      rotuloCurto: "C",
+      ocupante: (p) => p.usuarios.find((u) => u.coordenador),
+    },
+    ...Array.from({ length: maiorEquipe }, (_, i) => ({
+      chave: `membro-${i}`,
+      rotulo: `Membro ${i + 1}`,
+      rotuloCurto: String(i + 1),
+      separador: i === 0,
+      ocupante: (p: Plantao) => membrosDaEquipe(p)[i],
+    })),
+  ]
+}
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
@@ -51,6 +94,9 @@ export default function MeuPlantaoPage() {
   const [error, setError] = useState("")
   const [meuId, setMeuId] = useState<string | null>(null)
   const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
+  const [visao, setVisao] = useState<Visao | null>(null)
+  // Só quem é sócio e plantonista alterna entre as duas visões
+  const [podeAlternar, setPodeAlternar] = useState(false)
 
   const { inicio, fim } = useMemo(() => calcularIntervaloVisivel(dataReferencia, "semana"), [dataReferencia])
 
@@ -65,21 +111,25 @@ export default function MeuPlantaoPage() {
       router.push("/login")
       return
     }
-    if (!lerRoles().some((r) => ROLES_MEU_PLANTAO.includes(r))) {
+    const roles = lerRoles()
+    if (!roles.some((r) => ROLES_MEU_PLANTAO.includes(r))) {
       router.push("/dashboard")
       return
     }
+    const ehSocio = roles.includes("anestesita_socio")
+    setVisao(ehSocio ? "socio" : "plantonista")
+    setPodeAlternar(ehSocio && roles.includes("anestesita_plantonista"))
     setMeuId(localStorage.getItem("userId"))
   }, [router])
 
   const carregarPlantoes = useCallback(() => {
     const token = localStorage.getItem("token")
-    if (!token) return
+    if (!token || !visao) return
 
     setLoading(true)
     setError("")
-    const params = new URLSearchParams({ inicio, fim, tipo: "socio" })
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
+    const params = new URLSearchParams({ inicio, fim, tipo: visao })
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -89,7 +139,7 @@ export default function MeuPlantaoPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [inicio, fim])
+  }, [inicio, fim, visao])
 
   useEffect(() => {
     carregarPlantoes()
@@ -113,6 +163,14 @@ export default function MeuPlantaoPage() {
     (t) => t.valor !== "tarde" || plantoes.some((p) => turnoDe(p.hora_inicio) === "tarde")
   )
 
+  const linhas = useMemo(() => (visao === "plantonista" ? linhasPlantonista(plantoes) : LINHAS_SOCIO), [visao, plantoes])
+
+  function mudarVisao(nova: Visao) {
+    if (nova === visao) return
+    setPlantoes([]) // evita mostrar os plantões da outra visão nas linhas novas enquanto carrega
+    setVisao(nova)
+  }
+
   const hoje = formatarDataLocal(new Date())
 
   function mudarSemana(delta: number) {
@@ -122,7 +180,31 @@ export default function MeuPlantaoPage() {
   return (
     <main className="max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4 sm:mb-6">
-        <h1 className="text-xl font-bold text-gray-800">Meu plantão</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold text-gray-800">Meu plantão</h1>
+
+          {podeAlternar && (
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              {(
+                [
+                  { valor: "socio", rotulo: "Sócio" },
+                  { valor: "plantonista", rotulo: "Plantonista" },
+                ] as const
+              ).map((opcao) => (
+                <button
+                  key={opcao.valor}
+                  type="button"
+                  onClick={() => mudarVisao(opcao.valor)}
+                  className={`text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
+                    visao === opcao.valor ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {opcao.rotulo}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center gap-1">
           <button
@@ -209,16 +291,14 @@ export default function MeuPlantaoPage() {
                     )
                   })}
                 </tr>
-                {POSICOES.map((posicao) => (
+                {linhas.map((linha) => (
                   <tr
-                    key={posicao}
-                    className={`border-b border-gray-100 ${
-                      posicao === POSICAO_INTERMEDIARIO ? "border-t-2 border-t-gray-200" : ""
-                    }`}
+                    key={linha.chave}
+                    className={`border-b border-gray-100 ${linha.separador ? "border-t-2 border-t-gray-200" : ""}`}
                   >
                     <td className="py-2 text-center text-xs font-semibold text-gray-400">
-                      <span className="sm:hidden">{rotuloPosicaoCurto(posicao)}</span>
-                      <span className="hidden sm:inline">{rotuloPosicao(posicao)}</span>
+                      <span className="sm:hidden">{linha.rotuloCurto}</span>
+                      <span className="hidden sm:inline">{linha.rotulo}</span>
                     </td>
                     {dias.map((dia) => {
                       const chave = formatarDataLocal(dia)
@@ -226,7 +306,7 @@ export default function MeuPlantaoPage() {
                         <td key={chave} className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
                           <div className="flex items-center">
                             {doTurno(chave, turno.valor).map((p) => {
-                              const usuario = p.usuarios.find((u) => u.posicao === posicao)
+                              const usuario = linha.ocupante(p)
                               return (
                                 <div key={p.id} className="flex-1 min-w-0 flex justify-center">
                                   {usuario ? (

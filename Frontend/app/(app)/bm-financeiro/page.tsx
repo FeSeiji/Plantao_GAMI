@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
+import { apiFetch } from "../../../components/sessao"
 
 // Todos menos o plantonista
 const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
@@ -238,7 +239,7 @@ export default function BmFinanceiroPage() {
     if (!autorizado || !token) return
 
     setLoading(true)
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro?mes=${mes}`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro?mes=${mes}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {

@@ -1,13 +1,10 @@
 // users.js - sem o dotenv, as variáveis já estarão disponíveis
 const { createClient } = require('@supabase/supabase-js')
 
-const { ROLES_VALIDAS, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 const { usuariosAfastados } = require('../services/afastamentos')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
-
-// ~100 anos: o Supabase não tem ban permanente, só por duração
-const DURACAO_DESATIVACAO = '876000h'
 
 exports.getUsers = async (req, res) => {
   const { search, role, data: dataAlvo, horaInicio, horaFim } = req.query
@@ -97,7 +94,8 @@ exports.listarGestao = async (req, res) => {
     return {
       ...p,
       roles: authUser?.app_metadata?.roles ?? [],
-      ativo: !estaDesativado(authUser)
+      ativo: !estaDesativado(authUser),
+      pendente: estaDesativado(authUser) && authUser?.app_metadata?.pendente_aprovacao === true
     }
   }))
 }
@@ -221,8 +219,10 @@ exports.alterarAtivo = async (req, res) => {
     return res.status(400).json({ error: 'Você não pode desativar a própria conta' })
   }
 
+  // Ativar também conclui a aprovação de um cadastro público pendente
   const { error } = await supabase.auth.admin.updateUserById(id, {
-    ban_duration: ativo ? 'none' : DURACAO_DESATIVACAO
+    ban_duration: ativo ? 'none' : DURACAO_DESATIVACAO,
+    ...(ativo ? { app_metadata: { pendente_aprovacao: false } } : {})
   })
 
   if (error) {
@@ -264,7 +264,9 @@ async function buscarIdsComAlgumaRole(rolesAceitas) {
   const { data, error } = await supabase.auth.admin.listUsers({ perPage: 1000 })
   if (error) throw error
 
+  // Contas desativadas ou com cadastro pendente não aparecem para escalar
   return data.users
+    .filter(u => !estaDesativado(u))
     .filter(u => (u.app_metadata?.roles ?? []).some(r => rolesAceitas.includes(r)))
     .map(u => u.id)
 }

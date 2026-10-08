@@ -6,6 +6,7 @@ import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
 import { POSICOES, descreverPosicao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
+import { apiFetch } from "./sessao"
 
 type Usuario = {
   id: string
@@ -87,7 +88,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
         params.set("horaInicio", horaInicio)
         params.set("horaFim", horaFim)
       }
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
+      apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(async (res) => {
@@ -206,7 +207,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
             }
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

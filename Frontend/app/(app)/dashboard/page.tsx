@@ -8,6 +8,7 @@ import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
 import { POSICAO_INTERMEDIARIO } from "../../../components/posicoes"
 import type { Plantao } from "../../../components/PlantaoCalendario"
+import { apiFetch } from "../../../components/sessao"
 
 const ROLE_LABELS: Record<string, string> = {
   anestesita_socio: "Anestesista Sócio",
@@ -202,7 +203,7 @@ export default function DashboardPage() {
     if (!token) return
 
     const buscar = (caminho: string) =>
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
+      apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then(async (res) => {
         const data = await res.json()
@@ -254,7 +255,7 @@ export default function DashboardPage() {
     const token = localStorage.getItem("token")
     setRespondendo(id)
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/${id}/${aceitar ? "aceitar" : "recusar"}`,
         { method: "PATCH", headers: { Authorization: `Bearer ${token}` } }
       )
@@ -272,7 +273,7 @@ export default function DashboardPage() {
   async function abrirPlantao(id: string) {
     const token = localStorage.getItem("token")
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${id}`, {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()

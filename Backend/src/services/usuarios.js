@@ -4,6 +4,11 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'admin']
 const ROLES_ANESTESISTA = ['anestesita_socio', 'anestesita_plantonista']
+// Papéis que alguém pode escolher no cadastro público (admin só é dado pela gestão)
+const ROLES_CADASTRO_PUBLICO = [...ROLES_ANESTESISTA, 'tecnico']
+
+// ~100 anos: o Supabase não tem ban permanente, só por duração
+const DURACAO_DESATIVACAO = '876000h'
 
 const UFS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA',
@@ -68,13 +73,15 @@ async function validarDadosUsuario({ sigla, roles, crm, crm_uf }, ignorarId = nu
 
 // Cria o usuário no Supabase Auth e completa o profile com o CRM.
 // Espera dados já validados por validarDadosUsuario. Retorna { user } ou { error, status }.
-async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf }) {
+// pendente: cadastro público — a conta nasce desativada até alguém da gestão aprovar.
+async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf }, { pendente = false } = {}) {
   const { data, error } = await supabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true, // pula confirmação de email
     user_metadata: { nome, sigla },
-    app_metadata: { roles } // roles controladas só pelo admin (service role)
+    app_metadata: { roles, pendente_aprovacao: pendente }, // roles controladas só pelo admin (service role)
+    ...(pendente ? { ban_duration: DURACAO_DESATIVACAO } : {})
   })
 
   if (error) return { error: error.message, status: 400 }
@@ -97,4 +104,6 @@ async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf }
   return { user: data.user }
 }
 
-module.exports = { ROLES_VALIDAS, ROLES_ANESTESISTA, UFS, validarDadosUsuario, criarUsuario }
+module.exports = {
+  ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, UFS, validarDadosUsuario, criarUsuario,
+}

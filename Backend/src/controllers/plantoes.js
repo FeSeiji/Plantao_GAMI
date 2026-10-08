@@ -97,7 +97,7 @@ exports.listPlantoes = async (req, res) => {
     return res.status(500).json({ error: err.message })
   }
 }
-
+// API 
 exports.getPlantao = async (req, res) => {
   const { data, error } = await supabase
     .from('plantoes')
@@ -838,7 +838,14 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
     }))
-    .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
+    // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
+    // para o "Membro N" não mudar de lugar entre uma carga e outra
+    .sort((a, b) =>
+      (a.posicao ?? 0) - (b.posicao ?? 0) ||
+      Number(b.coordenador) - Number(a.coordenador) ||
+      (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR') ||
+      a.id.localeCompare(b.id)
+    )
 
   return { ...plantao, usuarios }
 }

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import { TIPOS_AFASTAMENTO } from "./disponibilidade"
+import { apiFetch } from "./sessao"
 
 export type UsuarioGestao = {
   id: string
@@ -13,6 +14,8 @@ export type UsuarioGestao = {
   crm_uf: string | null
   roles: string[]
   ativo: boolean
+  // Cadastro público ainda não aprovado pela gestão
+  pendente: boolean
 }
 
 export const ROLES = [
@@ -81,7 +84,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   useEffect(() => {
     if (!usuario || !ehAnestesista) return
     const token = localStorage.getItem("token")
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/usuario/${usuario.id}`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/usuario/${usuario.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : []))
@@ -109,7 +112,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
 
   async function chamarApi(caminho: string, method: string, body?: object) {
     const token = localStorage.getItem("token")
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
+    const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -383,9 +386,18 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
             {confirmandoAtivo ? (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="text-gray-700">
-                  {usuario.ativo ? "Desativar este usuário? Ele não conseguirá mais entrar." : "Reativar este usuário?"}
+                  {usuario.ativo
+                    ? "Desativar este usuário? Ele não conseguirá mais entrar."
+                    : usuario.pendente
+                      ? "Aprovar este cadastro? A pessoa poderá entrar no sistema com o papel escolhido."
+                      : "Reativar este usuário?"}
                 </span>
-                <button type="button" onClick={alterarAtivo} disabled={loading} className="font-semibold text-red-600 hover:text-red-800">
+                <button
+                  type="button"
+                  onClick={alterarAtivo}
+                  disabled={loading}
+                  className={`font-semibold ${usuario.ativo ? "text-red-600 hover:text-red-800" : "text-green-700 hover:text-green-900"}`}
+                >
                   Confirmar
                 </button>
                 <button type="button" onClick={() => setConfirmandoAtivo(false)} className="text-gray-500 hover:text-gray-700">
@@ -401,7 +413,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                   usuario.ativo ? "text-red-600 hover:text-red-800" : "text-green-700 hover:text-green-900"
                 }`}
               >
-                {usuario.ativo ? "Desativar usuário" : "Reativar usuário"}
+                {usuario.ativo ? "Desativar usuário" : usuario.pendente ? "Aprovar cadastro" : "Reativar usuário"}
               </button>
             )}
           </div>

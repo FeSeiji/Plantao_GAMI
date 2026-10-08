@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import { INPUT_CLASS, ROLES, ROLES_ANESTESISTA, UFS } from "../../../components/UsuarioModal"
-import { EVENTO_PERFIL_ATUALIZADO } from "../../../components/sessao"
+import { EVENTO_PERFIL_ATUALIZADO, apiFetch } from "../../../components/sessao"
 import { DIAS_SEMANA } from "../../../components/disponibilidade"
 import { formatarTelefone } from "../../../components/telefone"
 import AfastamentosPerfil from "../../../components/AfastamentosPerfil"
@@ -78,7 +78,7 @@ export default function PerfilPage() {
       return
     }
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -112,7 +112,7 @@ export default function PerfilPage() {
 
     try {
       const token = localStorage.getItem("token")
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

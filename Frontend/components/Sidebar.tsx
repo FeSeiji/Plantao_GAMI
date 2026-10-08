@@ -9,8 +9,8 @@ import { limparSessao } from "./sessao"
 
 // Todos menos o plantonista — mesma lista do backend em routes/bmFinanceiro.js
 const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
-// Por enquanto só sócios — mesma lista em app/(app)/meu-plantao/page.tsx
-const ROLES_MEU_PLANTAO = ["anestesita_socio"]
+// Sócios e plantonistas — mesma lista em app/(app)/meu-plantao/page.tsx
+const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista"]
 
 const NAV_ITEMS = [
   { label: "Meu plantão", href: "/meu-plantao", roles: ROLES_MEU_PLANTAO },

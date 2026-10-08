@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import UsuarioModal, { ROLES, ROLES_EDICAO, ROLES_GESTAO, UsuarioGestao } from "../../../components/UsuarioModal"
 import { formatarTelefone } from "../../../components/telefone"
+import { apiFetch } from "../../../components/sessao"
 
 const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
 
@@ -34,13 +35,14 @@ export default function UsuariosPage() {
     setLoading(true)
     const params = new URLSearchParams()
     if (busca.trim()) params.set("search", busca.trim())
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/gestao?${params}`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users/gestao?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar os usuários.")
-        setUsuarios(data)
+        // Cadastros aguardando aprovação primeiro, para a gestão não deixar passar
+        setUsuarios([...data].sort((a: UsuarioGestao, b: UsuarioGestao) => Number(b.pendente) - Number(a.pendente)))
         setError("")
       })
       .catch((err) => setError(err.message))
@@ -114,7 +116,7 @@ export default function UsuariosPage() {
                   key={u.id}
                   onClick={editavel ? () => setSelecionado(u) : undefined}
                   className={`border-b border-gray-100 last:border-0 ${editavel ? "cursor-pointer hover:bg-gray-50" : ""} ${
-                    u.ativo ? "" : "opacity-50"
+                    u.ativo || u.pendente ? "" : "opacity-50"
                   }`}
                 >
                   <td className="px-4 py-3 max-w-0 w-full md:max-w-none md:w-auto">
@@ -162,11 +164,15 @@ export default function UsuariosPage() {
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap hidden md:table-cell">{u.crm ? `${u.crm}/${u.crm_uf}` : "—"}</td>
                   <td className="px-4 py-3">
                     <span
-                      className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        u.ativo ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-600"
+                      className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                        u.ativo
+                          ? "bg-green-100 text-green-800"
+                          : u.pendente
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-gray-200 text-gray-600"
                       }`}
                     >
-                      {u.ativo ? "Ativo" : "Desativado"}
+                      {u.ativo ? "Ativo" : u.pendente ? "Aguardando aprovação" : "Desativado"}
                     </span>
                   </td>
                 </tr>

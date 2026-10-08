@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { INPUT_CLASS } from "./UsuarioModal"
 import { TIPOS_AFASTAMENTO } from "./disponibilidade"
+import { apiFetch } from "./sessao"
 
 type AfastamentoProprio = {
   id: string
@@ -30,7 +31,7 @@ function hojeLocal() {
 
 function chamarApi(caminho: string, metodo = "GET", body?: unknown) {
   const token = localStorage.getItem("token")
-  return fetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
+  return apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
     method: metodo,
     headers: {
       Authorization: `Bearer ${token}`,
