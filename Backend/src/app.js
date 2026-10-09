@@ -4,7 +4,21 @@ const cors = require('cors');
 const app = express();
 const { authMiddleware } = require('./middleware/auth')
 
-app.use(cors());
+// Render fica atrás de um proxy: sem isso, req.ip é o IP do proxy e o limite de tentativas vale para todos juntos
+app.set('trust proxy', 1)
+
+// Só o frontend chama a API pelo navegador. CORS_ORIGINS aceita várias origens separadas por vírgula;
+// sem ele, vale FRONTEND_URL.
+const origensPermitidas = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(o => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean)
+
+if (origensPermitidas.length === 0) {
+  console.warn('CORS: nenhuma origem configurada (CORS_ORIGINS ou FRONTEND_URL). O navegador vai bloquear o frontend.')
+}
+
+app.use(cors({ origin: origensPermitidas }));
 app.use(express.json());
 
 // rotas públicas (sem auth)
