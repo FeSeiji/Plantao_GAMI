@@ -252,7 +252,7 @@ exports.enviarResetSenha = async (req, res) => {
   if (error || !data?.user) return res.status(404).json({ error: 'Usuário não encontrado' })
 
   const { error: resetError } = await supabase.auth.resetPasswordForEmail(data.user.email, {
-    redirectTo: `${process.env.FRONTEND_URL}/reset-password`
+    redirectTo: `${(process.env.FRONTEND_URL ?? '').replace(/\/+$/, '')}/reset-password` // sem barra dupla se FRONTEND_URL terminar em /
   })
 
   if (resetError) {

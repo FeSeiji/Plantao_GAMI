@@ -63,11 +63,12 @@ Note: `Backend/supabase.js` at the root uses ESM syntax (`import`/`export`) and 
 
 ### Unused File
 
-`src/routes/index.js` is not imported in `app.js` — `app.js` imports route files directly. It also requires controllers that don't exist (`healthController`, `hello`, `hospital`), so it would crash if mounted. There is no `/health` endpoint.
+`src/routes/index.js` is not imported in `app.js` — `app.js` imports route files directly. It also requires controllers that don't exist (`healthController`, `hello`, `hospital`), so it would crash if mounted.
 
 ## API Endpoints
 
 **Public:**
+- `GET /health` — `{ status, banco }`; does a light `profiles` query (503 if the DB fails). Meant for an external uptime monitor that keeps Render's free instance awake
 - `POST /auth/login` — returns `{ token }` (Supabase JWT)
 - `POST /auth/register` — creates user via `supabase.auth.admin.createUser`, email confirmation is bypassed
 
