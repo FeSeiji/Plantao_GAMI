@@ -6,13 +6,16 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
+import { POSICAO_INTERMEDIARIO } from "../../../components/posicoes"
 import type { Plantao } from "../../../components/PlantaoCalendario"
+import { apiFetch } from "../../../components/sessao"
 
 const ROLE_LABELS: Record<string, string> = {
   anestesita_socio: "Anestesista Sócio",
   anestesita_plantonista: "Anestesista Plantonista",
   tecnico: "Técnico",
   coordenador: "Coordenador",
+  escritorio: "Escritório",
   admin: "Administrador",
 }
 
@@ -53,7 +56,7 @@ type Resumo = {
 }
 
 // Mesma lista do backend em routes/dashboard.js
-const ROLES_VISAO_GESTAO = ["admin", "tecnico"]
+const ROLES_VISAO_GESTAO = ["escritorio", "admin", "tecnico"]
 // Só quem trabalha em plantões tem cards pessoais — admin/técnico puros veem só a gestão
 const ROLES_MEDICO = ["anestesita_socio", "anestesita_plantonista"]
 
@@ -106,7 +109,10 @@ function quandoComeca(p: PlantaoResumo, agora: Resumo["agora"]) {
 }
 
 function descreverPapel(p: PlantaoResumo) {
-  if (p.tipo === "socio") return p.meuPapel.posicao != null ? `Posição ${p.meuPapel.posicao} na fila` : "Fila de sócios"
+  if (p.tipo === "socio") {
+    if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
+    return p.meuPapel.posicao != null ? `Posição ${p.meuPapel.posicao} na fila` : "Fila de sócios"
+  }
   return p.meuPapel.coordenador ? "Você é o coordenador" : "Equipe de plantonistas"
 }
 
@@ -198,7 +204,7 @@ export default function DashboardPage() {
     if (!token) return
 
     const buscar = (caminho: string) =>
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
+      apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then(async (res) => {
         const data = await res.json()
@@ -250,7 +256,7 @@ export default function DashboardPage() {
     const token = localStorage.getItem("token")
     setRespondendo(id)
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/${id}/${aceitar ? "aceitar" : "recusar"}`,
         { method: "PATCH", headers: { Authorization: `Bearer ${token}` } }
       )
@@ -268,7 +274,7 @@ export default function DashboardPage() {
   async function abrirPlantao(id: string) {
     const token = localStorage.getItem("token")
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${id}`, {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -419,7 +425,7 @@ export default function DashboardPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                         <p className="text-xs text-gray-500">
-                          {formatarHorario(p)} · {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao ? ` · P${p.meuPapel.posicao}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
+                          {formatarHorario(p)} · {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${p.meuPapel.posicao}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}

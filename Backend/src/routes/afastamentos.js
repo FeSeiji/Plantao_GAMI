@@ -5,7 +5,7 @@ const { listarMeus, listarDoUsuario, criar, remover } = require('../controllers/
 
 // Férias e congressos: cada médico gerencia os próprios; a gestão só consulta
 router.get('/me', listarMeus)
-router.get('/usuario/:usuarioId', requireRole('admin', 'tecnico'), listarDoUsuario)
+router.get('/usuario/:usuarioId', requireRole('escritorio', 'admin', 'tecnico'), listarDoUsuario)
 router.post('/', criar)
 router.delete('/:id', remover)
 

@@ -8,7 +8,6 @@ const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
   { value: "tecnico", label: "Técnico" },
-  { value: "admin", label: "Administrador" },
 ]
 
 const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
@@ -115,9 +114,9 @@ export default function RegisterPage() {
               <polyline points="20 6 9 17 4 12" />
             </svg>
           </div>
-          <h2 className="text-gray-900 font-bold text-xl mb-2">Cadastro realizado!</h2>
+          <h2 className="text-gray-900 font-bold text-xl mb-2">Cadastro enviado!</h2>
           <p className="text-gray-500 text-sm mb-6">
-            Sua conta foi criada com sucesso. Você já pode entrar no sistema.
+            Seu cadastro precisa ser aprovado pelo escritório. Assim que for aprovado, você poderá entrar no sistema.
           </p>
           <button
             onClick={() => router.push("/login")}

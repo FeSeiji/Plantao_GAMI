@@ -4,6 +4,7 @@ import React, { useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { salvarTokens } from "../../components/sessao"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -31,7 +32,7 @@ export default function LoginPage() {
         return
       }
 
-      localStorage.setItem("token", data.token)
+      salvarTokens(data)
 
       const meRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
         headers: { Authorization: `Bearer ${data.token}` },
@@ -40,7 +41,8 @@ export default function LoginPage() {
 
       if (meRes.ok) {
         localStorage.setItem("userId", me.id)
-        localStorage.setItem("roles", JSON.stringify(me.roles))
+        // A flag admin entra como "admin" na lista, que é o que as checagens de permissão da tela procuram
+        localStorage.setItem("roles", JSON.stringify([...me.roles, ...(me.is_admin ? ["admin"] : [])]))
         localStorage.setItem("email", me.email)
         localStorage.setItem("nome", me.nome ?? "")
         localStorage.setItem("sigla", me.sigla ?? "")

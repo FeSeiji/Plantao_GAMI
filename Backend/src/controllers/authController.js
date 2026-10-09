@@ -1,17 +1,53 @@
 const { createClient } = require('@supabase/supabase-js')
 
-const { ROLES_ANESTESISTA, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+// Cliente só para o login: signInWithPassword guarda a sessão no cliente, e no cliente acima
+// isso trocaria a service role pelo token de quem entrou em todas as consultas seguintes.
+const supabaseLogin = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+})
 
 exports.login = async (req, res) => {
   const { email, password } = req.body
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabaseLogin.auth.signInWithPassword({ email, password })
 
+  // Conta desativada ou cadastro ainda não aprovado (os dois são ban no Supabase)
+  if (error?.code === 'user_banned') {
+    return res.status(403).json({ error: 'Seu cadastro está aguardando aprovação ou foi desativado. Fale com o escritório.' })
+  }
   if (error) return res.status(401).json({ error: "Credenciais incorretas" })
 
-  return res.json({ token: data.session.access_token })
+  return res.json(respostaSessao(data.session))
+}
+
+// O access_token vale 1h; o front usa o refresh_token para pedir um novo sem pedir a senha de novo
+function respostaSessao(session) {
+  return {
+    token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: session.expires_at
+  }
+}
+
+exports.refresh = async (req, res) => {
+  const { refresh_token } = req.body
+
+  if (!refresh_token) return res.status(400).json({ error: 'refresh_token é obrigatório' })
+
+  const { data, error } = await supabaseLogin.auth.refreshSession({ refresh_token })
+
+  if (error?.code === 'user_banned') {
+    return res.status(403).json({ error: 'Seu cadastro está aguardando aprovação ou foi desativado. Fale com o escritório.' })
+  }
+  if (error || !data.session) {
+    return res.status(401).json({ error: 'Sua sessão expirou. Saia e entre novamente.' })
+  }
+
+  return res.json(respostaSessao(data.session))
 }
 
 exports.me = async (req, res) => {
@@ -38,7 +74,8 @@ exports.me = async (req, res) => {
     telefone: profile?.telefone ?? null,
     data_nascimento: profile?.data_nascimento ?? null,
     dias_disponiveis: profile?.dias_disponiveis ?? null,
-    roles: app_metadata?.roles ?? []
+    roles: app_metadata?.roles ?? [],
+    is_admin: app_metadata?.is_admin === true
   })
 }
 
@@ -148,6 +185,11 @@ exports.register = async (req, res) => {
     return res.status(400).json({ error: 'roles deve ser um array não vazio' })
   }
 
+  const proibidas = (roles ?? []).filter(r => !ROLES_CADASTRO_PUBLICO.includes(r))
+  if (proibidas.length > 0) {
+    return res.status(403).json({ error: `Papel não permitido no cadastro: ${proibidas.join(', ')}` })
+  }
+
   let dados
   try {
     dados = await validarDadosUsuario({ sigla, roles: roles ?? [], crm, crm_uf })
@@ -158,10 +200,10 @@ exports.register = async (req, res) => {
 
   if (dados.error) return res.status(400).json({ error: dados.error })
 
-  const resultado = await criarUsuario({ email, password, nome, ...dados })
+  const resultado = await criarUsuario({ email, password, nome, ...dados }, { pendente: true })
   if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
-  return res.status(201).json({ user: resultado.user })
+  return res.status(201).json({ id: resultado.user.id, pendente: true })
 }
 
 exports.forgotPassword = async (req, res) => {

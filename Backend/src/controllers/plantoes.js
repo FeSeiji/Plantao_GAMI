@@ -97,7 +97,7 @@ exports.listPlantoes = async (req, res) => {
     return res.status(500).json({ error: err.message })
   }
 }
-
+// API 
 exports.getPlantao = async (req, res) => {
   const { data, error } = await supabase
     .from('plantoes')
@@ -217,6 +217,104 @@ exports.listarRemocoesDoPlantao = async (req, res) => {
       posicao: r.posicao,
       usuario: perfis.get(r.usuario_id) ?? { id: r.usuario_id },
       removidoPor: perfis.get(r.removido_por) ?? { id: r.removido_por },
+    })))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Move um sócio para outra posição da fila. Se a posição estiver ocupada, os dois trocam de lugar.
+// Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
+exports.alterarPosicao = async (req, res) => {
+  const { usuario_id, posicao } = req.body
+
+  if (!usuario_id || !Number.isInteger(posicao) || posicao < 1 || posicao > 8) {
+    return res.status(400).json({ error: 'usuario_id e posicao (número inteiro entre 1 e 8) são obrigatórios' })
+  }
+
+  const { data: plantao, error: plantaoError } = await supabase
+    .from('plantoes')
+    .select('id, tipo, plantao_usuarios(usuario_id, posicao)')
+    .eq('id', req.params.id)
+    .maybeSingle()
+
+  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (plantao.tipo !== 'socio') {
+    return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
+  }
+
+  const membro = plantao.plantao_usuarios.find(u => u.usuario_id === usuario_id)
+  if (!membro) return res.status(404).json({ error: 'Médico não está neste plantão' })
+  if (membro.posicao === posicao) return res.json({ message: 'Posição mantida' })
+
+  const ocupante = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+
+  const moverPara = (id, novaPosicao) => supabase
+    .from('plantao_usuarios')
+    .update({ posicao: novaPosicao })
+    .eq('plantao_id', plantao.id)
+    .eq('usuario_id', id)
+
+  if (ocupante) {
+    // A posição é única por plantão: libera a do médico antes de mover o ocupante para ela
+    const passos = [
+      () => moverPara(usuario_id, null),
+      () => moverPara(ocupante.usuario_id, membro.posicao),
+      () => moverPara(usuario_id, posicao),
+    ]
+    for (const [i, passo] of passos.entries()) {
+      const { error } = await passo()
+      if (error) {
+        // Desfaz o que já foi feito para não deixar a fila pela metade
+        if (i >= 2) await moverPara(ocupante.usuario_id, posicao)
+        if (i >= 1) await moverPara(usuario_id, membro.posicao)
+        return res.status(400).json({ error: error.message })
+      }
+    }
+  } else {
+    const { error } = await moverPara(usuario_id, posicao)
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Posição já ocupada nesse plantão' })
+      return res.status(400).json({ error: error.message })
+    }
+  }
+
+  const { error: logError } = await supabase
+    .from('plantao_mudancas_posicao')
+    .insert({
+      plantao_id: plantao.id,
+      usuario_id,
+      posicao_anterior: membro.posicao,
+      posicao_nova: posicao,
+      usuario_trocado_id: ocupante?.usuario_id ?? null,
+      alterado_por: req.user.id,
+    })
+
+  if (logError) return res.status(500).json({ error: `Posição alterada, mas o histórico não foi gravado: ${logError.message}` })
+
+  return res.json({ message: ocupante ? 'Posições trocadas' : 'Posição alterada' })
+}
+
+exports.listarMudancasPosicaoDoPlantao = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_mudancas_posicao')
+    .select('*')
+    .eq('plantao_id', req.params.id)
+    .order('alterado_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const perfis = await buscarPerfis(data.flatMap(m => [m.usuario_id, m.usuario_trocado_id, m.alterado_por].filter(Boolean)))
+    return res.json(data.map(m => ({
+      id: m.id,
+      alteradoEm: m.alterado_em,
+      posicaoAnterior: m.posicao_anterior,
+      posicaoNova: m.posicao_nova,
+      usuario: perfis.get(m.usuario_id) ?? { id: m.usuario_id },
+      usuarioTrocado: m.usuario_trocado_id ? perfis.get(m.usuario_trocado_id) ?? { id: m.usuario_trocado_id } : null,
+      alteradoPor: perfis.get(m.alterado_por) ?? { id: m.alterado_por },
     })))
   } catch (err) {
     return res.status(500).json({ error: err.message })
@@ -540,10 +638,10 @@ async function validarFilaSocio(fila, { janela } = {}) {
   }
 
   const posicaoInvalida = fila.some(
-    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 7
+    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 8
   )
   if (posicaoInvalida) {
-    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 7)')
+    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)')
   }
 
   const posicoes = fila.map(f => f.posicao)
@@ -740,7 +838,14 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
     }))
-    .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0))
+    // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
+    // para o "Membro N" não mudar de lugar entre uma carga e outra
+    .sort((a, b) =>
+      (a.posicao ?? 0) - (b.posicao ?? 0) ||
+      Number(b.coordenador) - Number(a.coordenador) ||
+      (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR') ||
+      a.id.localeCompare(b.id)
+    )
 
   return { ...plantao, usuarios }
 }

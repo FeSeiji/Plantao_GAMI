@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "./SiglaBadge"
-import { ROLES } from "./UsuarioModal"
+import { ROTULO_ROLE } from "./UsuarioModal"
 import { EVENTO_PERFIL_ATUALIZADO, limparSessao } from "./sessao"
 
 type Perfil = {
@@ -15,7 +15,7 @@ type Perfil = {
 }
 
 function rotuloRole(role: string) {
-  return ROLES.find((r) => r.value === role)?.label ?? role
+  return ROTULO_ROLE[role] ?? role
 }
 
 export default function UsuarioAtualBadge() {

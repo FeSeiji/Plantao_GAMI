@@ -5,9 +5,9 @@ const {
   getUsers, listarGestao, criarUsuarioGestao, atualizarUsuario, alterarAtivo, enviarResetSenha,
 } = require('../controllers/users')
 
-const podeVerGestao = requireRole('admin', 'anestesita_socio', 'tecnico')
-// Técnico também edita (inclusive admins), mas o controller o impede de conceder ou remover a role admin
-const podeEditarGestao = requireRole('admin', 'tecnico')
+const podeVerGestao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
+// Técnico também edita (inclusive admins), mas o controller o impede de conceder ou remover a flag admin
+const podeEditarGestao = requireRole('escritorio', 'admin', 'tecnico')
 
 router.get('/', getUsers)
 router.get('/gestao', podeVerGestao, listarGestao)

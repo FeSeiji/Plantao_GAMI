@@ -24,7 +24,7 @@ exports.listarMeus = async (req, res) => {
   return res.json(data)
 }
 
-// Gestão (admin/técnico) consulta os afastamentos atuais e futuros de um médico
+// Gestão (escritório/admin/técnico) consulta os afastamentos atuais e futuros de um médico
 exports.listarDoUsuario = async (req, res) => {
   const { data, error } = await supabase
     .from('afastamentos')

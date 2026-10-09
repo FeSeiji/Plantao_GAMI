@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import { TIPOS_AFASTAMENTO } from "./disponibilidade"
+import { apiFetch } from "./sessao"
 
 export type UsuarioGestao = {
   id: string
@@ -12,19 +13,28 @@ export type UsuarioGestao = {
   crm: string | null
   crm_uf: string | null
   roles: string[]
+  is_admin: boolean
   ativo: boolean
+  // Cadastro público ainda não aprovado pela gestão
+  pendente: boolean
 }
 
 export const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
   { value: "tecnico", label: "Técnico" },
-  { value: "admin", label: "Administrador" },
+  { value: "escritorio", label: "Escritório" },
 ]
 
-// Quem pode abrir a tela de usuários e quem pode editar (técnico não concede nem remove a role admin)
-export const ROLES_GESTAO = ["admin", "anestesita_socio", "tecnico"]
-export const ROLES_EDICAO = ["admin", "tecnico"]
+// "admin" não é cargo: é a flag is_admin, que o login guarda junto das roles no navegador
+export const ROTULO_ROLE: Record<string, string> = {
+  ...Object.fromEntries(ROLES.map((r) => [r.value, r.label])),
+  admin: "Administrador",
+}
+
+// Quem pode abrir a tela de usuários e quem pode editar (só admin concede ou remove a flag admin)
+export const ROLES_GESTAO = ["escritorio", "admin", "anestesita_socio", "tecnico"]
+export const ROLES_EDICAO = ["escritorio", "admin", "tecnico"]
 
 export const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
 
@@ -51,7 +61,7 @@ function formatarData(data: string) {
 type Props = {
   // null = criar novo usuário
   usuario: UsuarioGestao | null
-  // false = técnico: não concede nem remove a role admin (só a vê, travada, em quem já é admin)
+  // false = quem não é admin: não concede nem remove a flag admin (só a vê, travada)
   podeGerenciarAdmin: boolean
   onClose: () => void
   onSaved: () => void
@@ -65,6 +75,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   const [email, setEmail] = useState(usuario?.email ?? "")
   const [password, setPassword] = useState("")
   const [roles, setRoles] = useState<string[]>(usuario?.roles ?? [])
+  const [isAdmin, setIsAdmin] = useState(usuario?.is_admin ?? false)
   const [crm, setCrm] = useState(usuario?.crm ?? "")
   const [crmUf, setCrmUf] = useState(usuario?.crm_uf ?? "")
 
@@ -81,7 +92,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   useEffect(() => {
     if (!usuario || !ehAnestesista) return
     const token = localStorage.getItem("token")
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/usuario/${usuario.id}`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/usuario/${usuario.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : []))
@@ -109,7 +120,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
 
   async function chamarApi(caminho: string, method: string, body?: object) {
     const token = localStorage.getItem("token")
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
+    const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}`, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -140,6 +151,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
       roles,
       crm: exigeCrm ? crm : undefined,
       crm_uf: exigeCrm ? crmUf : undefined,
+      is_admin: podeGerenciarAdmin ? isAdmin : undefined,
     }
 
     try {
@@ -262,29 +274,45 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
           <div>
             <span className="block text-sm font-medium text-gray-700 mb-1">Funções</span>
             <div className="grid grid-cols-2 gap-2">
-              {ROLES.filter((r) => podeGerenciarAdmin || r.value !== "admin" || usuario?.roles.includes("admin")).map((r) => {
-                const travada = r.value === "admin" && !podeGerenciarAdmin
-                return (
-                  <label
-                    key={r.value}
-                    title={travada ? "Só administradores podem conceder ou remover esta função" : undefined}
-                    className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
-                      travada ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-                    } ${roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={roles.includes(r.value)}
-                      disabled={travada}
-                      onChange={() => alternarRole(r.value)}
-                      className="accent-brand-700"
-                    />
-                    {r.label}
-                  </label>
-                )
-              })}
+              {ROLES.map((r) => (
+                <label
+                  key={r.value}
+                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer ${
+                    roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={roles.includes(r.value)}
+                    onChange={() => alternarRole(r.value)}
+                    className="accent-brand-700"
+                  />
+                  {r.label}
+                </label>
+              ))}
             </div>
           </div>
+
+          {(podeGerenciarAdmin || isAdmin) && (
+            <label
+              title={podeGerenciarAdmin ? undefined : "Só administradores podem conceder ou remover"}
+              className={`flex items-start gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
+                podeGerenciarAdmin ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+              } ${isAdmin ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
+            >
+              <input
+                type="checkbox"
+                checked={isAdmin}
+                disabled={!podeGerenciarAdmin}
+                onChange={() => setIsAdmin((v) => !v)}
+                className="accent-brand-700 mt-0.5"
+              />
+              <span>
+                Administrador
+                <span className="block text-xs text-gray-500">Acesso total à gestão e pode conceder esta permissão a outros.</span>
+              </span>
+            </label>
+          )}
 
           {exigeCrm && (
             <div className="grid grid-cols-[1fr_auto] gap-4">
@@ -381,11 +409,20 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
             </button>
 
             {confirmandoAtivo ? (
-              <div className="flex items-center gap-3 text-sm">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="text-gray-700">
-                  {usuario.ativo ? "Desativar este usuário? Ele não conseguirá mais entrar." : "Reativar este usuário?"}
+                  {usuario.ativo
+                    ? "Desativar este usuário? Ele não conseguirá mais entrar."
+                    : usuario.pendente
+                      ? "Aprovar este cadastro? A pessoa poderá entrar no sistema com o papel escolhido."
+                      : "Reativar este usuário?"}
                 </span>
-                <button type="button" onClick={alterarAtivo} disabled={loading} className="font-semibold text-red-600 hover:text-red-800">
+                <button
+                  type="button"
+                  onClick={alterarAtivo}
+                  disabled={loading}
+                  className={`font-semibold ${usuario.ativo ? "text-red-600 hover:text-red-800" : "text-green-700 hover:text-green-900"}`}
+                >
                   Confirmar
                 </button>
                 <button type="button" onClick={() => setConfirmandoAtivo(false)} className="text-gray-500 hover:text-gray-700">
@@ -401,7 +438,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                   usuario.ativo ? "text-red-600 hover:text-red-800" : "text-green-700 hover:text-green-900"
                 }`}
               >
-                {usuario.ativo ? "Desativar usuário" : "Reativar usuário"}
+                {usuario.ativo ? "Desativar usuário" : usuario.pendente ? "Aprovar cadastro" : "Reativar usuário"}
               </button>
             )}
           </div>

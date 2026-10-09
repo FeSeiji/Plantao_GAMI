@@ -5,6 +5,8 @@ import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
+import { POSICOES, descreverPosicao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
+import { apiFetch } from "./sessao"
 
 type Usuario = {
   id: string
@@ -30,7 +32,6 @@ type Props = {
   onCreated: () => void
 }
 
-const POSICOES = [1, 2, 3, 4, 5, 6, 7]
 
 export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const viewport = useViewportVisivel()
@@ -87,7 +88,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
         params.set("horaInicio", horaInicio)
         params.set("horaFim", horaFim)
       }
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
+      apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(async (res) => {
@@ -206,7 +207,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
             }
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -283,7 +284,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
             return {
               tipo: "vazia",
               chave: `posicao-${p}`,
-              rotulo: `${p}`,
+              rotulo: rotuloPosicao(p),
               texto: "Vaga",
               ativa: adicionando?.posicao === p,
               onClick: () => abrirBusca({ posicao: p }),
@@ -302,7 +303,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               >
                 {POSICOES.map((op) => (
                   <option key={op} value={op} disabled={op !== f.posicao && fila.some((o) => o.posicao === op)}>
-                    {op}
+                    {rotuloPosicaoCurto(op)}
                   </option>
                 ))}
               </select>
@@ -316,7 +317,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     : adicionando.coordenador
     ? "Adicionar coordenador"
     : adicionando.posicao != null
-    ? `Adicionar na posição ${adicionando.posicao}`
+    ? `Adicionar: ${descreverPosicao(adicionando.posicao)}`
     : "Adicionar à equipe"
 
   return (

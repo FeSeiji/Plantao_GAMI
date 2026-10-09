@@ -2,8 +2,13 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1
-const PONTOS_MAXIMOS = 8
+// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8, fim da fila) vale 7
+const POSICAO_INTERMEDIARIO = 8
+
+function pontosDaPosicao(posicao) {
+  if (posicao == null) return 0
+  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
+}
 
 // Calculado na hora a partir dos plantões do mês — nada é gravado.
 // Plantões que viram a noite contam no mês em que começam.
@@ -42,7 +47,7 @@ exports.resumoMensal = async (req, res) => {
       for (const { usuario_id, posicao } of plantao.plantao_usuarios) {
         const acc = socios.get(usuario_id) ?? { plantoes: 0, pontos: 0 }
         acc.plantoes += 1
-        acc.pontos += posicao != null ? PONTOS_MAXIMOS - posicao : 0
+        acc.pontos += pontosDaPosicao(posicao)
         socios.set(usuario_id, acc)
       }
     }

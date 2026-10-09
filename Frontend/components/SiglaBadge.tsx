@@ -1,11 +1,13 @@
 type Props = {
   sigla?: string | null
-  size?: "sm" | "md"
+  size?: "sm" | "md" | "responsivo"
 }
 
 const TAMANHOS = {
   sm: "w-6 h-6 text-[10px]",
   md: "w-9 h-9 text-xs",
+  // Menor no celular, "md" a partir do sm — para tabelas com muitas colunas
+  responsivo: "w-7 h-7 text-[10px] sm:w-9 sm:h-9 sm:text-xs",
 }
 
 export default function SiglaBadge({ sigla, size = "md" }: Props) {

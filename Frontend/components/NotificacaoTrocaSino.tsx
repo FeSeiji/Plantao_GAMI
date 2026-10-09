@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { apiFetch } from "./sessao"
 
 type Pessoa = {
   id: string
@@ -37,7 +38,7 @@ export default function NotificacaoTrocaSino() {
     const token = localStorage.getItem("token")
     if (!token) return
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/pendentes`, {
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/pendentes`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -74,7 +75,7 @@ export default function NotificacaoTrocaSino() {
 
     try {
       const token = localStorage.getItem("token")
-      const res = await fetch(
+      const res = await apiFetch(
         `${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/${id}/${aceitar ? "aceitar" : "recusar"}`,
         {
           method: "PATCH",

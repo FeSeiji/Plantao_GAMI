@@ -4,7 +4,7 @@ const { requireRole } = require('../middleware/auth')
 const { resumoMensal } = require('../controllers/bmFinanceiro')
 
 // Todos menos o plantonista
-const podeVerBm = requireRole('admin', 'anestesita_socio', 'tecnico')
+const podeVerBm = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
 
 router.get('/', podeVerBm, resumoMensal)
 
