@@ -74,7 +74,8 @@ exports.me = async (req, res) => {
     telefone: profile?.telefone ?? null,
     data_nascimento: profile?.data_nascimento ?? null,
     dias_disponiveis: profile?.dias_disponiveis ?? null,
-    roles: app_metadata?.roles ?? []
+    roles: app_metadata?.roles ?? [],
+    is_admin: app_metadata?.is_admin === true
   })
 }
 

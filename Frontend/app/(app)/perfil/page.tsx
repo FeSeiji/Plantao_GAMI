@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
-import { INPUT_CLASS, ROLES, ROLES_ANESTESISTA, UFS } from "../../../components/UsuarioModal"
+import { INPUT_CLASS, ROLES_ANESTESISTA, ROTULO_ROLE, UFS } from "../../../components/UsuarioModal"
 import { EVENTO_PERFIL_ATUALIZADO, apiFetch } from "../../../components/sessao"
 import { DIAS_SEMANA } from "../../../components/disponibilidade"
 import { formatarTelefone } from "../../../components/telefone"
@@ -20,11 +20,10 @@ type Perfil = {
   data_nascimento: string | null
   dias_disponiveis: number[] | null
   roles: string[]
+  is_admin: boolean
 }
 
 const TODOS_OS_DIAS = DIAS_SEMANA.map((d) => d.valor)
-
-const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
 
 function formatarData(data: string | null) {
   if (!data) return null
@@ -354,7 +353,7 @@ export default function PerfilPage() {
                     valor={
                       perfil.roles.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5 mt-1">
-                          {perfil.roles.map((r) => (
+                          {[...perfil.roles, ...(perfil.is_admin ? ["admin"] : [])].map((r) => (
                             <span key={r} className="bg-brand-100 text-brand-800 text-xs font-semibold px-2 py-0.5 rounded-full">
                               {ROTULO_ROLE[r] ?? r}
                             </span>

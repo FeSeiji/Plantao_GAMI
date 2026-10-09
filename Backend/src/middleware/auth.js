@@ -25,8 +25,13 @@ exports.authMiddleware = async (req, res, next) => {
   next()
 }
 
+// Admin é uma flag separada do cargo (escritório, sócio...): app_metadata.is_admin
+const ehAdmin = user => user?.app_metadata?.is_admin === true
+exports.ehAdmin = ehAdmin
+
+// Nas listas de requireRole, 'admin' representa quem tem a flag
 exports.requireRole = (...allowedRoles) => (req, res, next) => {
-  const roles = req.user?.app_metadata?.roles ?? []
+  const roles = [...(req.user?.app_metadata?.roles ?? []), ...(ehAdmin(req.user) ? ['admin'] : [])]
 
   if (!roles.some(role => allowedRoles.includes(role))) {
     return res.status(403).json({ error: 'Você não tem permissão para realizar esta ação' })

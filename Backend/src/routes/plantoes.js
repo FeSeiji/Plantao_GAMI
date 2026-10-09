@@ -8,9 +8,9 @@ const {
 } = require('../controllers/plantoes')
 
 // Mexer na equipe (adicionar, remover, coordenador) é da gestão; os médicos usam a troca, que pede aceite
-const gestaoEquipe = requireRole('admin', 'tecnico')
+const gestaoEquipe = requireRole('escritorio', 'admin', 'tecnico')
 // Criar e editar o plantão (data, horário, título) e mudar a ordem da fila
-const edicaoPlantao = requireRole('admin', 'anestesita_socio', 'tecnico')
+const edicaoPlantao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)

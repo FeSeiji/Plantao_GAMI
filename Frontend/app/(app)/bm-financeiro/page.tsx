@@ -6,7 +6,7 @@ import SiglaBadge from "../../../components/SiglaBadge"
 import { apiFetch } from "../../../components/sessao"
 
 // Todos menos o plantonista
-const ROLES_BM_FINANCEIRO = ["admin", "anestesita_socio", "tecnico"]
+const ROLES_BM_FINANCEIRO = ["escritorio", "admin", "anestesita_socio", "tecnico"]
 
 type Aba = "plantonista" | "socio"
 

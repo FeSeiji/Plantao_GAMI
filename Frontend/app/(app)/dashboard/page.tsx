@@ -15,6 +15,7 @@ const ROLE_LABELS: Record<string, string> = {
   anestesita_plantonista: "Anestesista Plantonista",
   tecnico: "Técnico",
   coordenador: "Coordenador",
+  escritorio: "Escritório",
   admin: "Administrador",
 }
 
@@ -55,7 +56,7 @@ type Resumo = {
 }
 
 // Mesma lista do backend em routes/dashboard.js
-const ROLES_VISAO_GESTAO = ["admin", "tecnico"]
+const ROLES_VISAO_GESTAO = ["escritorio", "admin", "tecnico"]
 // Só quem trabalha em plantões tem cards pessoais — admin/técnico puros veem só a gestão
 const ROLES_MEDICO = ["anestesita_socio", "anestesita_plantonista"]
 

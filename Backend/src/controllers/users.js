@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 const { usuariosAfastados } = require('../services/afastamentos')
+const { ehAdmin } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -94,6 +95,7 @@ exports.listarGestao = async (req, res) => {
     return {
       ...p,
       roles: authUser?.app_metadata?.roles ?? [],
+      is_admin: ehAdmin(authUser),
       ativo: !estaDesativado(authUser),
       pendente: estaDesativado(authUser) && authUser?.app_metadata?.pendente_aprovacao === true
     }
@@ -101,7 +103,7 @@ exports.listarGestao = async (req, res) => {
 }
 
 exports.criarUsuarioGestao = async (req, res) => {
-  const { email, password, nome, sigla, roles, crm, crm_uf } = req.body
+  const { email, password, nome, sigla, roles, crm, crm_uf, is_admin = false } = req.body
 
   if (!email || !password || !nome || !sigla) {
     return res.status(400).json({ error: 'email, password, nome e sigla são obrigatórios' })
@@ -111,7 +113,11 @@ exports.criarUsuarioGestao = async (req, res) => {
     return res.status(400).json({ error: 'roles deve ser um array não vazio' })
   }
 
-  if (!ehAdmin(req.user) && roles.includes('admin')) {
+  if (typeof is_admin !== 'boolean') {
+    return res.status(400).json({ error: 'is_admin deve ser true ou false' })
+  }
+
+  if (is_admin && !ehAdmin(req.user)) {
     return res.status(403).json({ error: 'Apenas administradores podem criar outro administrador' })
   }
 
@@ -125,16 +131,16 @@ exports.criarUsuarioGestao = async (req, res) => {
 
   if (dados.error) return res.status(400).json({ error: dados.error })
 
-  const resultado = await criarUsuario({ email, password, nome, ...dados })
+  const resultado = await criarUsuario({ email, password, nome, ...dados, is_admin })
   if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
   return res.status(201).json({ id: resultado.user.id })
 }
 
-// Edita nome, sigla, roles e CRM. Campos omitidos mantêm o valor atual.
+// Edita nome, sigla, roles, flag admin e CRM. Campos omitidos mantêm o valor atual.
 exports.atualizarUsuario = async (req, res) => {
   const { id } = req.params
-  const { nome, sigla, roles, crm, crm_uf } = req.body
+  const { nome, sigla, roles, crm, crm_uf, is_admin } = req.body
 
   const [{ data: profile, error: profileError }, { data: auth, error: authError }] = await Promise.all([
     supabase.from('profiles').select('nome, sigla, crm, crm_uf').eq('id', id).maybeSingle(),
@@ -146,9 +152,19 @@ exports.atualizarUsuario = async (req, res) => {
     return res.status(404).json({ error: 'Usuário não encontrado' })
   }
 
-  // Técnico edita os dados de um admin, mas não concede nem retira a role admin
-  if (!ehAdmin(req.user) && roles !== undefined && Array.isArray(roles) && roles.includes('admin') !== ehAdmin(auth.user)) {
-    return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover a role admin' })
+  if (is_admin !== undefined && typeof is_admin !== 'boolean') {
+    return res.status(400).json({ error: 'is_admin deve ser true ou false' })
+  }
+
+  // Quem não é admin edita os dados de um admin, mas não concede nem retira a flag
+  const mudaAdmin = is_admin !== undefined && is_admin !== ehAdmin(auth.user)
+  if (mudaAdmin && !ehAdmin(req.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover a flag de administrador' })
+  }
+
+  // Evita que o admin se tranque para fora
+  if (mudaAdmin && id === req.user.id) {
+    return res.status(400).json({ error: 'Você não pode remover a própria flag de administrador' })
   }
 
   if (nome !== undefined && !String(nome).trim()) {
@@ -158,11 +174,6 @@ exports.atualizarUsuario = async (req, res) => {
   const rolesFinais = roles ?? auth.user.app_metadata?.roles ?? []
   if (!Array.isArray(rolesFinais) || rolesFinais.length === 0) {
     return res.status(400).json({ error: 'roles deve ser um array não vazio' })
-  }
-
-  // Evita que o admin se tranque para fora da gestão
-  if (id === req.user.id && ehAdmin(req.user) && !rolesFinais.includes('admin')) {
-    return res.status(400).json({ error: 'Você não pode remover a própria role admin' })
   }
 
   let dados
@@ -196,7 +207,7 @@ exports.atualizarUsuario = async (req, res) => {
   }
 
   const { error: rolesError } = await supabase.auth.admin.updateUserById(id, {
-    app_metadata: { roles: dados.roles }
+    app_metadata: { roles: dados.roles, ...(mudaAdmin ? { is_admin } : {}) }
   })
 
   if (rolesError) {
@@ -250,10 +261,6 @@ exports.enviarResetSenha = async (req, res) => {
   }
 
   return res.json({ message: `E-mail de redefinição enviado para ${data.user.email}` })
-}
-
-function ehAdmin(user) {
-  return (user?.app_metadata?.roles ?? []).includes('admin')
 }
 
 function estaDesativado(authUser) {

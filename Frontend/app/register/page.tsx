@@ -8,7 +8,6 @@ const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
   { value: "tecnico", label: "Técnico" },
-  { value: "admin", label: "Administrador" },
 ]
 
 const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]

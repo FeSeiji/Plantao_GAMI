@@ -112,7 +112,7 @@ exports.resumo = async (req, res) => {
 
 const TOP_N = 5
 
-// Visão da gestão (admin/técnico): hospital como um todo, não só o usuário logado.
+// Visão da gestão (escritório/admin/técnico): hospital como um todo, não só o usuário logado.
 // Uma consulta de plantões cobre mês anterior + mês atual + agenda, e o resto sai em memória.
 exports.gestao = async (req, res) => {
   const agora = agoraNoHospital()

@@ -41,7 +41,8 @@ export default function LoginPage() {
 
       if (meRes.ok) {
         localStorage.setItem("userId", me.id)
-        localStorage.setItem("roles", JSON.stringify(me.roles))
+        // A flag admin entra como "admin" na lista, que é o que as checagens de permissão da tela procuram
+        localStorage.setItem("roles", JSON.stringify([...me.roles, ...(me.is_admin ? ["admin"] : [])]))
         localStorage.setItem("email", me.email)
         localStorage.setItem("nome", me.nome ?? "")
         localStorage.setItem("sigla", me.sigla ?? "")

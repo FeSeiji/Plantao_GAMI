@@ -71,11 +71,11 @@ type EventoHistorico =
   | { tipo: "posicao"; quando: string; mudanca: MudancaPosicaoHistorico };
 
 // Quem pode mudar a ordem da fila de sócios — mesma lista do requireRole em Backend/src/routes/plantoes.js
-const ROLES_MUDAR_POSICAO = ["admin", "anestesita_socio", "tecnico"];
+const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
 // Adicionar, remover e definir coordenador: só a gestão — mesma lista em Backend/src/routes/plantoes.js
-const ROLES_GERIR_EQUIPE = ["admin", "tecnico"];
+const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
 // Criar e editar plantões (data, horário, título) — mesma lista em Backend/src/routes/plantoes.js
-export const ROLES_EDITAR_PLANTAO = ["admin", "anestesita_socio", "tecnico"];
+export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
 
 type Usuario = {
   id: string;

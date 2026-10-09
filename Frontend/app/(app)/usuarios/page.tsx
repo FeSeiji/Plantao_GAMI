@@ -3,11 +3,9 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
-import UsuarioModal, { ROLES, ROLES_EDICAO, ROLES_GESTAO, UsuarioGestao } from "../../../components/UsuarioModal"
+import UsuarioModal, { ROLES_EDICAO, ROLES_GESTAO, ROTULO_ROLE, UsuarioGestao } from "../../../components/UsuarioModal"
 import { formatarTelefone } from "../../../components/telefone"
 import { apiFetch } from "../../../components/sessao"
-
-const ROTULO_ROLE = Object.fromEntries(ROLES.map((r) => [r.value, r.label]))
 
 function lerRoles(): string[] {
   try {
@@ -153,7 +151,7 @@ export default function UsuariosPage() {
                       {u.roles.length === 0 ? (
                         <span className="text-gray-400">—</span>
                       ) : (
-                        u.roles.map((r) => (
+                        [...u.roles, ...(u.is_admin ? ["admin"] : [])].map((r) => (
                           <span key={r} className="bg-brand-100 text-brand-800 text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap">
                             {ROTULO_ROLE[r] ?? r}
                           </span>
