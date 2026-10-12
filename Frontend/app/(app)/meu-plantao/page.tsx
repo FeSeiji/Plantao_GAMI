@@ -25,8 +25,10 @@ import {
 } from "../../../components/posicoes"
 import { apiFetch } from "../../../components/sessao"
 
-// Sócios e plantonistas veem esta tela — mesma lista em components/Sidebar.tsx
-const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista"]
+// Médicos e a gestão (técnico e escritório) veem esta tela — mesma lista em components/Sidebar.tsx
+const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnico", "escritorio"]
+// A gestão acompanha as duas filas, então alterna entre as visões como quem é sócio e plantonista
+const ROLES_GESTAO_MEU_PLANTAO = ["tecnico", "escritorio"]
 
 type Visao = "socio" | "plantonista"
 
@@ -123,7 +125,7 @@ export default function MeuPlantaoPage() {
   const [meuId, setMeuId] = useState<string | null>(null)
   const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
   const [visao, setVisao] = useState<Visao | null>(null)
-  // Só quem é sócio e plantonista alterna entre as duas visões
+  // Alterna entre as duas visões quem é sócio e plantonista, e a gestão (técnico e escritório)
   const [podeAlternar, setPodeAlternar] = useState(false)
 
   const { inicio, fim } = useMemo(() => calcularIntervaloVisivel(dataReferencia, "semana"), [dataReferencia])
@@ -145,8 +147,9 @@ export default function MeuPlantaoPage() {
       return
     }
     const ehSocio = roles.includes("anestesita_socio")
-    setVisao(ehSocio ? "socio" : "plantonista")
-    setPodeAlternar(ehSocio && roles.includes("anestesita_plantonista"))
+    const ehGestao = roles.some((r) => ROLES_GESTAO_MEU_PLANTAO.includes(r))
+    setVisao(ehSocio || ehGestao ? "socio" : "plantonista")
+    setPodeAlternar((ehSocio && roles.includes("anestesita_plantonista")) || ehGestao)
     setMeuId(localStorage.getItem("userId"))
   }, [router])
 
