@@ -7,22 +7,23 @@ const {
   alterarPosicao, listarMudancasPosicaoDoPlantao,
 } = require('../controllers/plantoes')
 
-// Mexer na equipe (adicionar, remover, coordenador) é da gestão; os médicos usam a troca, que pede aceite
-const gestaoEquipe = requireRole('escritorio', 'admin', 'tecnico')
-// Criar e editar o plantão (data, horário, título) e mudar a ordem da fila
-const edicaoPlantao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
+// Criar e editar o plantão e mexer na equipe (adicionar, remover, coordenador) é da gestão.
+// Os médicos usam a troca, que pede aceite; sócios com a flag admin entram por 'admin'
+const gestao = requireRole('escritorio', 'admin', 'tecnico')
+// Mudar a ordem da fila de sócios: gestão e os próprios sócios
+const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)
 router.patch('/trocas/:trocaId/aceitar', responderTroca(true))
 router.patch('/trocas/:trocaId/recusar', responderTroca(false))
 router.get('/:id', getPlantao)
-router.post('/', edicaoPlantao, createPlantao)
-router.patch('/:id', edicaoPlantao, updatePlantao)
-router.post('/:id/usuarios', gestaoEquipe, addUsuarios)
-router.patch('/:id/coordenador', gestaoEquipe, definirCoordenador)
-router.patch('/:id/posicao', edicaoPlantao, alterarPosicao)
-router.delete('/:id/usuarios/:usuarioId', gestaoEquipe, removeUsuario)
+router.post('/', gestao, createPlantao)
+router.patch('/:id', gestao, updatePlantao)
+router.post('/:id/usuarios', gestao, addUsuarios)
+router.patch('/:id/coordenador', gestao, definirCoordenador)
+router.patch('/:id/posicao', mudarPosicao, alterarPosicao)
+router.delete('/:id/usuarios/:usuarioId', gestao, removeUsuario)
 router.get('/:id/trocas', listarTrocasDoPlantao)
 router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.get('/:id/mudancas-posicao', listarMudancasPosicaoDoPlantao)

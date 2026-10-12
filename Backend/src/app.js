@@ -22,6 +22,7 @@ app.use(cors({ origin: origensPermitidas }));
 app.use(express.json());
 
 // rotas públicas (sem auth)
+app.use('/health', require('./routes/health'))
 app.use('/auth', require('./routes/auth'))
 
 // middleware JWT — protege tudo abaixo

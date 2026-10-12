@@ -4,7 +4,11 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
+const { ehAdmin } = require('../middleware/auth')
+
 const TIPOS_VALIDOS = ['plantonista', 'socio']
+// Cargos da gestão: mexem em qualquer plantão (a flag admin conta como gestão)
+const ROLES_GESTAO = ['escritorio', 'tecnico']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
 exports.createPlantao = async (req, res) => {
@@ -55,7 +59,11 @@ exports.createPlantao = async (req, res) => {
       .from('plantao_usuarios')
       .insert(membros.map(m => ({ plantao_id: plantao.id, ...m })))
 
-    if (membrosError) return res.status(400).json({ error: membrosError.message })
+    if (membrosError) {
+      // Sem os membros o plantão ficaria vazio no calendário: desfaz a criação
+      await supabase.from('plantoes').delete().eq('id', plantao.id)
+      return res.status(400).json({ error: membrosError.message })
+    }
   }
 
   try {
@@ -129,6 +137,35 @@ exports.updatePlantao = async (req, res) => {
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'Nenhum campo para atualizar' })
+  }
+
+  // Mudou dia ou horário: a equipe atual precisa estar livre e sem afastamento na nova janela
+  if (data !== undefined || hora_inicio !== undefined || hora_fim !== undefined) {
+    const { data: atual, error: atualError } = await supabase
+      .from('plantoes')
+      .select('id, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id)')
+      .eq('id', req.params.id)
+      .maybeSingle()
+
+    if (atualError) return res.status(500).json({ error: atualError.message })
+    if (!atual) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+    const ids = atual.plantao_usuarios.map(u => u.usuario_id)
+    const novaData = data ?? atual.data
+
+    try {
+      const ocupados = await usuariosComConflito(
+        ids, novaData, hora_inicio ?? atual.hora_inicio, hora_fim ?? atual.hora_fim, atual.id
+      )
+      if (ocupados.size > 0) {
+        const perfis = await buscarPerfis([...ocupados])
+        const nomes = [...ocupados].map(id => perfis.get(id)?.nome ?? perfis.get(id)?.email ?? id)
+        return res.status(400).json({ error: `Médico(s) já escalado(s) em outro plantão nesse horário: ${nomes.join(', ')}` })
+      }
+      await validarSemAfastamento(ids, novaData)
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
+    }
   }
 
   const { data: plantao, error } = await supabase
@@ -242,6 +279,12 @@ exports.alterarPosicao = async (req, res) => {
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
   if (plantao.tipo !== 'socio') {
     return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
+  }
+
+  // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
+  const ehGestao = ehAdmin(req.user) || (req.user.app_metadata?.roles ?? []).some(r => ROLES_GESTAO.includes(r))
+  if (!ehGestao && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
+    return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
   }
 
   const membro = plantao.plantao_usuarios.find(u => u.usuario_id === usuario_id)
@@ -410,7 +453,21 @@ exports.definirCoordenador = async (req, res) => {
     .eq('plantao_id', req.params.id)
     .eq('usuario_id', usuario_id)
 
-  if (definirError) return res.status(400).json({ error: definirError.message })
+  if (definirError) {
+    // Devolve o coordenador anterior para o plantão não ficar sem nenhum
+    if (atual) {
+      await supabase
+        .from('plantao_usuarios')
+        .update({ is_coordenador: true })
+        .eq('plantao_id', req.params.id)
+        .eq('usuario_id', atual.usuario_id)
+    }
+    // Índice único: outra pessoa definiu um coordenador ao mesmo tempo
+    if (definirError.code === '23505') {
+      return res.status(409).json({ error: 'O coordenador acabou de ser alterado por outra pessoa. Recarregue o plantão.' })
+    }
+    return res.status(400).json({ error: definirError.message })
+  }
 
   return res.json({ message: 'Coordenador definido' })
 }
@@ -554,7 +611,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   if (aceitar) {
     const { data: slot, error: slotError } = await supabase
       .from('plantao_usuarios')
-      .select('is_coordenador, plantoes(tipo, data)')
+      .select('is_coordenador, plantoes(tipo, data, hora_inicio, hora_fim)')
       .eq('plantao_id', troca.plantao_id)
       .eq('usuario_id', troca.usuario_saida)
       .maybeSingle()
@@ -568,6 +625,29 @@ exports.responderTroca = (aceitar) => async (req, res) => {
       return res.status(409).json({ error: 'Você está de férias ou em congresso no dia desse plantão' })
     }
 
+    // A troca pode ter ficado dias pendente: confere de novo se o convidado continua livre nesse horário
+    if (slot?.plantoes) {
+      const { data, hora_inicio, hora_fim } = slot.plantoes
+      const ocupados = await usuariosComConflito([troca.usuario_entrada], data, hora_inicio, hora_fim, troca.plantao_id)
+      if (ocupados.size > 0) {
+        return res.status(409).json({ error: 'Você já está escalado em outro plantão nesse horário' })
+      }
+    }
+  }
+
+  // Reserva a troca antes de mexer na equipe: só uma resposta passa, mesmo com dois cliques ao mesmo tempo
+  const { data: atualizada, error } = await supabase
+    .from('plantao_trocas')
+    .update({ status: aceitar ? 'aceita' : 'recusada', respondido_em: new Date().toISOString() })
+    .eq('id', req.params.trocaId)
+    .eq('status', 'pendente')
+    .select()
+    .maybeSingle()
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+
+  if (aceitar) {
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
       .update({ usuario_id: troca.usuario_entrada })
@@ -575,20 +655,18 @@ exports.responderTroca = (aceitar) => async (req, res) => {
       .eq('usuario_id', troca.usuario_saida)
       .select()
 
-    if (swapError) return res.status(400).json({ error: swapError.message })
-    if (!linhasAtualizadas || linhasAtualizadas.length === 0) {
+    if (swapError || !linhasAtualizadas || linhasAtualizadas.length === 0) {
+      // A equipe não mudou: a troca volta a ficar pendente
+      await supabase
+        .from('plantao_trocas')
+        .update({ status: 'pendente', respondido_em: null })
+        .eq('id', req.params.trocaId)
+
+      if (swapError?.code === '23505') return res.status(409).json({ error: 'Você já está nesse plantão' })
+      if (swapError) return res.status(400).json({ error: swapError.message })
       return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
     }
   }
-
-  const { data: atualizada, error } = await supabase
-    .from('plantao_trocas')
-    .update({ status: aceitar ? 'aceita' : 'recusada', respondido_em: new Date().toISOString() })
-    .eq('id', req.params.trocaId)
-    .select()
-    .single()
-
-  if (error) return res.status(400).json({ error: error.message })
 
   try {
     const perfis = await buscarPerfis([atualizada.usuario_saida, atualizada.usuario_entrada, atualizada.solicitado_por])

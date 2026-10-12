@@ -74,8 +74,8 @@ type EventoHistorico =
 const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
 // Adicionar, remover e definir coordenador: só a gestão — mesma lista em Backend/src/routes/plantoes.js
 const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
-// Criar e editar plantões (data, horário, título) — mesma lista em Backend/src/routes/plantoes.js
-export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
+// Criar e editar plantões (data, horário, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
+export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "tecnico"];
 
 type Usuario = {
   id: string;
@@ -153,6 +153,8 @@ export default function PlantaoModal({
   );
 
   const ehSocio = plantao.tipo === "socio";
+  // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
+  const estouEscalado = plantao.usuarios.some((u) => u.id === meuId);
 
   useEffect(() => {
     setMeuId(localStorage.getItem("userId"));
@@ -679,8 +681,13 @@ export default function PlantaoModal({
         });
     }
 
+    // A gestão muda a posição no modo edição; o sócio escalado (que não entra nesse modo) muda direto na visualização
+    const mostraSeletorPosicao = podeEditarPlantao
+      ? editavel
+      : podeMudarPosicao && estouEscalado;
+
     let rotulo: React.ReactNode = undefined;
-    if (ehSocio && editavel && !pendente && podeMudarPosicao) {
+    if (ehSocio && !pendente && mostraSeletorPosicao) {
       rotulo = (
         <select
           aria-label="Posição na fila"
