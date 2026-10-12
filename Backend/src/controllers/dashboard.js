@@ -2,13 +2,8 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8) vale 7 — mesma regra do BM Financeiro
-const POSICAO_INTERMEDIARIO = 8
+const { pontosDaPosicao, ordemDaPosicao } = require('../services/posicoes')
 
-function pontosDaPosicao(posicao) {
-  if (posicao == null) return 0
-  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
-}
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
 
@@ -186,7 +181,7 @@ exports.gestao = async (req, res) => {
         ...plantao,
         usuarios: plantao_usuarios
           .map(u => ({ ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }), coordenador: u.is_coordenador ?? false, posicao: u.posicao ?? null }))
-          .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0)),
+          .sort((a, b) => ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao)),
       }
     }
 
@@ -286,7 +281,7 @@ function formatPlantao(row, perfis, agoraMin) {
         coordenador: u.is_coordenador ?? false,
         posicao: u.posicao ?? null,
       }))
-      .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0)),
+      .sort((a, b) => ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao)),
   }
 }
 

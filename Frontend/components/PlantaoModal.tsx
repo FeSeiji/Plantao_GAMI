@@ -16,7 +16,7 @@ import {
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino";
 import {
-  POSICOES,
+  posicoesDoPlantao,
   descreverPosicao,
   rotuloPosicao,
   rotuloPosicaoCurto,
@@ -154,6 +154,8 @@ export default function PlantaoModal({
   );
 
   const ehSocio = plantao.tipo === "socio";
+  // Diurno: 1º a 7º + intermediário; noturno (19h em diante): 1º, 1º, 2º, 3º, 4º
+  const posicoesDaFila = posicoesDoPlantao(plantao.hora_inicio);
   // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
   const estouEscalado = plantao.usuarios.some((u) => u.id === meuId);
 
@@ -696,7 +698,7 @@ export default function PlantaoModal({
           onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
           className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
-          {POSICOES.map((p) => (
+          {posicoesDaFila.map((p) => (
             <option key={p} value={p}>
               {rotuloPosicaoCurto(p)}
               {p !== u.posicao && selecionados.some((o) => o.posicao === p)
@@ -769,7 +771,7 @@ export default function PlantaoModal({
 
   function montarCelulas(editavel: boolean): CelulaGrade[] {
     if (ehSocio) {
-      return POSICOES.map((p) => {
+      return posicoesDaFila.map((p) => {
         const u = selecionados.find((s) => s.posicao === p);
         if (u) return celulaMedico(u, editavel);
         return {

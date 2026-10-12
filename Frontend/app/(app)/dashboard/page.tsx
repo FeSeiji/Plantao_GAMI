@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
-import { POSICAO_INTERMEDIARIO } from "../../../components/posicoes"
+import { POSICAO_INTERMEDIARIO, rotuloPosicaoCurto } from "../../../components/posicoes"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
 
@@ -111,7 +111,7 @@ function quandoComeca(p: PlantaoResumo, agora: Resumo["agora"]) {
 function descreverPapel(p: PlantaoResumo) {
   if (p.tipo === "socio") {
     if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
-    return p.meuPapel.posicao != null ? `Posição ${p.meuPapel.posicao} na fila` : "Fila de sócios"
+    return p.meuPapel.posicao != null ? `Posição ${rotuloPosicaoCurto(p.meuPapel.posicao)} na fila` : "Fila de sócios"
   }
   return p.meuPapel.coordenador ? "Você é o coordenador" : "Equipe de plantonistas"
 }
@@ -425,7 +425,7 @@ export default function DashboardPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                         <p className="text-xs text-gray-500">
-                          {formatarHorario(p)} · {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${p.meuPapel.posicao}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
+                          {formatarHorario(p)} · {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${rotuloPosicaoCurto(p.meuPapel.posicao)}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}

@@ -10,9 +10,19 @@ import {
   Usuario,
   calcularIntervaloVisivel,
   formatarDataLocal,
+  Turno,
   turnoDe,
 } from "../../../components/PlantaoCalendario"
-import { POSICOES, POSICAO_INTERMEDIARIO, rotuloPosicao, rotuloPosicaoCurto } from "../../../components/posicoes"
+import {
+  POSICOES,
+  POSICOES_NOTURNO,
+  POSICAO_INTERMEDIARIO,
+  ordemDaPosicao,
+  posicoesDoPlantao,
+  rotuloPosicao,
+  rotuloPosicaoCurto,
+  ehNoturno,
+} from "../../../components/posicoes"
 import { apiFetch } from "../../../components/sessao"
 
 // Sócios e plantonistas veem esta tela — mesma lista em components/Sidebar.tsx
@@ -29,13 +39,23 @@ type Linha = {
   ocupante: (p: Plantao) => Usuario | undefined
 }
 
-const LINHAS_SOCIO: Linha[] = POSICOES.map((posicao) => ({
-  chave: `posicao-${posicao}`,
-  rotulo: rotuloPosicao(posicao),
-  rotuloCurto: rotuloPosicaoCurto(posicao),
-  separador: posicao === POSICAO_INTERMEDIARIO,
-  ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
-}))
+// Uma linha por vaga que existe nos plantões do turno: o diurno tem 1º a 7º + intermediário,
+// o noturno (19h em diante) tem 1º, 1º, 2º, 3º, 4º. Sem plantão no turno, vale a fila padrão dele
+// (noite → noturna, manhã/tarde → diurna).
+function linhasSocio(plantoes: Plantao[], padrao: number[]): Linha[] {
+  const posicoes = plantoes.length
+    ? [...new Set(plantoes.flatMap((p) => posicoesDoPlantao(p.hora_inicio)))].sort(
+        (a, b) => ordemDaPosicao(a) - ordemDaPosicao(b)
+      )
+    : padrao
+  return posicoes.map((posicao) => ({
+    chave: `posicao-${posicao}`,
+    rotulo: rotuloPosicao(posicao),
+    rotuloCurto: rotuloPosicaoCurto(posicao),
+    separador: posicao === POSICAO_INTERMEDIARIO,
+    ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
+  }))
+}
 
 const membrosDaEquipe = (p: Plantao) => p.usuarios.filter((u) => !u.coordenador)
 
@@ -57,6 +77,14 @@ function linhasPlantonista(plantoes: Plantao[]): Linha[] {
       ocupante: (p: Plantao) => membrosDaEquipe(p)[i],
     })),
   ]
+}
+
+// Na visão de sócio, o bloco da noite é o plantão noturno (19h em diante, fila 1º, 1º, 2º, 3º, 4º);
+// um plantão de sócio às 18h tem fila diurna e fica na tarde. Na de plantonista vale o turno do calendário.
+function turnoNaVisao(visao: Visao | null, horaInicio: string): Turno {
+  if (visao === "plantonista") return turnoDe(horaInicio)
+  if (ehNoturno(horaInicio)) return "noite"
+  return Number(horaInicio.slice(0, 2)) >= 12 ? "tarde" : "manha"
 }
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
@@ -155,15 +183,22 @@ export default function MeuPlantaoPage() {
   }, [plantoes])
 
   function doTurno(chave: string, turno: string) {
-    return (plantoesPorDia.get(chave) ?? []).filter((p) => turnoDe(p.hora_inicio) === turno)
+    return (plantoesPorDia.get(chave) ?? []).filter((p) => turnoNaVisao(visao, p.hora_inicio) === turno)
   }
 
   // Um bloco de posições por turno: manhã e noite sempre, tarde só se a semana tiver plantão nela
   const turnosVisiveis = TURNOS.filter(
-    (t) => t.valor !== "tarde" || plantoes.some((p) => turnoDe(p.hora_inicio) === "tarde")
+    (t) => t.valor !== "tarde" || plantoes.some((p) => turnoNaVisao(visao, p.hora_inicio) === "tarde")
   )
 
-  const linhas = useMemo(() => (visao === "plantonista" ? linhasPlantonista(plantoes) : LINHAS_SOCIO), [visao, plantoes])
+  const linhasPlantonistaSemana = useMemo(() => linhasPlantonista(plantoes), [plantoes])
+  function linhasDoTurno(turno: string) {
+    if (visao === "plantonista") return linhasPlantonistaSemana
+    return linhasSocio(
+      plantoes.filter((p) => turnoNaVisao(visao, p.hora_inicio) === turno),
+      turno === "noite" ? POSICOES_NOTURNO : POSICOES
+    )
+  }
 
   function mudarVisao(nova: Visao) {
     if (nova === visao) return
@@ -291,7 +326,7 @@ export default function MeuPlantaoPage() {
                     )
                   })}
                 </tr>
-                {linhas.map((linha) => (
+                {linhasDoTurno(turno.valor).map((linha) => (
                   <tr
                     key={linha.chave}
                     className={`border-b border-gray-100 ${linha.separador ? "border-t-2 border-t-gray-200" : ""}`}

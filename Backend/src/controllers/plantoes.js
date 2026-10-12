@@ -5,6 +5,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
 const { ehGestao } = require('../middleware/auth')
+const { ehNoturno, posicoesDoPlantao, rotuloPosicao, ordemDaPosicao } = require('../services/posicoes')
 
 const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
@@ -141,7 +142,7 @@ exports.updatePlantao = async (req, res) => {
   if (data !== undefined || hora_inicio !== undefined || hora_fim !== undefined) {
     const { data: atual, error: atualError } = await supabase
       .from('plantoes')
-      .select('id, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id)')
+      .select('id, tipo, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id, posicao)')
       .eq('id', req.params.id)
       .maybeSingle()
 
@@ -150,6 +151,20 @@ exports.updatePlantao = async (req, res) => {
 
     const ids = atual.plantao_usuarios.map(u => u.usuario_id)
     const novaData = data ?? atual.data
+
+    // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
+    // que não existe no novo tipo precisa sair antes
+    if (atual.tipo === 'socio' && hora_inicio !== undefined) {
+      const permitidas = posicoesDoPlantao(hora_inicio)
+      const foraDaFila = atual.plantao_usuarios.filter(u => u.posicao != null && !permitidas.includes(u.posicao))
+      if (foraDaFila.length > 0) {
+        const vagas = [...new Set(foraDaFila.map(u => rotuloPosicao(u.posicao)))].join(', ')
+        const novoTipo = ehNoturno(hora_inicio) ? 'noturno' : 'diurno'
+        return res.status(400).json({
+          error: `Com esse horário o plantão vira ${novoTipo}, e as vagas ${vagas} deixam de existir. Remova quem está nelas antes de mudar o horário.`
+        })
+      }
+    }
 
     try {
       const ocupados = await usuariosComConflito(
@@ -263,13 +278,13 @@ exports.listarRemocoesDoPlantao = async (req, res) => {
 exports.alterarPosicao = async (req, res) => {
   const { usuario_id, posicao } = req.body
 
-  if (!usuario_id || !Number.isInteger(posicao) || posicao < 1 || posicao > 8) {
-    return res.status(400).json({ error: 'usuario_id e posicao (número inteiro entre 1 e 8) são obrigatórios' })
+  if (!usuario_id || !Number.isInteger(posicao)) {
+    return res.status(400).json({ error: 'usuario_id e posicao (número inteiro) são obrigatórios' })
   }
 
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, tipo, plantao_usuarios(usuario_id, posicao)')
+    .select('id, tipo, hora_inicio, plantao_usuarios(usuario_id, posicao)')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -277,6 +292,9 @@ exports.alterarPosicao = async (req, res) => {
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
   if (plantao.tipo !== 'socio') {
     return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
+  }
+  if (!posicoesDoPlantao(plantao.hora_inicio).includes(posicao)) {
+    return res.status(400).json({ error: 'Essa posição não existe na fila desse plantão' })
   }
 
   // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
@@ -712,11 +730,17 @@ async function validarFilaSocio(fila, { janela } = {}) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
   }
 
+  // Diurno: 1 a 7 e 8 = intermediário. Noturno (19h em diante): 1, 9 (segundo 1º), 2, 3 e 4
+  const permitidas = posicoesDoPlantao(janela.horaInicio)
   const posicaoInvalida = fila.some(
-    f => !f?.usuario_id || !Number.isInteger(f.posicao) || f.posicao < 1 || f.posicao > 8
+    f => !f?.usuario_id || !Number.isInteger(f.posicao) || !permitidas.includes(f.posicao)
   )
   if (posicaoInvalida) {
-    throw new Error('cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)')
+    throw new Error(
+      ehNoturno(janela.horaInicio)
+        ? 'cada item da fila precisa de usuario_id e posicao (plantão noturno: 1, 9 = segundo 1º, 2, 3 ou 4)'
+        : 'cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)'
+    )
   }
 
   const posicoes = fila.map(f => f.posicao)
@@ -917,7 +941,7 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
     // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
     // para o "Membro N" não mudar de lugar entre uma carga e outra
     .sort((a, b) =>
-      (a.posicao ?? 0) - (b.posicao ?? 0) ||
+      ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao) ||
       Number(b.coordenador) - Number(a.coordenador) ||
       (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR') ||
       a.id.localeCompare(b.id)

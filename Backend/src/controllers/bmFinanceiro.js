@@ -2,13 +2,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8, fim da fila) vale 7
-const POSICAO_INTERMEDIARIO = 8
-
-function pontosDaPosicao(posicao) {
-  if (posicao == null) return 0
-  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
-}
+const { pontosDaPosicao } = require('../services/posicoes')
 
 // Calculado na hora a partir dos plantões do mês — nada é gravado.
 // Plantões que viram a noite contam no mês em que começam.
