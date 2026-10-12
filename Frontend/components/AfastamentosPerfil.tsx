@@ -12,6 +12,13 @@ type AfastamentoProprio = {
   data_inicio: string
   data_fim: string
   observacao: string | null
+  status: "pendente" | "aprovado" | "recusado"
+}
+
+const ROTULO_STATUS = {
+  pendente: { texto: "Aguardando aprovação", classe: "bg-amber-50 text-amber-800" },
+  aprovado: { texto: "Aprovado", classe: "bg-green-50 text-green-700" },
+  recusado: { texto: "Recusado", classe: "bg-gray-100 text-gray-600" },
 }
 
 type PlantaoAfetado = {
@@ -41,7 +48,7 @@ function chamarApi(caminho: string, metodo = "GET", body?: unknown) {
   })
 }
 
-// Férias e congressos do próprio médico: nesses dias ele não pode ser escalado
+// Férias e congressos do próprio médico: depois que a gestão aprova, ele não pode ser escalado nesses dias
 export default function AfastamentosPerfil() {
   const [afastamentos, setAfastamentos] = useState<AfastamentoProprio[]>([])
   const [carregando, setCarregando] = useState(true)
@@ -123,7 +130,8 @@ export default function AfastamentosPerfil() {
     <div className="bg-white rounded-xl border border-gray-200 p-6 sm:p-8 mt-6">
       <h2 className="font-semibold text-gray-800">Férias e congressos</h2>
       <p className="text-sm text-gray-500 mt-1 mb-5">
-        Nesses dias você não poderá ser escalado. Se já estiver em algum plantão no período, ele ficará marcado para a gestão.
+        O pedido vai para a gestão aprovar. Depois de aprovado, você não poderá ser escalado nesses dias, e os plantões em que
+        já estiver no período ficam marcados para a gestão resolver.
       </p>
 
       {carregando ? (
@@ -144,26 +152,31 @@ export default function AfastamentosPerfil() {
                 </p>
                 {a.observacao && <p className="text-xs text-gray-500 truncate">{a.observacao}</p>}
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setConfirmacao({
-                    titulo: "Remover período?",
-                    mensagem: (
-                      <p>
-                        {rotuloTipo(a.tipo)} de {formatarData(a.data_inicio)} a {formatarData(a.data_fim)}. Você volta a
-                        poder ser escalado nesses dias.
-                      </p>
-                    ),
-                    rotuloConfirmar: "Remover",
-                    perigo: true,
-                    acao: () => remover(a.id),
-                  })
-                }
-                className="shrink-0 text-xs font-medium text-red-600 hover:text-red-800"
-              >
-                Remover
-              </button>
+              <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full ${ROTULO_STATUS[a.status].classe}`}>
+                {ROTULO_STATUS[a.status].texto}
+              </span>
+              {/* Aprovado só a gestão remove */}
+              {a.status !== "aprovado" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfirmacao({
+                      titulo: a.status === "pendente" ? "Cancelar pedido?" : "Remover período?",
+                      mensagem: (
+                        <p>
+                          {rotuloTipo(a.tipo)} de {formatarData(a.data_inicio)} a {formatarData(a.data_fim)}.
+                        </p>
+                      ),
+                      rotuloConfirmar: a.status === "pendente" ? "Cancelar pedido" : "Remover",
+                      perigo: true,
+                      acao: () => remover(a.id),
+                    })
+                  }
+                  className="shrink-0 text-xs font-medium text-red-600 hover:text-red-800"
+                >
+                  {a.status === "pendente" ? "Cancelar" : "Remover"}
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -246,7 +259,9 @@ export default function AfastamentosPerfil() {
                 </li>
               ))}
             </ul>
-            <p className="mt-1 text-xs text-amber-800">Esses plantões ficam marcados como indisponível para a gestão resolver.</p>
+            <p className="mt-1 text-xs text-amber-800">
+              Se a gestão aprovar, esses plantões ficam marcados como indisponível para ela resolver.
+            </p>
           </div>
         )}
 
@@ -255,7 +270,7 @@ export default function AfastamentosPerfil() {
           disabled={salvando}
           className="w-full bg-brand-700 hover:bg-brand-800 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {salvando ? "Salvando..." : "Adicionar período"}
+          {salvando ? "Enviando..." : "Pedir aprovação"}
         </button>
       </form>
 

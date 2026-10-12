@@ -52,6 +52,7 @@ type AfastamentoGestao = {
   data_inicio: string
   data_fim: string
   observacao: string | null
+  status: "pendente" | "aprovado"
 }
 
 function formatarData(data: string) {
@@ -84,11 +85,12 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   const [loading, setLoading] = useState(false)
   const [confirmandoAtivo, setConfirmandoAtivo] = useState(false)
   const [afastamentos, setAfastamentos] = useState<AfastamentoGestao[] | null>(null)
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState<string | null>(null)
 
   const exigeCrm = roles.some((r) => ROLES_ANESTESISTA.includes(r))
   const ehAnestesista = usuario?.roles.some((r) => ROLES_ANESTESISTA.includes(r)) ?? false
 
-  // Férias e congressos do médico: só leitura aqui, quem cadastra é o próprio médico no perfil
+  // Férias e congressos do médico: quem pede é o próprio médico no perfil; aqui a gestão consulta e remove
   useEffect(() => {
     if (!usuario || !ehAnestesista) return
     const token = localStorage.getItem("token")
@@ -99,6 +101,25 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
       .then(setAfastamentos)
       .catch(() => setAfastamentos([]))
   }, [usuario, ehAnestesista])
+
+  async function removerAfastamento(id: string) {
+    setError("")
+    setConfirmandoRemocao(null)
+    try {
+      const token = localStorage.getItem("token")
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}))
+        throw new Error(result.error ?? "Não foi possível remover o período.")
+      }
+      setAfastamentos((prev) => (prev ?? []).filter((a) => a.id !== id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível remover o período.")
+    }
+  }
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -361,18 +382,43 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                       <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-red-50 text-red-700">
                         {TIPOS_AFASTAMENTO.find((t) => t.valor === a.tipo)?.rotulo ?? a.tipo}
                       </span>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm text-gray-800">
                           {formatarData(a.data_inicio)}
                           {a.data_fim !== a.data_inicio && ` a ${formatarData(a.data_fim)}`}
                         </p>
                         {a.observacao && <p className="text-xs text-gray-500 truncate">{a.observacao}</p>}
                       </div>
+                      {a.status === "pendente" && (
+                        <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">
+                          Aguardando aprovação
+                        </span>
+                      )}
+                      {confirmandoRemocao === a.id ? (
+                        <span className="shrink-0 flex gap-2 text-xs font-medium">
+                          <button type="button" onClick={() => removerAfastamento(a.id)} className="text-red-600 hover:text-red-800">
+                            Confirmar
+                          </button>
+                          <button type="button" onClick={() => setConfirmandoRemocao(null)} className="text-gray-500 hover:text-gray-700">
+                            Não
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmandoRemocao(a.id)}
+                          className="shrink-0 text-xs font-medium text-red-600 hover:text-red-800"
+                        >
+                          Remover
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>
               )}
-              <p className="text-xs text-gray-400 mt-1">Cadastrados pelo próprio médico no perfil.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Pedidos feitos pelo próprio médico no perfil. Os pendentes são aprovados pelo sino de notificações.
+              </p>
             </div>
           )}
 

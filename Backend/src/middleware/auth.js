@@ -29,6 +29,10 @@ exports.authMiddleware = async (req, res, next) => {
 const ehAdmin = user => user?.app_metadata?.is_admin === true
 exports.ehAdmin = ehAdmin
 
+// Gestão: escritório, técnico ou quem tem a flag admin
+const ROLES_GESTAO = ['escritorio', 'tecnico']
+exports.ehGestao = user => ehAdmin(user) || (user?.app_metadata?.roles ?? []).some(r => ROLES_GESTAO.includes(r))
+
 // Nas listas de requireRole, 'admin' representa quem tem a flag
 exports.requireRole = (...allowedRoles) => (req, res, next) => {
   const roles = [...(req.user?.app_metadata?.roles ?? []), ...(ehAdmin(req.user) ? ['admin'] : [])]

@@ -4,11 +4,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
-const { ehAdmin } = require('../middleware/auth')
+const { ehGestao } = require('../middleware/auth')
 
 const TIPOS_VALIDOS = ['plantonista', 'socio']
-// Cargos da gestão: mexem em qualquer plantão (a flag admin conta como gestão)
-const ROLES_GESTAO = ['escritorio', 'tecnico']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
 exports.createPlantao = async (req, res) => {
@@ -282,8 +280,7 @@ exports.alterarPosicao = async (req, res) => {
   }
 
   // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
-  const ehGestao = ehAdmin(req.user) || (req.user.app_metadata?.roles ?? []).some(r => ROLES_GESTAO.includes(r))
-  if (!ehGestao && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
+  if (!ehGestao(req.user) && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
     return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
   }
 
@@ -833,12 +830,13 @@ function deslocarData(data, dias) {
   return d.toISOString().slice(0, 10)
 }
 
-// Afastamentos (férias/congresso) dos médicos escalados, no intervalo de datas desses plantões
+// Afastamentos (férias/congresso) dos médicos escalados, no intervalo de datas desses plantões.
+// Inclui os pendentes, que aparecem com outro indicador para a gestão saber do pedido.
 async function buscarAfastamentosDosPlantoes(rows) {
   if (rows.length === 0) return []
   const datas = rows.map(r => r.data).sort()
   const ids = rows.flatMap(r => (r.plantao_usuarios ?? []).map(u => u.usuario_id))
-  return buscarAfastamentosNoPeriodo(ids, datas[0], datas[datas.length - 1])
+  return buscarAfastamentosNoPeriodo(ids, datas[0], datas[datas.length - 1], { incluirPendentes: true })
 }
 
 // Erro se algum dos médicos estiver de férias ou em congresso nessa data

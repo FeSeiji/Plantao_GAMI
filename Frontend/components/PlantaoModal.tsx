@@ -10,6 +10,7 @@ import {
   Afastamento,
   AvisoAfastamento,
   AvisoIndisponivel,
+  afastamentoPendente,
   rotuloAfastamento,
 } from "./disponibilidade";
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
@@ -718,7 +719,7 @@ export default function PlantaoModal({
       rotulo,
       larga: !ehSocio && u.coordenador,
       // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
-      destaque: u.afastamento
+      destaque: u.afastamento && !afastamentoPendente(u.afastamento)
         ? "indisponivel"
         : pendente
           ? "pendente"
@@ -730,7 +731,9 @@ export default function PlantaoModal({
           <>
             {u.afastamento && (
               <span className="block font-semibold not-italic">
-                Indisponível: {rotuloAfastamento(u.afastamento)}
+                {afastamentoPendente(u.afastamento)
+                  ? `Pedido de ${rotuloAfastamento(u.afastamento)} aguardando aprovação`
+                  : `Indisponível: ${rotuloAfastamento(u.afastamento)}`}
               </span>
             )}
             {pendente && (

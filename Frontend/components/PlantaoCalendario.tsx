@@ -2,7 +2,7 @@
 
 import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
-import { Afastamento, rotuloAfastamento } from "./disponibilidade"
+import { Afastamento, afastamentoPendente, rotuloAfastamento } from "./disponibilidade"
 import { rotuloPosicaoCurto } from "./posicoes"
 
 export type TrocaPendente = {
@@ -48,7 +48,10 @@ function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
       className="relative shrink-0"
       title={
         [
-          usuario.afastamento && `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`,
+          usuario.afastamento &&
+            (afastamentoPendente(usuario.afastamento)
+              ? `Pedido de ${rotuloAfastamento(usuario.afastamento)} aguardando aprovação`
+              : `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`),
           usuario.trocaPendente && "Troca pendente de aceite",
         ]
           .filter(Boolean)
@@ -62,8 +65,12 @@ function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
         <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
       )}
       {usuario.afastamento && (
-        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          !
+        <span
+          className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none ${
+            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : "bg-red-600"
+          }`}
+        >
+          {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
         </span>
       )}
       {usuario.posicao != null && (
