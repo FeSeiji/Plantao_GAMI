@@ -42,12 +42,24 @@ const ESTILO_TIPO = {
   socio: { rotulo: "Sócio", faixa: "border-l-teal-500", etiqueta: "bg-teal-100 text-teal-800", ponto: "bg-teal-500" },
 }
 
-function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
+// Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
+// "!" de afastamento aprovado ou "?" de pedido pendente, e a posição na fila de sócios.
+// Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
+export function BadgeComMarcador({
+  usuario,
+  size = "sm",
+  mostrarPosicao = true,
+}: {
+  usuario: Usuario
+  size?: "sm" | "responsivo"
+  mostrarPosicao?: boolean
+}) {
   return (
     <div
       className="relative shrink-0"
       title={
         [
+          usuario.nome ?? usuario.email,
           usuario.afastamento &&
             (afastamentoPendente(usuario.afastamento)
               ? `Pedido de ${rotuloAfastamento(usuario.afastamento)} aguardando aprovação`
@@ -59,7 +71,7 @@ function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
       }
     >
       <div className={usuario.coordenador ? "rounded-full ring-2 ring-purple-600" : undefined}>
-        <SiglaBadge sigla={usuario.sigla} size="sm" />
+        <SiglaBadge sigla={usuario.sigla} size={size} semTitulo />
       </div>
       {usuario.trocaPendente && (
         <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
@@ -73,7 +85,7 @@ function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
           {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
         </span>
       )}
-      {usuario.posicao != null && (
+      {mostrarPosicao && usuario.posicao != null && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
           {rotuloPosicaoCurto(usuario.posicao)}
         </span>

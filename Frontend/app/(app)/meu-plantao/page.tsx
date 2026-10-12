@@ -2,9 +2,9 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import {
+  BadgeComMarcador,
   Plantao,
   TURNOS,
   Usuario,
@@ -316,9 +316,9 @@ export default function MeuPlantaoPage() {
                                       className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
                                         usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
                                       }`}
-                                      title={usuario.nome ?? usuario.email ?? undefined}
                                     >
-                                      <SiglaBadge sigla={usuario.sigla} size="responsivo" />
+                                      {/* Mesmos indicadores do calendário; a posição já é a linha da tabela */}
+                                      <BadgeComMarcador usuario={usuario} size="responsivo" mostrarPosicao={false} />
                                     </button>
                                   ) : (
                                     <span className="text-gray-300">—</span>
