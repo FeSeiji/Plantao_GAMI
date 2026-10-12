@@ -4,7 +4,11 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
+const { ehAdmin } = require('../middleware/auth')
+
 const TIPOS_VALIDOS = ['plantonista', 'socio']
+// Cargos da gestão: mexem em qualquer plantão (a flag admin conta como gestão)
+const ROLES_GESTAO = ['escritorio', 'tecnico']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
 exports.createPlantao = async (req, res) => {
@@ -275,6 +279,12 @@ exports.alterarPosicao = async (req, res) => {
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
   if (plantao.tipo !== 'socio') {
     return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
+  }
+
+  // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
+  const ehGestao = ehAdmin(req.user) || (req.user.app_metadata?.roles ?? []).some(r => ROLES_GESTAO.includes(r))
+  if (!ehGestao && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
+    return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
   }
 
   const membro = plantao.plantao_usuarios.find(u => u.usuario_id === usuario_id)

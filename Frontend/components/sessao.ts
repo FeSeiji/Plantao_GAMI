@@ -9,6 +9,21 @@ export function salvarTokens(dados: { token: string; refresh_token?: string }) {
   if (dados.refresh_token) localStorage.setItem("refreshToken", dados.refresh_token)
 }
 
+export type Me = { id: string; email: string; roles: string[]; is_admin?: boolean; nome?: string | null; sigla?: string | null }
+
+// A flag admin entra como "admin" na lista, que é o que as checagens de permissão da tela procuram
+export function rolesDaSessao(me: Me): string[] {
+  return [...me.roles, ...(me.is_admin ? ["admin"] : [])]
+}
+
+export function salvarDadosUsuario(me: Me) {
+  localStorage.setItem("userId", me.id)
+  localStorage.setItem("roles", JSON.stringify(rolesDaSessao(me)))
+  localStorage.setItem("email", me.email)
+  localStorage.setItem("nome", me.nome ?? "")
+  localStorage.setItem("sigla", me.sigla ?? "")
+}
+
 // Disparado pela tela de perfil ao salvar, para o badge da sigla reler nome/sigla do localStorage
 export const EVENTO_PERFIL_ATUALIZADO = "perfil-atualizado"
 
