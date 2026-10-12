@@ -4,12 +4,24 @@ import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
 import { Afastamento, afastamentoPendente, rotuloAfastamento } from "./disponibilidade"
 import { rotuloPosicaoCurto } from "./posicoes"
+import { formatarIntervalo } from "./trocaPorHoras"
 
 export type TrocaPendente = {
   id: string
   solicitadoEm: string
   usuarioEntrada: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
   solicitadoPor: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+  // Preenchidos na troca por horas
+  horaInicio?: string | null
+  horaFim?: string | null
+}
+
+// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo
+export type Cobertura = {
+  id: string
+  usuario: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+  horaInicio: string
+  horaFim: string
 }
 
 export type Usuario = {
@@ -21,6 +33,7 @@ export type Usuario = {
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
   afastamento?: Afastamento | null
+  cobertura?: Cobertura | null
 }
 
 export type Plantao = {
@@ -43,7 +56,7 @@ const ESTILO_TIPO = {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, e a posição na fila de sócios.
+// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila de sócios.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 export function BadgeComMarcador({
   usuario,
@@ -65,6 +78,8 @@ export function BadgeComMarcador({
               ? `Pedido de ${rotuloAfastamento(usuario.afastamento)} aguardando aprovação`
               : `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`),
           usuario.trocaPendente && "Troca pendente de aceite",
+          usuario.cobertura &&
+            `${usuario.cobertura.usuario.nome ?? usuario.cobertura.usuario.email} cobre ${formatarIntervalo(usuario.cobertura.horaInicio, usuario.cobertura.horaFim)}`,
         ]
           .filter(Boolean)
           .join(" · ") || undefined
@@ -83,6 +98,11 @@ export function BadgeComMarcador({
           }`}
         >
           {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
+        </span>
+      )}
+      {usuario.cobertura && (
+        <span className="absolute -bottom-1 -left-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-sky-500 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          ½
         </span>
       )}
       {mostrarPosicao && usuario.posicao != null && (

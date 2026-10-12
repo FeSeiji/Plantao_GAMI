@@ -7,6 +7,7 @@ import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
 import { POSICAO_INTERMEDIARIO, rotuloPosicaoCurto } from "../../../components/posicoes"
+import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
 
@@ -29,7 +30,13 @@ type PlantaoResumo = {
   hora_fim: string
   tipo: "plantonista" | "socio"
   emAndamento: boolean
-  meuPapel: { coordenador: boolean; posicao: number | null }
+  meuPapel: {
+    coordenador: boolean
+    posicao: number | null
+    // Troca por horas: eu cubro parte da vaga de alguém, ou alguém cobre parte da minha
+    cobrindo: { titular: Pessoa; horaInicio: string; horaFim: string } | null
+    coberto: { por: Pessoa; horaInicio: string; horaFim: string } | null
+  }
   usuarios: (Pessoa & { coordenador: boolean; posicao: number | null })[]
 }
 
@@ -40,6 +47,8 @@ type Troca = {
   usuarioSaida: Pessoa
   usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
+  horaInicio?: string | null
+  horaFim?: string | null
 }
 
 type Resumo = {
@@ -109,6 +118,9 @@ function quandoComeca(p: PlantaoResumo, agora: Resumo["agora"]) {
 }
 
 function descreverPapel(p: PlantaoResumo) {
+  const { cobrindo, coberto } = p.meuPapel
+  if (cobrindo) return `Você cobre ${nomeDe(cobrindo.titular)} das ${formatarIntervalo(cobrindo.horaInicio, cobrindo.horaFim).replace("–", " às ")}`
+  if (coberto) return `${nomeDe(coberto.por)} cobre ${formatarIntervalo(coberto.horaInicio, coberto.horaFim)} da sua vaga`
   if (p.tipo === "socio") {
     if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
     return p.meuPapel.posicao != null ? `Posição ${rotuloPosicaoCurto(p.meuPapel.posicao)} na fila` : "Fila de sócios"
@@ -179,6 +191,11 @@ function DescricaoTroca({ troca, perspectiva }: { troca: Troca; perspectiva: "pa
       {p && (
         <p className="text-xs text-gray-500 truncate">
           {p.titulo} · {formatarData(p.data)} · {formatarHorario(p)}
+        </p>
+      )}
+      {troca.horaInicio && troca.horaFim && (
+        <p className="text-xs font-medium text-sky-700">
+          Troca por horas: só {formatarIntervalo(troca.horaInicio, troca.horaFim)}
         </p>
       )}
       {perspectiva === "paraMim" && (
@@ -362,7 +379,7 @@ export default function DashboardPage() {
                 )}
                 {mostraSocio && (
                   <div>
-                    <p className="text-2xl font-bold text-gray-800 tabular-nums">{mes!.socio.pontos} pts</p>
+                    <p className="text-2xl font-bold text-gray-800 tabular-nums">{formatarPontos(mes!.socio.pontos)} pts</p>
                     <p className="text-xs text-gray-500">
                       como sócio · {mes!.socio.plantoes} {mes!.socio.plantoes === 1 ? "plantão" : "plantões"}
                     </p>
@@ -425,7 +442,13 @@ export default function DashboardPage() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                         <p className="text-xs text-gray-500">
-                          {formatarHorario(p)} · {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${rotuloPosicaoCurto(p.meuPapel.posicao)}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
+                          {formatarHorario(p)} ·{" "}
+                          {p.meuPapel.cobrindo
+                            ? `Cobrindo ${formatarIntervalo(p.meuPapel.cobrindo.horaInicio, p.meuPapel.cobrindo.horaFim)} · `
+                            : p.meuPapel.coberto
+                              ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
+                              : ""}
+                          {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${rotuloPosicaoCurto(p.meuPapel.posicao)}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}
@@ -544,7 +567,7 @@ export default function DashboardPage() {
                     <Variacao atual={gestao.mes.atual.minutos} anterior={gestao.mes.anterior.minutos} />
                   </div>
                   <div>
-                    <p className="text-lg font-bold text-gray-800 tabular-nums">{gestao.mes.atual.pontos} pts</p>
+                    <p className="text-lg font-bold text-gray-800 tabular-nums">{formatarPontos(gestao.mes.atual.pontos)} pts</p>
                     <p className="text-xs text-gray-500">de sócios</p>
                     <Variacao atual={gestao.mes.atual.pontos} anterior={gestao.mes.anterior.pontos} />
                   </div>
@@ -558,7 +581,7 @@ export default function DashboardPage() {
                 {(
                   [
                     { rotulo: "Horas", linhas: gestao.mes.topHoras.map((l) => ({ ...l, valor: formatarHoras(l.minutos) })) },
-                    { rotulo: "Pontos", linhas: gestao.mes.topPontos.map((l) => ({ ...l, valor: `${l.pontos} pts` })) },
+                    { rotulo: "Pontos", linhas: gestao.mes.topPontos.map((l) => ({ ...l, valor: `${formatarPontos(l.pontos)} pts` })) },
                   ] as const
                 ).map((coluna) => (
                   <div key={coluna.rotulo} className="min-w-0">

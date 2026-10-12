@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiFetch } from "./sessao"
+import { formatarIntervalo } from "./trocaPorHoras"
 
 type Pessoa = {
   id: string
@@ -15,6 +16,9 @@ type TrocaPendente = {
   solicitadoEm: string
   usuarioSaida: Pessoa
   solicitadoPor: Pessoa
+  // Preenchidos na troca por horas
+  horaInicio?: string | null
+  horaFim?: string | null
   plantao: {
     id: string
     titulo: string
@@ -240,8 +244,11 @@ export default function NotificacaoTrocaSino() {
                 <li key={t.id} className="px-4 py-3">
                   <p className="text-sm text-gray-700">
                     <span className="font-semibold">{t.solicitadoPor.nome ?? t.solicitadoPor.email}</span> quer colocar
-                    você no lugar de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span> no
-                    plantão <span className="font-semibold">{t.plantao.titulo}</span>.
+                    você no lugar de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span>
+                    {t.horaInicio && t.horaFim && (
+                      <> só das <span className="font-semibold">{formatarIntervalo(t.horaInicio, t.horaFim).replace("–", " às ")}</span></>
+                    )}{" "}
+                    no plantão <span className="font-semibold">{t.plantao.titulo}</span>.
                   </p>
                   <p className="text-xs text-gray-400 mt-1">
                     {new Date(`${t.plantao.data}T00:00:00`).toLocaleDateString("pt-BR")} ·{" "}

@@ -6,6 +6,9 @@ const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastad
 
 const { ehGestao } = require('../middleware/auth')
 const { ehNoturno, posicoesDoPlantao, rotuloPosicao, ordemDaPosicao } = require('../services/posicoes')
+const {
+  duracaoDaCobertura, dataDaCobertura, validarIntervalo, buscarCoberturas,
+} = require('../services/coberturas')
 
 const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
@@ -99,7 +102,8 @@ exports.listPlantoes = async (req, res) => {
     const perfis = await buscarPerfis(data.flatMap(row => row.plantao_usuarios.map(u => u.usuario_id)))
     const trocasPendentes = await buscarTrocasPendentesPorSlot(data.map(row => row.id))
     const afastamentos = await buscarAfastamentosDosPlantoes(data)
-    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes, afastamentos)))
+    const coberturas = await buscarCoberturasPorSlot(data.map(row => row.id))
+    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes, afastamentos, coberturas)))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -118,7 +122,8 @@ exports.getPlantao = async (req, res) => {
   try {
     const perfis = await buscarPerfis(data.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([data.id])
-    return res.json(formatPlantao(data, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([data])))
+    const coberturas = await buscarCoberturasPorSlot([data.id])
+    return res.json(formatPlantao(data, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([data]), coberturas))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -151,6 +156,11 @@ exports.updatePlantao = async (req, res) => {
 
     const ids = atual.plantao_usuarios.map(u => u.usuario_id)
     const novaData = data ?? atual.data
+
+    // O intervalo de uma troca por horas é relativo ao horário do plantão
+    if ((await buscarCoberturas([atual.id])).length > 0) {
+      return res.status(400).json({ error: 'Esse plantão tem troca por horas valendo. Cancele-a antes de mudar o dia ou o horário.' })
+    }
 
     // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
     // que não existe no novo tipo precisa sair antes
@@ -194,7 +204,8 @@ exports.updatePlantao = async (req, res) => {
   try {
     const perfis = await buscarPerfis(plantao.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([plantao.id])
-    return res.json(formatPlantao(plantao, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([plantao])))
+    const coberturas = await buscarCoberturasPorSlot([plantao.id])
+    return res.json(formatPlantao(plantao, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([plantao]), coberturas))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -223,13 +234,13 @@ exports.removeUsuario = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
-  // A troca pendente do slot perde o sentido, mas continua no histórico como cancelada
+  // A troca pendente do slot (e a troca por horas valendo) perde o sentido, mas continua no histórico como cancelada
   const { error: trocaError } = await supabase
     .from('plantao_trocas')
     .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
     .eq('plantao_id', req.params.id)
     .eq('usuario_saida', req.params.usuarioId)
-    .eq('status', 'pendente')
+    .or('status.eq.pendente,and(status.eq.aceita,hora_inicio.not.is.null)')
 
   if (trocaError) return res.status(500).json({ error: trocaError.message })
 
@@ -487,8 +498,10 @@ exports.definirCoordenador = async (req, res) => {
   return res.json({ message: 'Coordenador definido' })
 }
 
+// Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo)
 exports.criarTroca = async (req, res) => {
-  const { usuario_saida, usuario_entrada } = req.body
+  const { usuario_saida, usuario_entrada, hora_inicio = null, hora_fim = null } = req.body
+  const parcial = hora_inicio != null || hora_fim != null
 
   if (!usuario_saida || !usuario_entrada) {
     return res.status(400).json({ error: 'usuario_saida e usuario_entrada são obrigatórios' })
@@ -505,6 +518,11 @@ exports.criarTroca = async (req, res) => {
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+  if (parcial) {
+    const erroIntervalo = validarIntervalo(plantao, hora_inicio, hora_fim)
+    if (erroIntervalo) return res.status(400).json({ error: erroIntervalo })
+  }
 
   const { data: slotSaida, error: slotError } = await supabase
     .from('plantao_usuarios')
@@ -535,7 +553,19 @@ exports.criarTroca = async (req, res) => {
     return res.status(400).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
   }
 
-  const ocupados = await usuariosComConflito([usuario_entrada], plantao.data, plantao.hora_inicio, plantao.hora_fim, plantao.id)
+  // Uma vaga tem no máximo uma troca por horas valendo; com ela ativa, nem a troca inteira é aceita
+  const coberturaAtiva = (await buscarCoberturas([plantao.id])).find(c => c.usuario_saida === usuario_saida)
+  if (coberturaAtiva) {
+    return res.status(400).json({ error: 'Essa vaga já tem uma troca por horas valendo. A gestão precisa cancelá-la antes.' })
+  }
+
+  // Na troca por horas, o convidado só precisa estar livre no intervalo que vai cobrir
+  const janelaEntrada = parcial
+    ? { data: dataDaCobertura(plantao, hora_inicio), horaInicio: hora_inicio, horaFim: hora_fim }
+    : { data: plantao.data, horaInicio: plantao.hora_inicio, horaFim: plantao.hora_fim }
+  const ocupados = await usuariosComConflito(
+    [usuario_entrada], janelaEntrada.data, janelaEntrada.horaInicio, janelaEntrada.horaFim, plantao.id
+  )
   if (ocupados.size > 0) {
     return res.status(400).json({ error: 'usuario_entrada já está escalado em outro plantão nesse horário' })
   }
@@ -553,6 +583,8 @@ exports.criarTroca = async (req, res) => {
       usuario_saida,
       usuario_entrada,
       solicitado_por: req.user.id,
+      hora_inicio: parcial ? hora_inicio : null,
+      hora_fim: parcial ? hora_fim : null,
     })
     .select()
     .single()
@@ -568,6 +600,23 @@ exports.criarTroca = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
+}
+
+// Gestão desfaz uma troca por horas já aceita: a vaga volta inteira para o titular
+exports.cancelarCobertura = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_trocas')
+    .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
+    .eq('id', req.params.trocaId)
+    .eq('plantao_id', req.params.id)
+    .eq('status', 'aceita')
+    .not('hora_inicio', 'is', null)
+    .select('id')
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!data || data.length === 0) return res.status(404).json({ error: 'Troca por horas não encontrada' })
+
+  return res.status(204).send()
 }
 
 exports.listarTrocasDoPlantao = async (req, res) => {
@@ -626,7 +675,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   if (aceitar) {
     const { data: slot, error: slotError } = await supabase
       .from('plantao_usuarios')
-      .select('is_coordenador, plantoes(tipo, data, hora_inicio, hora_fim)')
+      .select('is_coordenador, plantoes(id, tipo, data, hora_inicio, hora_fim)')
       .eq('plantao_id', troca.plantao_id)
       .eq('usuario_id', troca.usuario_saida)
       .maybeSingle()
@@ -641,12 +690,22 @@ exports.responderTroca = (aceitar) => async (req, res) => {
     }
 
     // A troca pode ter ficado dias pendente: confere de novo se o convidado continua livre nesse horário
+    // (na troca por horas, só no intervalo que ele vai cobrir)
     if (slot?.plantoes) {
-      const { data, hora_inicio, hora_fim } = slot.plantoes
-      const ocupados = await usuariosComConflito([troca.usuario_entrada], data, hora_inicio, hora_fim, troca.plantao_id)
+      const p = slot.plantoes
+      const janela = troca.hora_inicio
+        ? [dataDaCobertura(p, troca.hora_inicio), troca.hora_inicio, troca.hora_fim]
+        : [p.data, p.hora_inicio, p.hora_fim]
+      const ocupados = await usuariosComConflito([troca.usuario_entrada], ...janela, troca.plantao_id)
       if (ocupados.size > 0) {
         return res.status(409).json({ error: 'Você já está escalado em outro plantão nesse horário' })
       }
+    }
+
+    if (troca.hora_inicio) {
+      if (!slot) return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
+      const outra = (await buscarCoberturas([troca.plantao_id])).find(c => c.usuario_saida === troca.usuario_saida)
+      if (outra) return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas valendo' })
     }
   }
 
@@ -662,7 +721,8 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   if (error) return res.status(400).json({ error: error.message })
   if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
 
-  if (aceitar) {
+  // Troca por horas não mexe na equipe: a vaga continua do titular e a troca aceita é a cobertura
+  if (aceitar && !troca.hora_inicio) {
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
       .update({ usuario_id: troca.usuario_entrada })
@@ -815,9 +875,8 @@ async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, exclui
 
   if (plantoesError) throw plantoesError
 
-  const plantoesConflitantes = plantoesProximos
-    .filter(p => p.id !== excluirPlantaoId)
-    .filter(p => seSobrepoe(alvo, calcularJanela(p.data, p.hora_inicio, p.hora_fim)))
+  const outros = plantoesProximos.filter(p => p.id !== excluirPlantaoId)
+  const plantoesConflitantes = outros.filter(p => seSobrepoe(alvo, calcularJanela(p.data, p.hora_inicio, p.hora_fim)))
   if (plantoesConflitantes.length === 0) return new Set()
 
   const { data: membros, error: membrosError } = await supabase
@@ -828,7 +887,19 @@ async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, exclui
 
   if (membrosError) throw membrosError
 
-  return new Set(membros.map(m => m.usuario_id))
+  const ocupados = new Set(membros.map(m => m.usuario_id))
+
+  // Quem cobre parte de outro plantão (troca por horas) está ocupado só no intervalo coberto
+  const porId = new Map(plantoesConflitantes.map(p => [p.id, p]))
+  const coberturas = await buscarCoberturas([...porId.keys()])
+  for (const c of coberturas) {
+    if (!idsUnicos.includes(c.usuario_entrada)) continue
+    const inicio = paraMinutosAbsolutos(dataDaCobertura(porId.get(c.plantao_id), c.hora_inicio), c.hora_inicio)
+    const janela = { inicio, fim: inicio + duracaoDaCobertura(c.hora_inicio, c.hora_fim) }
+    if (seSobrepoe(alvo, janela)) ocupados.add(c.usuario_entrada)
+  }
+
+  return ocupados
 }
 
 function calcularJanela(data, horaInicio, horaFim) {
@@ -911,6 +982,24 @@ async function buscarTrocasPendentesPorSlot(plantaoIds) {
       solicitadoEm: t.solicitado_em,
       usuarioEntrada: perfis.get(t.usuario_entrada) ?? { id: t.usuario_entrada },
       solicitadoPor: perfis.get(t.solicitado_por) ?? { id: t.solicitado_por },
+      horaInicio: t.hora_inicio,
+      horaFim: t.hora_fim,
+    },
+  ]))
+}
+
+// Troca por horas valendo de cada vaga, pela chave "plantao:titular"
+async function buscarCoberturasPorSlot(plantaoIds) {
+  const coberturas = await buscarCoberturas(plantaoIds)
+  if (coberturas.length === 0) return new Map()
+  const perfis = await buscarPerfis(coberturas.map(c => c.usuario_entrada))
+  return new Map(coberturas.map(c => [
+    `${c.plantao_id}:${c.usuario_saida}`,
+    {
+      id: c.id,
+      usuario: perfis.get(c.usuario_entrada) ?? { id: c.usuario_entrada },
+      horaInicio: c.hora_inicio,
+      horaFim: c.hora_fim,
     },
   ]))
 }
@@ -925,10 +1014,12 @@ function formatTroca(row, perfis) {
     usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
     usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
     solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+    horaInicio: row.hora_inicio ?? null,
+    horaFim: row.hora_fim ?? null,
   }
 }
 
-function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = []) {
+function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = [], coberturas = new Map()) {
   const { plantao_usuarios, ...plantao } = row
   const usuarios = plantao_usuarios
     .map(u => ({
@@ -937,6 +1028,7 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
       posicao: u.posicao ?? null,
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
+      cobertura: coberturas.get(`${plantao.id}:${u.usuario_id}`) ?? null,
     }))
     // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
     // para o "Membro N" não mudar de lugar entre uma carga e outra

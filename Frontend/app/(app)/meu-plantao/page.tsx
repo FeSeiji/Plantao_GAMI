@@ -349,7 +349,9 @@ export default function MeuPlantaoPage() {
                                       type="button"
                                       onClick={() => setPlantaoSelecionado(p)}
                                       className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
-                                        usuario.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""
+                                        usuario.id === meuId || usuario.cobertura?.usuario.id === meuId
+                                          ? "ring-2 ring-offset-1 ring-amber-400"
+                                          : ""
                                       }`}
                                     >
                                       {/* Mesmos indicadores do calendário; a posição já é a linha da tabela */}
