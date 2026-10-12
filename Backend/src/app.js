@@ -19,7 +19,9 @@ if (origensPermitidas.length === 0) {
 }
 
 app.use(cors({ origin: origensPermitidas }));
-app.use(express.json());
+// /fichas lê o corpo no próprio router, depois do login, com um limite maior (fotos em base64)
+const jsonPadrao = express.json();
+app.use((req, res, next) => (req.path.startsWith('/fichas') ? next() : jsonPadrao(req, res, next)));
 
 // rotas públicas (sem auth)
 app.use('/health', require('./routes/health'))
@@ -34,5 +36,6 @@ app.use('/plantoes', require('./routes/plantoes'))
 app.use('/bm-financeiro', require('./routes/bmFinanceiro'))
 app.use('/dashboard', require('./routes/dashboard'))
 app.use('/afastamentos', require('./routes/afastamentos'))
+app.use('/fichas', require('./routes/fichas'))
 
 module.exports = app

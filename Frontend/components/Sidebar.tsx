@@ -15,6 +15,7 @@ const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnic
 const NAV_ITEMS = [
   { label: "Meu plantão", href: "/meu-plantao", roles: ROLES_MEU_PLANTAO },
   { label: "Calendário", href: "/plantoes" },
+  { label: "Fichas anestésicas", href: "/fichas" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
   { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]
