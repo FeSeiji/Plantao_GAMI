@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 const { usuariosAfastados } = require('../services/afastamentos')
+const { buscarCoberturas, dataDaCobertura, duracaoDaCobertura } = require('../services/coberturas')
 const { ehAdmin } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -305,7 +306,17 @@ async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim) {
 
   if (membrosError) throw membrosError
 
-  return new Set(membros.map(m => m.usuario_id))
+  const ocupados = new Set(membros.map(m => m.usuario_id))
+
+  // Quem cobre parte de outro plantão (troca por horas) está ocupado só no intervalo coberto
+  const porId = new Map(plantoesConflitantes.map(p => [p.id, p]))
+  for (const c of await buscarCoberturas([...porId.keys()])) {
+    if (!idsUnicos.includes(c.usuario_entrada)) continue
+    const inicio = paraMinutosAbsolutos(dataDaCobertura(porId.get(c.plantao_id), c.hora_inicio), c.hora_inicio)
+    if (seSobrepoe(alvo, { inicio, fim: inicio + duracaoDaCobertura(c.hora_inicio, c.hora_fim) })) ocupados.add(c.usuario_entrada)
+  }
+
+  return ocupados
 }
 
 function calcularJanela(data, horaInicio, horaFim) {

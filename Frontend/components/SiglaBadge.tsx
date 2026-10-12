@@ -1,6 +1,8 @@
 type Props = {
   sigla?: string | null
   size?: "sm" | "md" | "responsivo"
+  // Quem envolve o badge com um title próprio (nome + indicadores) desliga o da sigla, que teria prioridade
+  semTitulo?: boolean
 }
 
 const TAMANHOS = {
@@ -10,10 +12,10 @@ const TAMANHOS = {
   responsivo: "w-7 h-7 text-[10px] sm:w-9 sm:h-9 sm:text-xs",
 }
 
-export default function SiglaBadge({ sigla, size = "md" }: Props) {
+export default function SiglaBadge({ sigla, size = "md", semTitulo = false }: Props) {
   return (
     <div
-      title={sigla ?? undefined}
+      title={semTitulo ? undefined : (sigla ?? undefined)}
       className={`${TAMANHOS[size]} rounded-full bg-brand-700 text-white font-bold flex items-center justify-center shrink-0 select-none`}
     >
       {sigla ?? "?"}

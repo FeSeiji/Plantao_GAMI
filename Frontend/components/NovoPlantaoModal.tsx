@@ -5,7 +5,7 @@ import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
-import { POSICOES, descreverPosicao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
+import { descreverPosicao, ehNoturno, posicoesDoPlantao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
 import { apiFetch } from "./sessao"
 
 type Usuario = {
@@ -50,6 +50,10 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const [coordenadorId, setCoordenadorId] = useState<string | null>(null)
 
   const [fila, setFila] = useState<FilaItem[]>([])
+  // A fila depende do horário: diurno 1º a 7º + intermediário; noturno (19h em diante) 1º, 1º, 2º, 3º, 4º
+  const noturno = horaInicio !== "" && ehNoturno(horaInicio)
+  const posicoesDaFila = posicoesDoPlantao(horaInicio || "00:00")
+  const foraDaFila = fila.filter((f) => !posicoesDaFila.includes(f.posicao))
   const [adicionando, setAdicionando] = useState<Adicionando | null>(null)
 
   const [error, setError] = useState("")
@@ -180,6 +184,10 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
       setError("Adicione ao menos um médico à fila.")
       return
     }
+    if (tipo === "socio" && foraDaFila.length > 0) {
+      setError("Há médicos em vagas que não existem nesse horário. Mude a posição deles ou remova-os.")
+      return
+    }
 
     setLoading(true)
 
@@ -278,39 +286,52 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
             onClick: () => abrirBusca({}),
           },
         ]
-      : POSICOES.map((p): CelulaGrade => {
-          const f = fila.find((item) => item.posicao === p)
-          if (!f) {
-            return {
-              tipo: "vazia",
-              chave: `posicao-${p}`,
-              rotulo: rotuloPosicao(p),
-              texto: "Vaga",
-              ativa: adicionando?.posicao === p,
-              onClick: () => abrirBusca({ posicao: p }),
+      : [
+          ...posicoesDaFila.map((p): CelulaGrade => {
+            const f = fila.find((item) => item.posicao === p)
+            if (!f) {
+              return {
+                tipo: "vazia",
+                chave: `posicao-${p}`,
+                rotulo: rotuloPosicao(p),
+                texto: "Vaga",
+                ativa: adicionando?.posicao === p,
+                onClick: () => abrirBusca({ posicao: p }),
+              }
             }
-          }
-          return {
-            tipo: "medico",
-            chave: f.usuario.id,
-            pessoa: f.usuario,
-            rotulo: (
-              <select
-                aria-label="Posição na fila"
-                value={f.posicao}
-                onChange={(e) => alterarPosicao(f.usuario.id, Number(e.target.value))}
-                className="bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
-              >
-                {POSICOES.map((op) => (
-                  <option key={op} value={op} disabled={op !== f.posicao && fila.some((o) => o.posicao === op)}>
-                    {rotuloPosicaoCurto(op)}
-                  </option>
-                ))}
-              </select>
-            ),
-            acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaFila(f.usuario.id) }],
-          }
-        })
+            return celulaFila(f)
+          }),
+          // Mudou o horário (diurno <-> noturno) e a vaga dele deixou de existir: aparece no fim para ser realocado
+          ...foraDaFila.map(celulaFila),
+        ]
+
+  function celulaFila(f: FilaItem): CelulaGrade {
+    const opcoes = posicoesDaFila.includes(f.posicao) ? posicoesDaFila : [f.posicao, ...posicoesDaFila]
+    return {
+      tipo: "medico",
+      chave: f.usuario.id,
+      pessoa: f.usuario,
+      rotulo: (
+        <select
+          aria-label="Posição na fila"
+          value={f.posicao}
+          onChange={(e) => alterarPosicao(f.usuario.id, Number(e.target.value))}
+          className="bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
+        >
+          {opcoes.map((op) => (
+            <option
+              key={op}
+              value={op}
+              disabled={!posicoesDaFila.includes(op) || (op !== f.posicao && fila.some((o) => o.posicao === op))}
+            >
+              {rotuloPosicaoCurto(op)}
+            </option>
+          ))}
+        </select>
+      ),
+      acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaFila(f.usuario.id) }],
+    }
+  }
 
   const rotuloBusca = !adicionando
     ? ""
@@ -447,10 +468,17 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
             <div>
               <p className="block text-sm font-medium text-gray-700 mb-1">
-                {tipo === "plantonista" ? "Equipe" : "Fila de sócios"}
+                {tipo === "plantonista" ? "Equipe" : noturno ? "Fila de sócios · noturno" : "Fila de sócios"}
               </p>
 
               <GradeParticipantes celulas={celulas} />
+
+              {tipo === "socio" && foraDaFila.length > 0 && (
+                <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  {noturno ? "No plantão noturno a fila é 1º, 1º, 2º, 3º e 4º." : "No plantão diurno a fila vai do 1º ao 7º, mais o intermediário."}{" "}
+                  Mude a posição de {foraDaFila.map((f) => f.usuario.nome ?? f.usuario.email).join(", ")} ou remova.
+                </p>
+              )}
 
               {adicionando && (
                 <div ref={buscaRef} className="scroll-mt-2 mt-3">

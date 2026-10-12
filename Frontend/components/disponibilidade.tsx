@@ -29,13 +29,17 @@ export function AvisoIndisponivel({ dias, data }: { dias: number[] | null | unde
   )
 }
 
-// Férias ou congresso: bloqueia a escala nesses dias (datas AAAA-MM-DD, inclusivas)
+// Férias ou congresso (datas AAAA-MM-DD, inclusivas). Só o aprovado bloqueia a escala;
+// o pendente aparece nos plantões como aviso de que há um pedido aguardando a gestão.
 export type Afastamento = {
   id: string
   tipo: "ferias" | "congresso"
   data_inicio: string
   data_fim: string
+  status?: "pendente" | "aprovado"
 }
+
+export const afastamentoPendente = (a?: Afastamento | null) => a?.status === "pendente"
 
 export const TIPOS_AFASTAMENTO = [
   { valor: "ferias", rotulo: "Férias" },

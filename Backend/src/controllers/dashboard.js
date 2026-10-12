@@ -2,13 +2,9 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8) vale 7 — mesma regra do BM Financeiro
-const POSICAO_INTERMEDIARIO = 8
+const { pontosDaPosicao, ordemDaPosicao } = require('../services/posicoes')
+const { buscarCoberturas, repartirPlantao, duracaoDoPlantao, duracaoDaCobertura } = require('../services/coberturas')
 
-function pontosDaPosicao(posicao) {
-  if (posicao == null) return 0
-  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
-}
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
 
@@ -28,13 +24,15 @@ exports.resumo = async (req, res) => {
   const ultimoDiaAgenda = deslocarData(hoje, DIAS_AGENDA - 1)
   const { inicio: inicioMes, fim: fimMes } = limitesDoMes(hoje)
 
-  const [janela, proximos, trocasParaMim, trocasSolicitadas] = await Promise.all([
+  const inicioJanela = ontem < inicioMes ? ontem : inicioMes
+
+  const [janela, proximos, trocasParaMim, trocasSolicitadas, minhasCoberturas] = await Promise.all([
     // Mês corrente + agenda dos próximos dias (+ ontem, para plantões que viraram a noite)
     supabase
       .from('plantoes')
       .select(SELECT_MEUS_PLANTOES)
       .eq('eu.usuario_id', eu)
-      .gte('data', ontem < inicioMes ? ontem : inicioMes)
+      .gte('data', inicioJanela)
       .lte('data', ultimoDiaAgenda > fimMes ? ultimoDiaAgenda : fimMes)
       .order('data', { ascending: true })
       .order('hora_inicio', { ascending: true }),
@@ -61,17 +59,48 @@ exports.resumo = async (req, res) => {
       .neq('usuario_entrada', eu)
       .eq('status', 'pendente')
       .order('solicitado_em', { ascending: false }),
+    // Trocas por horas em que eu cubro parte da vaga de alguém
+    supabase
+      .from('plantao_trocas')
+      .select(
+        'id, usuario_saida, hora_inicio, hora_fim, ' +
+        'plantoes!inner(id, titulo, data, hora_inicio, hora_fim, tipo, plantao_usuarios(usuario_id, is_coordenador, posicao))'
+      )
+      .eq('usuario_entrada', eu)
+      .eq('status', 'aceita')
+      .not('hora_inicio', 'is', null)
+      .gte('plantoes.data', inicioJanela),
   ])
 
-  const erro = [janela, proximos, trocasParaMim, trocasSolicitadas].find(r => r.error)
+  const erro = [janela, proximos, trocasParaMim, trocasSolicitadas, minhasCoberturas].find(r => r.error)
   if (erro) return res.status(500).json({ error: erro.error.message })
+
+  // Plantão que eu cubro em parte vira uma linha como as outras, com "eu" = a vaga do titular
+  const comoCobertura = minhasCoberturas.data
+    .map(c => {
+      const slot = c.plantoes.plantao_usuarios.find(u => u.usuario_id === c.usuario_saida)
+      if (!slot) return null
+      return { ...c.plantoes, eu: [slot], cobertura: { titular: c.usuario_saida, hora_inicio: c.hora_inicio, hora_fim: c.hora_fim } }
+    })
+    .filter(Boolean)
+  const porData = (a, b) => (a.data + a.hora_inicio).localeCompare(b.data + b.hora_inicio)
+
+  // Partes das minhas vagas que outra pessoa cobre
+  let coberturasDasMinhas
+  try {
+    coberturasDasMinhas = (await buscarCoberturas([...janela.data, ...proximos.data].map(p => p.id)))
+      .filter(c => c.usuario_saida === eu)
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+  const coberturaDaMinhaVaga = p => coberturasDasMinhas.find(c => c.plantao_id === p.id) ?? null
 
   const agoraMin = paraMinutosAbsolutos(agora.data, agora.hora)
   const naoTerminou = p => calcularJanela(p.data, p.hora_inicio, p.hora_fim).fim > agoraMin
 
-  const proximoPlantao = proximos.data.find(naoTerminou) ?? null
-  const agenda = janela.data.filter(p => naoTerminou(p) && p.data <= ultimoDiaAgenda)
-  const doMes = janela.data.filter(p => p.data >= inicioMes && p.data <= fimMes)
+  const proximoPlantao = [...proximos.data, ...comoCobertura].sort(porData).find(naoTerminou) ?? null
+  const agenda = [...janela.data, ...comoCobertura].sort(porData).filter(p => naoTerminou(p) && p.data <= ultimoDiaAgenda)
+  const doMes = [...janela.data, ...comoCobertura].filter(p => p.data >= inicioMes && p.data <= fimMes)
 
   const meuMes = {
     mes: hoje.slice(0, 7),
@@ -79,28 +108,36 @@ exports.resumo = async (req, res) => {
     socio: { plantoes: 0, pontos: 0 },
   }
   for (const p of doMes) {
+    // Fração do plantão que é minha: o intervalo que cubro, ou o que sobra quando alguém cobre parte da minha vaga
+    const total = duracaoDoPlantao(p)
+    const outro = p.cobertura ? null : coberturaDaMinhaVaga(p)
+    const minutos = p.cobertura
+      ? duracaoDaCobertura(p.cobertura.hora_inicio, p.cobertura.hora_fim)
+      : total - (outro ? duracaoDaCobertura(outro.hora_inicio, outro.hora_fim) : 0)
     if (p.tipo === 'plantonista') {
-      const { inicio, fim } = calcularJanela(p.data, p.hora_inicio, p.hora_fim)
       meuMes.plantonista.plantoes += 1
-      meuMes.plantonista.minutos += fim - inicio
+      meuMes.plantonista.minutos += minutos
     } else {
-      const posicao = p.eu[0]?.posicao
       meuMes.socio.plantoes += 1
-      meuMes.socio.pontos += pontosDaPosicao(posicao)
+      meuMes.socio.pontos += pontosDaPosicao(p.eu[0]?.posicao) * (minutos / total)
     }
   }
+  meuMes.socio.pontos = Math.round(meuMes.socio.pontos * 100) / 100
 
   try {
     const perfis = await buscarPerfis([
       ...[proximoPlantao, ...agenda].filter(Boolean).flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
       ...trocasParaMim.data.flatMap(t => [t.usuario_saida, t.solicitado_por]),
       ...trocasSolicitadas.data.flatMap(t => [t.usuario_saida, t.usuario_entrada]),
+      ...comoCobertura.map(p => p.cobertura.titular),
+      ...coberturasDasMinhas.map(c => c.usuario_entrada),
     ])
+    const formatar = p => formatPlantao(p, perfis, agoraMin, p.cobertura ? null : coberturaDaMinhaVaga(p))
 
     return res.json({
       agora,
-      proximoPlantao: proximoPlantao && formatPlantao(proximoPlantao, perfis, agoraMin),
-      agenda: agenda.map(p => formatPlantao(p, perfis, agoraMin)),
+      proximoPlantao: proximoPlantao && formatar(proximoPlantao),
+      agenda: agenda.map(formatar),
       trocasParaMim: trocasParaMim.data.map(t => formatTroca(t, perfis)),
       trocasSolicitadas: trocasSolicitadas.data.map(t => formatTroca(t, perfis)),
       meuMes,
@@ -140,6 +177,13 @@ exports.gestao = async (req, res) => {
   const erro = [plantoes, trocas, auth].find(r => r.error)
   if (erro) return res.status(500).json({ error: erro.error.message })
 
+  let coberturas
+  try {
+    coberturas = await buscarCoberturas(plantoes.data.map(p => p.id))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+
   const agoraMin = paraMinutosAbsolutos(agora.data, agora.hora)
   const janelaDe = p => calcularJanela(p.data, p.hora_inicio, p.hora_fim)
 
@@ -156,8 +200,8 @@ exports.gestao = async (req, res) => {
     .filter(a => a.problema)
 
   // 9 e 10. Resumo e ranking do mês
-  const resumoAtual = resumirMes(plantoes.data, mesAtual)
-  const resumoAnterior = resumirMes(plantoes.data, mesAnterior)
+  const resumoAtual = resumirMes(plantoes.data, mesAtual, coberturas)
+  const resumoAnterior = resumirMes(plantoes.data, mesAnterior, coberturas)
 
   // 11. Equipe cadastrada
   const porRole = {}
@@ -186,7 +230,7 @@ exports.gestao = async (req, res) => {
         ...plantao,
         usuarios: plantao_usuarios
           .map(u => ({ ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }), coordenador: u.is_coordenador ?? false, posicao: u.posicao ?? null }))
-          .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0)),
+          .sort((a, b) => ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao)),
       }
     }
 
@@ -219,8 +263,8 @@ function problemaDeCobertura(p) {
   return null
 }
 
-// Mesmas regras do BM Financeiro: horas somadas por médico, pontos por posição
-function resumirMes(plantoes, { inicio, fim }) {
+// Mesmas regras do BM Financeiro: horas somadas por médico, pontos por posição, troca por horas rateada
+function resumirMes(plantoes, { inicio, fim }, coberturas) {
   const horas = new Map()
   const pontos = new Map()
   const totais = { plantoes: 0, minutos: 0, pontos: 0 }
@@ -228,20 +272,23 @@ function resumirMes(plantoes, { inicio, fim }) {
   for (const p of plantoes) {
     if (p.data < inicio || p.data > fim) continue
     totais.plantoes += 1
+    const partes = repartirPlantao(p, p.plantao_usuarios, coberturas)
     if (p.tipo === 'plantonista') {
-      const { inicio: ini, fim: f } = calcularJanela(p.data, p.hora_inicio, p.hora_fim)
-      for (const u of p.plantao_usuarios) {
-        horas.set(u.usuario_id, (horas.get(u.usuario_id) ?? 0) + (f - ini))
-        totais.minutos += f - ini
+      for (const parte of partes) {
+        horas.set(parte.usuario_id, (horas.get(parte.usuario_id) ?? 0) + parte.minutos)
+        totais.minutos += parte.minutos
       }
     } else {
-      for (const u of p.plantao_usuarios) {
-        const pts = pontosDaPosicao(u.posicao)
-        pontos.set(u.usuario_id, (pontos.get(u.usuario_id) ?? 0) + pts)
+      for (const parte of partes) {
+        const pts = pontosDaPosicao(parte.posicao) * parte.fracao
+        pontos.set(parte.usuario_id, (pontos.get(parte.usuario_id) ?? 0) + pts)
         totais.pontos += pts
       }
     }
   }
+  const duasCasas = n => Math.round(n * 100) / 100
+  totais.pontos = duasCasas(totais.pontos)
+  for (const [id, v] of pontos) pontos.set(id, duasCasas(v))
 
   const top = (mapa, campo) =>
     [...mapa.entries()]
@@ -273,20 +320,34 @@ function limitesDoMes(data) {
   return { inicio: `${prefixo}-01`, fim: `${prefixo}-${String(ultimoDia).padStart(2, '0')}` }
 }
 
-function formatPlantao(row, perfis, agoraMin) {
-  const { eu, plantao_usuarios, ...plantao } = row
+// cobertura: eu cubro parte da vaga de alguém. coberturaDaMinhaVaga: alguém cobre parte da minha.
+function formatPlantao(row, perfis, agoraMin, coberturaDaMinhaVaga = null) {
+  const { eu, plantao_usuarios, cobertura, ...plantao } = row
   const { inicio } = calcularJanela(plantao.data, plantao.hora_inicio, plantao.hora_fim)
   return {
     ...plantao,
     emAndamento: inicio <= agoraMin,
-    meuPapel: { coordenador: eu[0]?.is_coordenador ?? false, posicao: eu[0]?.posicao ?? null },
+    meuPapel: {
+      coordenador: eu[0]?.is_coordenador ?? false,
+      posicao: eu[0]?.posicao ?? null,
+      cobrindo: cobertura
+        ? { titular: perfis.get(cobertura.titular) ?? { id: cobertura.titular }, horaInicio: cobertura.hora_inicio, horaFim: cobertura.hora_fim }
+        : null,
+      coberto: coberturaDaMinhaVaga
+        ? {
+            por: perfis.get(coberturaDaMinhaVaga.usuario_entrada) ?? { id: coberturaDaMinhaVaga.usuario_entrada },
+            horaInicio: coberturaDaMinhaVaga.hora_inicio,
+            horaFim: coberturaDaMinhaVaga.hora_fim,
+          }
+        : null,
+    },
     usuarios: plantao_usuarios
       .map(u => ({
         ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
         coordenador: u.is_coordenador ?? false,
         posicao: u.posicao ?? null,
       }))
-      .sort((a, b) => (a.posicao ?? 0) - (b.posicao ?? 0)),
+      .sort((a, b) => ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao)),
   }
 }
 
@@ -298,6 +359,8 @@ function formatTroca(row, perfis) {
     usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
     usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
     solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+    horaInicio: row.hora_inicio ?? null,
+    horaFim: row.hora_fim ?? null,
   }
 }
 

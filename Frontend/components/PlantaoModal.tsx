@@ -10,17 +10,23 @@ import {
   Afastamento,
   AvisoAfastamento,
   AvisoIndisponivel,
+  afastamentoPendente,
   rotuloAfastamento,
 } from "./disponibilidade";
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
+import SeletorTrocaPorHoras from "./SeletorTrocaPorHoras";
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino";
 import {
-  POSICOES,
+  posicoesDoPlantao,
   descreverPosicao,
   rotuloPosicao,
   rotuloPosicaoCurto,
 } from "./posicoes";
 import { apiFetch } from "./sessao";
+import {
+  dataDaCobertura,
+  formatarIntervalo,
+} from "./trocaPorHoras";
 
 type Pessoa = {
   id: string;
@@ -34,6 +40,17 @@ type TrocaPendente = {
   solicitadoEm: string;
   usuarioEntrada: Pessoa;
   solicitadoPor: Pessoa;
+  // Preenchidos na troca por horas
+  horaInicio?: string | null;
+  horaFim?: string | null;
+};
+
+// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo
+type Cobertura = {
+  id: string;
+  usuario: Pessoa;
+  horaInicio: string;
+  horaFim: string;
 };
 
 type TrocaHistorico = {
@@ -44,6 +61,8 @@ type TrocaHistorico = {
   usuarioSaida: Pessoa;
   usuarioEntrada: Pessoa;
   solicitadoPor: Pessoa;
+  horaInicio?: string | null;
+  horaFim?: string | null;
 };
 
 type RemocaoHistorico = {
@@ -87,6 +106,7 @@ type Usuario = {
   trocaPendente?: TrocaPendente | null;
   dias_disponiveis?: number[] | null;
   afastamento?: Afastamento | null;
+  cobertura?: Cobertura | null;
 };
 
 type Plantao = {
@@ -143,6 +163,9 @@ export default function PlantaoModal({
   const [podeEditarPlantao, setPodeEditarPlantao] = useState(false);
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null);
   const [trocandoId, setTrocandoId] = useState<string | null>(null);
+  // Troca por horas: "inicio" = do começo do plantão até horaParcial; "fim" = de horaParcial até o fim
+  const [trocaParcial, setTrocaParcial] = useState<"inicio" | "fim" | null>(null);
+  const [horaParcial, setHoraParcial] = useState("");
   const [buscaTroca, setBuscaTroca] = useState("");
   const [resultadosTroca, setResultadosTroca] = useState<Usuario[]>([]);
   const [buscandoTroca, setBuscandoTroca] = useState(false);
@@ -153,6 +176,15 @@ export default function PlantaoModal({
   );
 
   const ehSocio = plantao.tipo === "socio";
+  // Diurno: 1º a 7º + intermediário; noturno (19h em diante): 1º, 1º, 2º, 3º, 4º
+  const posicoesDaFila = posicoesDoPlantao(plantao.hora_inicio);
+  // Troca por horas: o intervalo escolhido na linha do tempo do painel de troca
+  const intervaloTroca =
+    trocaParcial && horaParcial
+      ? trocaParcial === "inicio"
+        ? { horaInicio: plantao.hora_inicio.slice(0, 5), horaFim: horaParcial }
+        : { horaInicio: horaParcial, horaFim: plantao.hora_fim.slice(0, 5) }
+      : null;
   // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
   const estouEscalado = plantao.usuarios.some((u) => u.id === meuId);
 
@@ -216,12 +248,15 @@ export default function PlantaoModal({
     setBuscandoTroca(true);
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token");
+      // Na troca por horas, o substituto só precisa estar livre no intervalo
       const params = new URLSearchParams({
         search: termo,
         role,
-        data: plantao.data,
-        horaInicio: plantao.hora_inicio,
-        horaFim: plantao.hora_fim,
+        data: intervaloTroca
+          ? dataDaCobertura(plantao, intervaloTroca.horaInicio)
+          : plantao.data,
+        horaInicio: intervaloTroca?.horaInicio ?? plantao.hora_inicio,
+        horaFim: intervaloTroca?.horaFim ?? plantao.hora_fim,
       });
       apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -235,7 +270,7 @@ export default function PlantaoModal({
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [buscaTroca, trocandoId, selecionados, ehSocio]);
+  }, [buscaTroca, trocandoId, selecionados, ehSocio, intervaloTroca?.horaInicio, intervaloTroca?.horaFim]);
 
   useEffect(() => {
     const termo = busca.trim();
@@ -310,17 +345,18 @@ export default function PlantaoModal({
     setTrocandoId(id);
     setBuscaTroca("");
     setResultadosTroca([]);
+    setTrocaParcial(null);
+    setHoraParcial("");
     if (id) setAdicionando(null);
   }
 
   async function solicitarTroca(
     usuarioSaidaId: string,
     usuarioEntrada: Usuario,
+    intervalo: { horaInicio: string; horaFim: string } | null,
   ) {
     setError("");
-    setTrocandoId(null);
-    setBuscaTroca("");
-    setResultadosTroca([]);
+    abrirTroca(null);
 
     try {
       const token = localStorage.getItem("token");
@@ -335,6 +371,9 @@ export default function PlantaoModal({
           body: JSON.stringify({
             usuario_saida: usuarioSaidaId,
             usuario_entrada: usuarioEntrada.id,
+            ...(intervalo
+              ? { hora_inicio: intervalo.horaInicio, hora_fim: intervalo.horaFim }
+              : {}),
           }),
         },
       );
@@ -355,6 +394,8 @@ export default function PlantaoModal({
                   solicitadoEm: result.solicitadoEm,
                   usuarioEntrada: result.usuarioEntrada,
                   solicitadoPor: result.solicitadoPor,
+                  horaInicio: result.horaInicio,
+                  horaFim: result.horaFim,
                 },
               }
             : u,
@@ -369,6 +410,44 @@ export default function PlantaoModal({
           : "Não foi possível solicitar a troca.",
       );
     }
+  }
+
+  function desfazerCobertura(usuarioId: string, cobertura: Cobertura) {
+    setConfirmacao({
+      titulo: "Desfazer troca por horas?",
+      mensagem: (
+        <p>
+          {nomeDe(cobertura.usuario)} deixa de cobrir{" "}
+          {formatarIntervalo(cobertura.horaInicio, cobertura.horaFim)} e a vaga
+          volta inteira para o titular.
+        </p>
+      ),
+      rotuloConfirmar: "Desfazer",
+      perigo: true,
+      acao: async () => {
+        setError("");
+        try {
+          const token = localStorage.getItem("token");
+          const res = await apiFetch(
+            `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/trocas/${cobertura.id}/cancelar`,
+            { method: "PATCH", headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!res.ok) {
+            const result = await res.json().catch(() => ({}));
+            throw new Error(result.error ?? "Não foi possível desfazer a troca por horas.");
+          }
+          setSelecionados((prev) =>
+            prev.map((u) => (u.id === usuarioId ? { ...u, cobertura: null } : u)),
+          );
+          carregarHistorico();
+          onUpdated();
+        } catch (err) {
+          setError(
+            err instanceof Error ? err.message : "Não foi possível desfazer a troca por horas.",
+          );
+        }
+      },
+    });
   }
 
   async function responderTrocaAqui(
@@ -400,6 +479,19 @@ export default function PlantaoModal({
         prev.map((u) => {
           if (u.id !== usuarioSaidaId) return u;
           if (!aceitar) return { ...u, trocaPendente: null };
+          // Troca por horas: a vaga continua do titular, agora com a cobertura
+          if (result.horaInicio) {
+            return {
+              ...u,
+              trocaPendente: null,
+              cobertura: {
+                id: result.id,
+                usuario: result.usuarioEntrada,
+                horaInicio: result.horaInicio,
+                horaFim: result.horaFim,
+              },
+            };
+          }
           return {
             ...result.usuarioEntrada,
             coordenador: u.coordenador,
@@ -664,8 +756,17 @@ export default function PlantaoModal({
 
     // Trocar fica fora do modo edição: qualquer um pede a troca, e ela só vale com o aceite
     const acoes: AcaoMenu[] = [];
-    if (!pendente)
+    // Com troca por horas valendo, a vaga não aceita outra troca até a gestão desfazê-la
+    if (!pendente && !u.cobertura)
       acoes.push({ rotulo: "Trocar", onClick: () => abrirTroca(u.id) });
+    if (editavel && podeGerirEquipe && u.cobertura) {
+      const cobertura = u.cobertura;
+      acoes.push({
+        rotulo: "Desfazer troca por horas",
+        perigo: true,
+        onClick: () => desfazerCobertura(u.id, cobertura),
+      });
+    }
     if (editavel) {
       if (podeGerirEquipe && !ehSocio && !u.coordenador && !pendente) {
         acoes.push({
@@ -695,7 +796,7 @@ export default function PlantaoModal({
           onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
           className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
-          {POSICOES.map((p) => (
+          {posicoesDaFila.map((p) => (
             <option key={p} value={p}>
               {rotuloPosicaoCurto(p)}
               {p !== u.posicao && selecionados.some((o) => o.posicao === p)
@@ -718,7 +819,7 @@ export default function PlantaoModal({
       rotulo,
       larga: !ehSocio && u.coordenador,
       // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
-      destaque: u.afastamento
+      destaque: u.afastamento && !afastamentoPendente(u.afastamento)
         ? "indisponivel"
         : pendente
           ? "pendente"
@@ -726,15 +827,26 @@ export default function PlantaoModal({
             ? "coordenador"
             : undefined,
       status:
-        u.afastamento || pendente ? (
+        u.afastamento || pendente || u.cobertura ? (
           <>
             {u.afastamento && (
               <span className="block font-semibold not-italic">
-                Indisponível: {rotuloAfastamento(u.afastamento)}
+                {afastamentoPendente(u.afastamento)
+                  ? `Pedido de ${rotuloAfastamento(u.afastamento)} aguardando aprovação`
+                  : `Indisponível: ${rotuloAfastamento(u.afastamento)}`}
+              </span>
+            )}
+            {u.cobertura && (
+              <span className="block">
+                {nomeDe(u.cobertura.usuario)} cobre{" "}
+                {formatarIntervalo(u.cobertura.horaInicio, u.cobertura.horaFim)}
               </span>
             )}
             {pendente && (
               <span className="block">
+                {pendente.horaInicio && pendente.horaFim
+                  ? `${formatarIntervalo(pendente.horaInicio, pendente.horaFim)}: `
+                  : ""}
                 {souConvidado
                   ? "aguardando seu aceite"
                   : `aguardando aceite de ${nomeDe(pendente.usuarioEntrada)}`}
@@ -766,7 +878,7 @@ export default function PlantaoModal({
 
   function montarCelulas(editavel: boolean): CelulaGrade[] {
     if (ehSocio) {
-      return POSICOES.map((p) => {
+      return posicoesDaFila.map((p) => {
         const u = selecionados.find((s) => s.posicao === p);
         if (u) return celulaMedico(u, editavel);
         return {
@@ -834,6 +946,17 @@ export default function PlantaoModal({
           Cancelar
         </button>
       </div>
+      <SeletorTrocaPorHoras
+        horaInicio={plantao.hora_inicio}
+        horaFim={plantao.hora_fim}
+        lado={trocaParcial}
+        corte={horaParcial}
+        nomeTitular={nomeDe(usuarioTrocando)}
+        onChange={(lado, corte) => {
+          setTrocaParcial(lado);
+          setHoraParcial(corte);
+        }}
+      />
       <input
         id="buscaTroca"
         autoFocus
@@ -868,14 +991,17 @@ export default function PlantaoModal({
                           {nomeDe(usuarioTrocando)}
                         </span>{" "}
                         por <span className="font-semibold">{nomeDe(r)}</span>
-                        {usuarioTrocando.coordenador
-                          ? " (inclusive como coordenador)"
-                          : ""}
+                        {intervaloTroca
+                          ? ` só das ${formatarIntervalo(intervaloTroca.horaInicio, intervaloTroca.horaFim).replace("–", " às ")}`
+                          : usuarioTrocando.coordenador
+                            ? " (inclusive como coordenador)"
+                            : ""}
                         . A troca só vale depois que {nomeDe(r)} aceitar.
                       </p>
                     ),
                     rotuloConfirmar: "Solicitar troca",
-                    acao: () => solicitarTroca(usuarioTrocando.id, r),
+                    acao: () =>
+                      solicitarTroca(usuarioTrocando.id, r, intervaloTroca),
                   })
                 }
                 disabled={!!r.afastamento}
@@ -1297,6 +1423,9 @@ export default function PlantaoModal({
                       <span className="font-semibold">
                         {nomeDe(t.usuarioEntrada)}
                       </span>{" "}
+                      {t.horaInicio && t.horaFim
+                        ? `(${formatarIntervalo(t.horaInicio, t.horaFim)}) `
+                        : ""}
                       em {new Date(t.solicitadoEm).toLocaleString("pt-BR")}
                       {t.status === "pendente" && " — aguardando aceite"}
                       {t.status === "aceita" && t.respondidoEm && (
@@ -1319,8 +1448,8 @@ export default function PlantaoModal({
                           — cancelada em{" "}
                           {new Date(t.respondidoEm).toLocaleString(
                             "pt-BR",
-                          )}{" "}
-                          (médico removido)
+                          )}
+                          {t.horaInicio ? "" : " (médico removido)"}
                         </>
                       )}
                     </span>

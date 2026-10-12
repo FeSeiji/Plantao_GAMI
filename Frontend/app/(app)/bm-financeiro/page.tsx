@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import { apiFetch } from "../../../components/sessao"
+import { formatarPontos } from "../../../components/trocaPorHoras"
 
 // Todos menos o plantonista
 const ROLES_BM_FINANCEIRO = ["escritorio", "admin", "anestesita_socio", "tecnico"]
@@ -275,7 +276,7 @@ export default function BmFinanceiroPage() {
   const total =
     aba === "plantonista"
       ? formatarHoras(plantonistas.reduce((s, l) => s + l.minutos, 0))
-      : `${socios.reduce((s, l) => s + l.pontos, 0)} pts`
+      : `${formatarPontos(socios.reduce((s, l) => s + l.pontos, 0))} pts`
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -380,7 +381,7 @@ export default function BmFinanceiroPage() {
                 </td>
                 <td className="px-4 py-3 text-right text-gray-700 tabular-nums">{l.plantoes}</td>
                 <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
-                  {"minutos" in l ? formatarHoras(l.minutos) : `${l.pontos} pts`}
+                  {"minutos" in l ? formatarHoras(l.minutos) : `${formatarPontos(l.pontos)} pts`}
                 </td>
               </tr>
             ))}

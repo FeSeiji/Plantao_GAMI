@@ -6,15 +6,17 @@ const TIPOS_AFASTAMENTO = ['ferias', 'congresso']
 const ROTULO_TIPO = { ferias: 'férias', congresso: 'congresso' }
 
 // Só o necessário para o indicador — a observação é visível apenas para o próprio médico
-const CAMPOS_PUBLICOS = 'id, usuario_id, tipo, data_inicio, data_fim'
+const CAMPOS_PUBLICOS = 'id, usuario_id, tipo, data_inicio, data_fim, status'
 
 // Hoje no fuso do hospital (o servidor roda em UTC), no formato AAAA-MM-DD
 function hojeLocal() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
 }
 
-// Afastamentos dos usuários que tocam o intervalo [inicio, fim] (datas AAAA-MM-DD, inclusivas)
-async function buscarAfastamentosNoPeriodo(usuarioIds, inicio, fim) {
+// Status: pendente (aguarda a gestão), aprovado (bloqueia a escala) ou recusado.
+// Afastamentos dos usuários que tocam o intervalo [inicio, fim] (datas AAAA-MM-DD, inclusivas).
+// Por padrão só os aprovados; incluirPendentes traz também os que aguardam a gestão.
+async function buscarAfastamentosNoPeriodo(usuarioIds, inicio, fim, { incluirPendentes = false } = {}) {
   const idsUnicos = [...new Set(usuarioIds)]
   if (idsUnicos.length === 0) return []
 
@@ -22,6 +24,7 @@ async function buscarAfastamentosNoPeriodo(usuarioIds, inicio, fim) {
     .from('afastamentos')
     .select(CAMPOS_PUBLICOS)
     .in('usuario_id', idsUnicos)
+    .in('status', incluirPendentes ? ['aprovado', 'pendente'] : ['aprovado'])
     .lte('data_inicio', fim)
     .gte('data_fim', inicio)
 
@@ -33,10 +36,10 @@ async function buscarAfastamentosNoPeriodo(usuarioIds, inicio, fim) {
 // Plantões que viram a noite contam pelo dia em que começam.
 function afastamentoEm(afastamentos, usuarioId, data) {
   const a = afastamentos.find(x => x.usuario_id === usuarioId && x.data_inicio <= data && x.data_fim >= data)
-  return a ? { id: a.id, tipo: a.tipo, data_inicio: a.data_inicio, data_fim: a.data_fim } : null
+  return a ? { id: a.id, tipo: a.tipo, data_inicio: a.data_inicio, data_fim: a.data_fim, status: a.status } : null
 }
 
-// Map usuario_id -> afastamento, só para quem está afastado nessa data
+// Map usuario_id -> afastamento aprovado, só para quem está afastado nessa data
 async function usuariosAfastados(usuarioIds, data) {
   const afastamentos = await buscarAfastamentosNoPeriodo(usuarioIds, data, data)
   const resultado = new Map()

@@ -2,16 +2,12 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Posição 1 vale 7 pontos, posição 7 vale 1; o intermediário (posição 8, fim da fila) vale 7
-const POSICAO_INTERMEDIARIO = 8
-
-function pontosDaPosicao(posicao) {
-  if (posicao == null) return 0
-  return posicao === POSICAO_INTERMEDIARIO ? 7 : 8 - posicao
-}
+const { pontosDaPosicao } = require('../services/posicoes')
+const { buscarCoberturas, repartirPlantao } = require('../services/coberturas')
 
 // Calculado na hora a partir dos plantões do mês — nada é gravado.
 // Plantões que viram a noite contam no mês em que começam.
+// Troca por horas: horas e pontos da vaga são divididos na proporção das horas de cada um.
 exports.resumoMensal = async (req, res) => {
   const { mes } = req.query
 
@@ -31,27 +27,36 @@ exports.resumoMensal = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
+  let coberturas
+  try {
+    coberturas = await buscarCoberturas(plantoes.map(p => p.id))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+
   const plantonistas = new Map()
   const socios = new Map()
 
   for (const plantao of plantoes) {
+    const partes = repartirPlantao(plantao, plantao.plantao_usuarios, coberturas)
     if (plantao.tipo === 'plantonista') {
-      const minutos = duracaoEmMinutos(plantao.hora_inicio, plantao.hora_fim)
-      for (const { usuario_id } of plantao.plantao_usuarios) {
+      for (const { usuario_id, minutos } of partes) {
         const acc = plantonistas.get(usuario_id) ?? { plantoes: 0, minutos: 0 }
         acc.plantoes += 1
         acc.minutos += minutos
         plantonistas.set(usuario_id, acc)
       }
     } else {
-      for (const { usuario_id, posicao } of plantao.plantao_usuarios) {
+      for (const { usuario_id, posicao, fracao } of partes) {
         const acc = socios.get(usuario_id) ?? { plantoes: 0, pontos: 0 }
         acc.plantoes += 1
-        acc.pontos += pontosDaPosicao(posicao)
+        acc.pontos += pontosDaPosicao(posicao) * fracao
         socios.set(usuario_id, acc)
       }
     }
   }
+  // Pontos rateados ficam com duas casas
+  for (const acc of socios.values()) acc.pontos = Math.round(acc.pontos * 100) / 100
 
   try {
     const perfis = await buscarPerfis([...plantonistas.keys(), ...socios.keys()])
@@ -72,19 +77,6 @@ function montarLinhas(acumulado, perfis, campoOrdenacao) {
       return { id, nome: perfil?.nome ?? null, email: perfil?.email ?? null, sigla: perfil?.sigla ?? null, ...valores }
     })
     .sort((a, b) => b[campoOrdenacao] - a[campoOrdenacao] || (a.nome ?? '').localeCompare(b.nome ?? ''))
-}
-
-// hora_fim <= hora_inicio significa que o plantão termina no dia seguinte
-function duracaoEmMinutos(horaInicio, horaFim) {
-  const inicio = paraMinutos(horaInicio)
-  let fim = paraMinutos(horaFim)
-  if (fim <= inicio) fim += 24 * 60
-  return fim - inicio
-}
-
-function paraMinutos(hora) {
-  const [h, m] = hora.split(':').map(Number)
-  return h * 60 + m
 }
 
 async function buscarPerfis(usuarioIds) {

@@ -2,14 +2,26 @@
 
 import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
-import { Afastamento, rotuloAfastamento } from "./disponibilidade"
+import { Afastamento, afastamentoPendente, rotuloAfastamento } from "./disponibilidade"
 import { rotuloPosicaoCurto } from "./posicoes"
+import { formatarIntervalo } from "./trocaPorHoras"
 
 export type TrocaPendente = {
   id: string
   solicitadoEm: string
   usuarioEntrada: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
   solicitadoPor: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+  // Preenchidos na troca por horas
+  horaInicio?: string | null
+  horaFim?: string | null
+}
+
+// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo
+export type Cobertura = {
+  id: string
+  usuario: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
+  horaInicio: string
+  horaFim: string
 }
 
 export type Usuario = {
@@ -21,6 +33,7 @@ export type Usuario = {
   posicao?: number | null
   trocaPendente?: TrocaPendente | null
   afastamento?: Afastamento | null
+  cobertura?: Cobertura | null
 }
 
 export type Plantao = {
@@ -42,31 +55,57 @@ const ESTILO_TIPO = {
   socio: { rotulo: "Sócio", faixa: "border-l-teal-500", etiqueta: "bg-teal-100 text-teal-800", ponto: "bg-teal-500" },
 }
 
-function BadgeComMarcador({ usuario }: { usuario: Usuario }) {
+// Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
+// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila de sócios.
+// Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
+export function BadgeComMarcador({
+  usuario,
+  size = "sm",
+  mostrarPosicao = true,
+}: {
+  usuario: Usuario
+  size?: "sm" | "responsivo"
+  mostrarPosicao?: boolean
+}) {
   return (
     <div
       className="relative shrink-0"
       title={
         [
-          usuario.afastamento && `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`,
+          usuario.nome ?? usuario.email,
+          usuario.afastamento &&
+            (afastamentoPendente(usuario.afastamento)
+              ? `Pedido de ${rotuloAfastamento(usuario.afastamento)} aguardando aprovação`
+              : `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`),
           usuario.trocaPendente && "Troca pendente de aceite",
+          usuario.cobertura &&
+            `${usuario.cobertura.usuario.nome ?? usuario.cobertura.usuario.email} cobre ${formatarIntervalo(usuario.cobertura.horaInicio, usuario.cobertura.horaFim)}`,
         ]
           .filter(Boolean)
           .join(" · ") || undefined
       }
     >
       <div className={usuario.coordenador ? "rounded-full ring-2 ring-purple-600" : undefined}>
-        <SiglaBadge sigla={usuario.sigla} size="sm" />
+        <SiglaBadge sigla={usuario.sigla} size={size} semTitulo />
       </div>
       {usuario.trocaPendente && (
         <span className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
       )}
       {usuario.afastamento && (
-        <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          !
+        <span
+          className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none ${
+            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : "bg-red-600"
+          }`}
+        >
+          {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
         </span>
       )}
-      {usuario.posicao != null && (
+      {usuario.cobertura && (
+        <span className="absolute -bottom-1 -left-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-sky-500 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
+          ½
+        </span>
+      )}
+      {mostrarPosicao && usuario.posicao != null && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
           {rotuloPosicaoCurto(usuario.posicao)}
         </span>
