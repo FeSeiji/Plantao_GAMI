@@ -17,11 +17,16 @@ import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
 import SeletorTrocaPorHoras from "./SeletorTrocaPorHoras";
 import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino";
 import {
-  posicoesDoPlantao,
+  TURNOS,
+  Turno,
+  VAGAS,
   descreverPosicao,
-  ehPosicaoDeCoordenador,
+  ehVagaDeCoordenador,
+  formatarTurno,
+  horarioDaVaga,
   rotuloPosicao,
-  rotuloPosicaoCurto,
+  turnoDaPosicao,
+  vagasDoTurno,
 } from "./posicoes";
 import { apiFetch } from "./sessao";
 import {
@@ -58,6 +63,7 @@ type Cobertura = {
 
 type TrocaHistorico = {
   id: string;
+  posicao?: number;
   status: "pendente" | "aceita" | "recusada" | "cancelada";
   solicitadoEm: string;
   respondidoEm: string | null;
@@ -92,11 +98,12 @@ type EventoHistorico =
   | { tipo: "remocao"; quando: string; remocao: RemocaoHistorico }
   | { tipo: "posicao"; quando: string; mudanca: MudancaPosicaoHistorico };
 
-// Quem pode mudar a ordem da fila de sócios — mesma lista do requireRole em Backend/src/routes/plantoes.js
-const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
-// Adicionar, remover e mudar a equipe de plantonistas de vaga: só a gestão — mesma lista em Backend/src/routes/plantoes.js
+// Quem pode mudar médicos de vaga — mesma lista do requireRole em Backend/src/routes/plantoes.js.
+// Fora da gestão, só nos plantões em que está escalado
+const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "anestesita_plantonista", "tecnico"];
+// Preencher e esvaziar vagas: só a gestão — mesma lista em Backend/src/routes/plantoes.js
 const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
-// Criar e editar plantões (data, horário, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
+// Criar e editar plantões (dia, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
 export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "tecnico"];
 
 type Usuario = {
@@ -112,14 +119,12 @@ type Usuario = {
   cobertura?: Cobertura | null;
 };
 
+// Um plantão por dia, com as vagas do diurno e do noturno (components/posicoes.ts)
 type Plantao = {
   id: string;
   titulo: string;
   descricao: string | null;
   data: string;
-  hora_inicio: string;
-  hora_fim: string;
-  tipo: "plantonista" | "socio";
   usuarios: Usuario[];
 };
 
@@ -147,8 +152,6 @@ export default function PlantaoModal({
   const [titulo, setTitulo] = useState(plantao.titulo);
   const [descricao, setDescricao] = useState(plantao.descricao ?? "");
   const [data, setData] = useState(plantao.data);
-  const [horaInicio, setHoraInicio] = useState(plantao.hora_inicio.slice(0, 5));
-  const [horaFim, setHoraFim] = useState(plantao.hora_fim.slice(0, 5));
 
   const [selecionados, setSelecionados] = useState<Usuario[]>(plantao.usuarios);
   const [busca, setBusca] = useState("");
@@ -167,8 +170,9 @@ export default function PlantaoModal({
   const [podeGerirEquipe, setPodeGerirEquipe] = useState(false);
   const [podeEditarPlantao, setPodeEditarPlantao] = useState(false);
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null);
-  const [trocandoId, setTrocandoId] = useState<string | null>(null);
-  // Troca por horas: "inicio" = do começo do plantão até horaParcial; "fim" = de horaParcial até o fim
+  // Vaga com o painel de troca aberto
+  const [trocandoPosicao, setTrocandoPosicao] = useState<number | null>(null);
+  // Troca por horas: "inicio" = do começo da vaga até horaParcial; "fim" = de horaParcial até o fim
   const [trocaParcial, setTrocaParcial] = useState<"inicio" | "fim" | null>(null);
   const [horaParcial, setHoraParcial] = useState("");
   const [buscaTroca, setBuscaTroca] = useState("");
@@ -180,22 +184,30 @@ export default function PlantaoModal({
     null,
   );
 
-  const ehSocio = plantao.tipo === "socio";
-  // Plantonista: Coordenador, Coordenador, 2º a 7º. Sócio diurno: 1º a 7º + intermediário;
-  // sócio noturno (19h em diante): 1º, 1º, 2º, 3º + intermediário
-  const posicoesDaFila = posicoesDoPlantao(plantao.tipo, plantao.hora_inicio);
+  // O titular da vaga em troca e o horário dela (o do turno)
+  const usuarioTrocando =
+    trocandoPosicao != null
+      ? selecionados.find((u) => u.posicao === trocandoPosicao)
+      : undefined;
+  const horarioTrocando =
+    trocandoPosicao != null ? horarioDaVaga(plantao.data, trocandoPosicao) : null;
   // Troca por horas: o intervalo escolhido na linha do tempo do painel de troca
   const intervaloTroca =
-    trocaParcial && horaParcial
+    trocaParcial && horaParcial && horarioTrocando
       ? trocaParcial === "inicio"
-        ? { horaInicio: plantao.hora_inicio.slice(0, 5), horaFim: horaParcial }
-        : { horaInicio: horaParcial, horaFim: plantao.hora_fim.slice(0, 5) }
+        ? { horaInicio: horarioTrocando.hora_inicio, horaFim: horaParcial }
+        : { horaInicio: horaParcial, horaFim: horarioTrocando.hora_fim }
       : null;
-  // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
+  // Médico fora da gestão só mexe nas posições dos plantões em que está escalado
   const estouEscalado = selecionados.some((u) => u.id === meuId);
+  // O mesmo médico pode estar no diurno e no noturno, mas não duas vezes no mesmo turno
+  const noTurno = (usuarioId: string | null, turno: Turno) =>
+    selecionados.some(
+      (u) => u.id === usuarioId && u.posicao != null && turnoDaPosicao(u.posicao) === turno,
+    );
   // Médico fora da gestão troca a própria vaga com quem quiser; na vaga de outro, só pede a vaga para si
   const pedindoVagaParaMim =
-    trocandoId != null && !podeGerirEquipe && trocandoId !== meuId;
+    usuarioTrocando != null && !podeGerirEquipe && usuarioTrocando.id !== meuId;
 
   useEffect(() => {
     setMeuId(localStorage.getItem("userId"));
@@ -239,33 +251,24 @@ export default function PlantaoModal({
   useEffect(() => {
     const termo = buscaTroca.trim();
 
-    if (!termo || !trocandoId) {
+    if (!termo || !horarioTrocando) {
       setResultadosTroca([]);
       setBuscandoTroca(false);
       return;
     }
 
-    // Em plantão de plantonista, sócios só entram no lugar do coordenador
-    const saiCoordenador = selecionados.some(
-      (u) => u.id === trocandoId && u.coordenador,
-    );
-    const role =
-      ehSocio || saiCoordenador
-        ? "anestesita_plantonista,anestesita_socio"
-        : "anestesita_plantonista";
-
     setBuscandoTroca(true);
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token");
-      // Na troca por horas, o substituto só precisa estar livre no intervalo
+      // O substituto precisa estar livre no turno da vaga; na troca por horas, só no intervalo
       const params = new URLSearchParams({
         search: termo,
-        role,
+        role: "anestesita_plantonista,anestesita_socio",
         data: intervaloTroca
-          ? dataDaCobertura(plantao, intervaloTroca.horaInicio)
+          ? dataDaCobertura(horarioTrocando, intervaloTroca.horaInicio)
           : plantao.data,
-        horaInicio: intervaloTroca?.horaInicio ?? plantao.hora_inicio,
-        horaFim: intervaloTroca?.horaFim ?? plantao.hora_fim,
+        horaInicio: intervaloTroca?.horaInicio ?? horarioTrocando.hora_inicio,
+        horaFim: intervaloTroca?.horaFim ?? horarioTrocando.hora_fim,
       });
       apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -279,12 +282,12 @@ export default function PlantaoModal({
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [buscaTroca, trocandoId, selecionados, ehSocio, intervaloTroca?.horaInicio, intervaloTroca?.horaFim]);
+  }, [buscaTroca, trocandoPosicao, intervaloTroca?.horaInicio, intervaloTroca?.horaFim]);
 
   useEffect(() => {
     const termo = busca.trim();
 
-    if (!termo) {
+    if (!termo || !adicionando) {
       setResultados([]);
       setBuscando(false);
       return;
@@ -293,16 +296,14 @@ export default function PlantaoModal({
     setBuscando(true);
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token");
-      // Em plantão de plantonista, sócios só entram nas vagas de coordenador
+      // Quem já está no turno da vaga (aqui ou em outro plantão) não aparece
+      const horario = horarioDaVaga(plantao.data, adicionando.posicao);
       const params = new URLSearchParams({
         search: termo,
-        role:
-          ehSocio || ehPosicaoDeCoordenador(plantao.tipo, adicionando?.posicao)
-            ? "anestesita_plantonista,anestesita_socio"
-            : "anestesita_plantonista",
+        role: "anestesita_plantonista,anestesita_socio",
         data: plantao.data,
-        horaInicio: plantao.hora_inicio,
-        horaFim: plantao.hora_fim,
+        horaInicio: horario.hora_inicio,
+        horaFim: horario.hora_fim,
       });
       apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -316,7 +317,7 @@ export default function PlantaoModal({
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [busca, ehSocio, adicionando?.posicao]);
+  }, [busca, adicionando?.posicao]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -336,8 +337,6 @@ export default function PlantaoModal({
     setTitulo(plantao.titulo);
     setDescricao(plantao.descricao ?? "");
     setData(plantao.data);
-    setHoraInicio(plantao.hora_inicio.slice(0, 5));
-    setHoraFim(plantao.hora_fim.slice(0, 5));
     setError("");
     setEditando(false);
     abrirAdicao(null);
@@ -348,20 +347,21 @@ export default function PlantaoModal({
     setAdicionando(alvo);
     setBusca("");
     setResultados([]);
-    if (alvo) setTrocandoId(null);
+    if (alvo) setTrocandoPosicao(null);
   }
 
-  function abrirTroca(id: string | null) {
-    setTrocandoId(id);
+  function abrirTroca(posicao: number | null) {
+    setTrocandoPosicao(posicao);
     setBuscaTroca("");
     setResultadosTroca([]);
     setTrocaParcial(null);
     setHoraParcial("");
-    if (id) setAdicionando(null);
+    if (posicao != null) setAdicionando(null);
   }
 
+  // A troca é da vaga: quem está nela sai e usuarioEntrada entra
   async function solicitarTroca(
-    usuarioSaidaId: string,
+    posicao: number,
     usuarioEntrada: Usuario,
     intervalo: { horaInicio: string; horaFim: string } | null,
   ) {
@@ -379,7 +379,7 @@ export default function PlantaoModal({
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            usuario_saida: usuarioSaidaId,
+            posicao,
             usuario_entrada: usuarioEntrada.id,
             ...(intervalo
               ? { hora_inicio: intervalo.horaInicio, hora_fim: intervalo.horaFim }
@@ -396,7 +396,7 @@ export default function PlantaoModal({
 
       setSelecionados((prev) =>
         prev.map((u) =>
-          u.id === usuarioSaidaId
+          u.posicao === posicao
             ? {
                 ...u,
                 trocaPendente: {
@@ -423,7 +423,7 @@ export default function PlantaoModal({
     }
   }
 
-  function desfazerCobertura(usuarioId: string, cobertura: Cobertura) {
+  function desfazerCobertura(posicao: number, cobertura: Cobertura) {
     setConfirmacao({
       titulo: "Desfazer troca por horas?",
       mensagem: (
@@ -448,7 +448,7 @@ export default function PlantaoModal({
             throw new Error(result.error ?? "Não foi possível desfazer a troca por horas.");
           }
           setSelecionados((prev) =>
-            prev.map((u) => (u.id === usuarioId ? { ...u, cobertura: null } : u)),
+            prev.map((u) => (u.posicao === posicao ? { ...u, cobertura: null } : u)),
           );
           carregarHistorico();
           onUpdated();
@@ -462,7 +462,7 @@ export default function PlantaoModal({
   }
 
   // Quem pediu (ou a gestão) desiste do pedido antes do aceite
-  function cancelarPedidoTroca(usuarioId: string, pendente: TrocaPendente) {
+  function cancelarPedidoTroca(posicao: number, pendente: TrocaPendente) {
     setConfirmacao({
       titulo: "Cancelar pedido de troca?",
       mensagem: (
@@ -489,7 +489,7 @@ export default function PlantaoModal({
             throw new Error(result.error ?? "Não foi possível cancelar o pedido.");
           }
           setSelecionados((prev) =>
-            prev.map((u) => (u.id === usuarioId ? { ...u, trocaPendente: null } : u)),
+            prev.map((u) => (u.posicao === posicao ? { ...u, trocaPendente: null } : u)),
           );
           carregarHistorico();
           window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
@@ -505,7 +505,7 @@ export default function PlantaoModal({
 
   async function responderTrocaAqui(
     trocaId: string,
-    usuarioSaidaId: string,
+    posicao: number,
     aceitar: boolean,
   ) {
     setError("");
@@ -530,7 +530,7 @@ export default function PlantaoModal({
 
       setSelecionados((prev) =>
         prev.map((u) => {
-          if (u.id !== usuarioSaidaId) return u;
+          if (u.posicao !== posicao) return u;
           if (!aceitar) return { ...u, trocaPendente: null };
           // Troca por horas: a vaga continua do titular, agora com a cobertura
           if (result.horaInicio) {
@@ -570,18 +570,15 @@ export default function PlantaoModal({
     abrirAdicao(null);
     setError("");
 
-    if (!alvo || selecionados.some((u) => u.id === usuario.id)) return;
+    if (!alvo) return;
 
     const posicao = alvo.posicao;
     if (selecionados.some((u) => u.posicao === posicao)) return;
+    if (noTurno(usuario.id, turnoDaPosicao(posicao))) return;
     const anterior = selecionados;
     setSelecionados((prev) => [
       ...prev,
-      {
-        ...usuario,
-        posicao,
-        coordenador: ehPosicaoDeCoordenador(plantao.tipo, posicao),
-      },
+      { ...usuario, posicao, coordenador: ehVagaDeCoordenador(posicao) },
     ]);
 
     try {
@@ -616,21 +613,20 @@ export default function PlantaoModal({
     }
   }
 
-  // Se a posição escolhida estiver ocupada, os dois médicos trocam de lugar.
-  // No plantonista, a vaga define quem é coordenador
-  async function alterarPosicao(id: string, novaPosicao: number) {
+  // Move o médico da vaga posicao para novaPosicao, inclusive entre o diurno e o noturno.
+  // Se a vaga nova estiver ocupada, os dois trocam de lugar. A vaga define quem é coordenador
+  async function alterarPosicao(posicao: number, novaPosicao: number) {
     setError("");
     const anterior = selecionados;
-    const posicaoAtual = selecionados.find((u) => u.id === id)?.posicao ?? null;
-    const naPosicao = (u: Usuario, posicao: number | null) => ({
+    const naPosicao = (u: Usuario, p: number) => ({
       ...u,
-      posicao,
-      coordenador: ehPosicaoDeCoordenador(plantao.tipo, posicao),
+      posicao: p,
+      coordenador: ehVagaDeCoordenador(p),
     });
     setSelecionados((prev) =>
       prev.map((u) => {
-        if (u.id === id) return naPosicao(u, novaPosicao);
-        if (u.posicao === novaPosicao) return naPosicao(u, posicaoAtual);
+        if (u.posicao === posicao) return naPosicao(u, novaPosicao);
+        if (u.posicao === novaPosicao) return naPosicao(u, posicao);
         return u;
       }),
     );
@@ -645,7 +641,7 @@ export default function PlantaoModal({
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ usuario_id: id, posicao: novaPosicao }),
+          body: JSON.stringify({ posicao, nova_posicao: novaPosicao }),
         },
       );
 
@@ -666,15 +662,16 @@ export default function PlantaoModal({
     }
   }
 
-  async function removerUsuario(id: string) {
+  // Esvazia a vaga (o mesmo médico pode estar em outra vaga do plantão)
+  async function removerUsuario(posicao: number) {
     setError("");
     const anterior = selecionados;
-    setSelecionados((prev) => prev.filter((u) => u.id !== id));
+    setSelecionados((prev) => prev.filter((u) => u.posicao !== posicao));
 
     try {
       const token = localStorage.getItem("token");
       const res = await apiFetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/usuarios/${id}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/vagas/${posicao}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
@@ -717,8 +714,6 @@ export default function PlantaoModal({
             titulo,
             descricao: descricao || null,
             data,
-            hora_inicio: horaInicio,
-            hora_fim: horaFim,
           }),
         },
       );
@@ -741,8 +736,6 @@ export default function PlantaoModal({
     }
   }
 
-  const rotuloLista = ehSocio ? "Fila de sócios" : "Equipe";
-
   function confirmarRemocao(u: Usuario) {
     setConfirmacao({
       titulo: "Remover médico?",
@@ -751,9 +744,7 @@ export default function PlantaoModal({
           <p>
             <span className="font-semibold">{nomeDe(u)}</span> será removido
             deste plantão
-            {u.posicao != null
-              ? ` (${descreverPosicao(u.posicao, plantao.tipo)})`
-              : ""}
+            {u.posicao != null ? ` (${descreverPosicao(u.posicao)})` : ""}
             . A remoção fica registrada no histórico.
           </p>
           {u.trocaPendente && (
@@ -765,11 +756,13 @@ export default function PlantaoModal({
       ),
       rotuloConfirmar: "Remover",
       perigo: true,
-      acao: () => removerUsuario(u.id),
+      acao: () => removerUsuario(u.posicao!),
     });
   }
 
+  // u sempre tem posicao aqui: é a vaga que ele ocupa
   function celulaMedico(u: Usuario, editavel: boolean): CelulaGrade {
+    const posicao = u.posicao!;
     const pendente = u.trocaPendente;
     // O titular responde quando o próprio substituto pediu a vaga; nos demais casos, o substituto
     const respondente =
@@ -778,28 +771,28 @@ export default function PlantaoModal({
     const souRespondente = respondente != null && respondente.id === meuId;
 
     // Trocar fica fora do modo edição e só vale com o aceite. A gestão troca qualquer vaga;
-    // o médico troca a própria ou pede a de um colega para si (aí o colega precisa aceitar)
+    // o médico troca a própria ou pede a de um colega para si, se não estiver no mesmo turno (aí o colega precisa aceitar)
     const acoes: AcaoMenu[] = [];
     const ehMinhaVaga = u.id === meuId;
-    const podePedirVaga = podeGerirEquipe || ehMinhaVaga || !estouEscalado;
+    const podePedirVaga = podeGerirEquipe || ehMinhaVaga || !noTurno(meuId, turnoDaPosicao(posicao));
     // Com troca por horas valendo, a vaga não aceita outra troca até a gestão desfazê-la
     if (!pendente && !u.cobertura && podePedirVaga)
       acoes.push({
         rotulo: podeGerirEquipe || ehMinhaVaga ? "Trocar" : "Pedir a vaga",
-        onClick: () => abrirTroca(u.id),
+        onClick: () => abrirTroca(posicao),
       });
     if (pendente && (podeGerirEquipe || pendente.solicitadoPor.id === meuId))
       acoes.push({
         rotulo: "Cancelar pedido de troca",
         perigo: true,
-        onClick: () => cancelarPedidoTroca(u.id, pendente),
+        onClick: () => cancelarPedidoTroca(posicao, pendente),
       });
     if (editavel && podeGerirEquipe && u.cobertura) {
       const cobertura = u.cobertura;
       acoes.push({
         rotulo: "Desfazer troca por horas",
         perigo: true,
-        onClick: () => desfazerCobertura(u.id, cobertura),
+        onClick: () => desfazerCobertura(posicao, cobertura),
       });
     }
     if (editavel && podeGerirEquipe) {
@@ -810,40 +803,40 @@ export default function PlantaoModal({
       });
     }
 
-    // A gestão muda a posição no modo edição; o sócio escalado (que não entra nesse modo) muda direto
-    // na visualização, só na fila de sócio. No plantonista, mudar de vaga é como se define o coordenador
+    // A gestão muda a posição no modo edição; o médico escalado (que não entra nesse modo) muda direto
+    // na visualização. Mudar de vaga é também como se define o coordenador
     const mostraSeletorPosicao = podeEditarPlantao
       ? editavel
-      : ehSocio && podeMudarPosicao && estouEscalado;
+      : podeMudarPosicao && estouEscalado;
 
-    let rotulo: React.ReactNode = undefined;
-    if (!pendente && mostraSeletorPosicao) {
+    let rotulo: React.ReactNode = rotuloPosicao(posicao);
+    if (!pendente && !u.cobertura && mostraSeletorPosicao) {
       rotulo = (
         <select
-          aria-label="Posição na fila"
-          value={u.posicao ?? ""}
-          onChange={(e) => alterarPosicao(u.id, Number(e.target.value))}
+          aria-label="Vaga"
+          value={posicao}
+          onChange={(e) => alterarPosicao(posicao, Number(e.target.value))}
           className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
-          {posicoesDaFila.map((p) => (
-            <option key={p} value={p}>
-              {rotuloPosicaoCurto(p, plantao.tipo)}
-              {p !== u.posicao && selecionados.some((o) => o.posicao === p)
-                ? " (trocar)"
-                : ""}
-            </option>
+          {TURNOS.map((t) => (
+            <optgroup key={t.valor} label={t.rotulo}>
+              {VAGAS.filter((v) => v.turno === t.valor).map((v) => (
+                <option key={v.posicao} value={v.posicao}>
+                  {v.rotulo}
+                  {v.posicao !== posicao && selecionados.some((o) => o.posicao === v.posicao)
+                    ? " (trocar)"
+                    : ""}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       );
-    } else if (u.posicao != null) {
-      rotulo = rotuloPosicao(u.posicao, plantao.tipo);
-    } else if (u.coordenador) {
-      rotulo = "Coordenador";
     }
 
     return {
       tipo: "medico",
-      chave: u.id,
+      chave: `vaga-${posicao}`,
       pessoa: u,
       rotulo,
       // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
@@ -851,7 +844,7 @@ export default function PlantaoModal({
         ? "indisponivel"
         : pendente
           ? "pendente"
-          : !ehSocio && u.coordenador
+          : u.coordenador
             ? "coordenador"
             : undefined,
       status:
@@ -888,14 +881,14 @@ export default function PlantaoModal({
         <div className="flex gap-3 text-xs">
           <button
             type="button"
-            onClick={() => responderTrocaAqui(pendente.id, u.id, true)}
+            onClick={() => responderTrocaAqui(pendente.id, posicao, true)}
             className="text-green-600 hover:text-green-800 font-bold"
           >
             Aceitar
           </button>
           <button
             type="button"
-            onClick={() => responderTrocaAqui(pendente.id, u.id, false)}
+            onClick={() => responderTrocaAqui(pendente.id, posicao, false)}
             className="text-red-600 hover:text-red-800 font-bold"
           >
             Recusar
@@ -906,37 +899,36 @@ export default function PlantaoModal({
     };
   }
 
-  function montarCelulas(editavel: boolean): CelulaGrade[] {
-    return [
-      ...posicoesDaFila.map((p): CelulaGrade => {
-        const u = selecionados.find((s) => s.posicao === p);
-        if (u) return celulaMedico(u, editavel);
-        return {
-          tipo: "vazia",
-          chave: `posicao-${p}`,
-          rotulo: rotuloPosicao(p, plantao.tipo),
-          texto: "Vaga",
-          ativa: adicionando?.posicao === p,
-          onClick:
-            editavel && podeGerirEquipe
-              ? () => abrirAdicao({ posicao: p })
-              : undefined,
-        };
-      }),
-      // Plantonista escalado antes das vagas fixas (sem posição) aparece no fim, para a gestão realocar
-      ...selecionados
-        .filter((u) => u.posicao == null || !posicoesDaFila.includes(u.posicao))
-        .map((u) => celulaMedico(u, editavel)),
-    ];
+  function montarCelulas(turno: Turno, editavel: boolean): CelulaGrade[] {
+    return vagasDoTurno(turno).map((p): CelulaGrade => {
+      const u = selecionados.find((s) => s.posicao === p);
+      if (u) return celulaMedico(u, editavel);
+      return {
+        tipo: "vazia",
+        chave: `vaga-${p}`,
+        rotulo: rotuloPosicao(p),
+        texto: "Vaga",
+        ativa: adicionando?.posicao === p,
+        onClick:
+          editavel && podeGerirEquipe
+            ? () => abrirAdicao({ posicao: p })
+            : undefined,
+      };
+    });
   }
 
-  const usuarioTrocando = selecionados.find((u) => u.id === trocandoId);
+  // Quem já está no turno da vaga não aparece como substituto
   const resultadosTrocaFiltrados = resultadosTroca.filter(
-    (r) => r.id !== trocandoId && !selecionados.some((s) => s.id === r.id),
+    (r) =>
+      r.id !== usuarioTrocando?.id &&
+      (trocandoPosicao == null || !noTurno(r.id, turnoDaPosicao(trocandoPosicao))),
+  );
+  const resultadosAdicao = resultados.filter(
+    (r) => !adicionando || !noTurno(r.id, turnoDaPosicao(adicionando.posicao)),
   );
 
-  // Busca do substituto: aparece tanto na visualização quanto no modo edição
-  const painelTroca = usuarioTrocando && (
+  // Busca do substituto: aparece abaixo da grade do turno da vaga, na visualização e no modo edição
+  const painelTroca = usuarioTrocando && horarioTrocando && (
     <div className="relative mt-3">
       <div className="flex items-center justify-between mb-1">
         <label
@@ -944,8 +936,7 @@ export default function PlantaoModal({
           className="text-xs font-semibold text-brand-700"
         >
           {pedindoVagaParaMim ? "Pedir a vaga de" : "Substituir"}{" "}
-          {nomeDe(usuarioTrocando)}
-          {usuarioTrocando.coordenador ? " (coordenador)" : ""}
+          {nomeDe(usuarioTrocando)} ({descreverPosicao(trocandoPosicao!)})
         </label>
         <button
           type="button"
@@ -956,8 +947,8 @@ export default function PlantaoModal({
         </button>
       </div>
       <SeletorTrocaPorHoras
-        horaInicio={plantao.hora_inicio}
-        horaFim={plantao.hora_fim}
+        horaInicio={horarioTrocando.hora_inicio}
+        horaFim={horarioTrocando.hora_fim}
         lado={trocaParcial}
         corte={horaParcial}
         nomeTitular={nomeDe(usuarioTrocando)}
@@ -988,7 +979,7 @@ export default function PlantaoModal({
               ),
               rotuloConfirmar: "Pedir a vaga",
               acao: () =>
-                solicitarTroca(usuarioTrocando.id, { id: meuId ?? "" }, intervaloTroca),
+                solicitarTroca(trocandoPosicao!, { id: meuId ?? "" }, intervaloTroca),
             })
           }
           className="w-full bg-brand-700 hover:bg-brand-800 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
@@ -1042,7 +1033,7 @@ export default function PlantaoModal({
                     ),
                     rotuloConfirmar: "Solicitar troca",
                     acao: () =>
-                      solicitarTroca(usuarioTrocando.id, r, intervaloTroca),
+                      solicitarTroca(trocandoPosicao!, r, intervaloTroca),
                   })
                 }
                 disabled={!!r.afastamento}
@@ -1116,14 +1107,9 @@ export default function PlantaoModal({
         </div>
 
         {!editando && (
-          <p className="text-gray-400 text-sm mb-1">
+          <p className="text-gray-400 text-sm mb-6">
             {new Date(`${plantao.data}T00:00:00`).toLocaleDateString("pt-BR")} ·{" "}
-            {plantao.hora_inicio.slice(0, 5)} - {plantao.hora_fim.slice(0, 5)}
-          </p>
-        )}
-        {!editando && (
-          <p className="text-xs font-semibold text-brand-700 mb-6 uppercase tracking-wide">
-            {ehSocio ? "Sócio" : "Plantonista"}
+            {TURNOS.map((t) => `${t.rotulo} ${formatarTurno(t.valor)}`).join(" · ")}
           </p>
         )}
 
@@ -1179,122 +1165,86 @@ export default function PlantaoModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="horaInicio"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Início
-                </label>
-                <input
-                  id="horaInicio"
-                  type="time"
-                  required
-                  value={horaInicio}
-                  onChange={(e) => setHoraInicio(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="horaFim"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Fim
-                </label>
-                <input
-                  id="horaFim"
-                  type="time"
-                  required
-                  value={horaFim}
-                  onChange={(e) => setHoraFim(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                />
-              </div>
-            </div>
+            <div className="space-y-4">
+              {TURNOS.map((t) => (
+                <div key={t.valor}>
+                  <p className="block text-sm font-medium text-gray-700 mb-2">
+                    {t.rotulo}{" "}
+                    <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                  </p>
 
-            <div>
-              <p className="block text-sm font-medium text-gray-700 mb-2">
-                {rotuloLista}
-              </p>
+                  <GradeParticipantes celulas={montarCelulas(t.valor, true)} />
 
-              <GradeParticipantes celulas={montarCelulas(true)} />
+                  {adicionando && turnoDaPosicao(adicionando.posicao) === t.valor && (
+                    <div className="relative mt-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <label
+                          htmlFor="buscaUsuario"
+                          className="text-xs font-semibold text-brand-700"
+                        >
+                          Adicionar: {descreverPosicao(adicionando.posicao)}
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => abrirAdicao(null)}
+                          className="text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                      <input
+                        id="buscaUsuario"
+                        autoFocus
+                        type="text"
+                        value={busca}
+                        onChange={(e) => setBusca(e.target.value)}
+                        placeholder="Buscar por nome ou e-mail"
+                        autoComplete="off"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                      />
 
-              {adicionando && (
-                <div className="relative mt-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <label
-                      htmlFor="buscaUsuario"
-                      className="text-xs font-semibold text-brand-700"
-                    >
-                      Adicionar: {descreverPosicao(adicionando.posicao, plantao.tipo)}
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => abrirAdicao(null)}
-                      className="text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                  <input
-                    id="buscaUsuario"
-                    autoFocus
-                    type="text"
-                    value={busca}
-                    onChange={(e) => setBusca(e.target.value)}
-                    placeholder="Buscar por nome ou e-mail"
-                    autoComplete="off"
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                  />
-
-                  {busca.trim() && (
-                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                      {buscando ? (
-                        <p className="px-4 py-2.5 text-sm text-gray-400">
-                          Buscando...
-                        </p>
-                      ) : resultados.filter(
-                          (u) => !selecionados.some((s) => s.id === u.id),
-                        ).length === 0 ? (
-                        <p className="px-4 py-2.5 text-sm text-gray-400">
-                          Nenhum médico encontrado.
-                        </p>
-                      ) : (
-                        resultados
-                          .filter(
-                            (u) => !selecionados.some((s) => s.id === u.id),
-                          )
-                          .map((u) => (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => adicionarUsuario(u)}
-                              disabled={!!u.afastamento}
-                              className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
-                            >
-                              <SiglaBadge sigla={u.sigla} size="sm" />
-                              <span className="min-w-0 truncate">
-                                {nomeDe(u)}
-                              </span>
-                              {u.afastamento ? (
-                                <AvisoAfastamento afastamento={u.afastamento} />
-                              ) : (
-                                <AvisoIndisponivel
-                                  dias={u.dias_disponiveis}
-                                  data={plantao.data}
-                                />
-                              )}
-                            </button>
-                          ))
+                      {busca.trim() && (
+                        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                          {buscando ? (
+                            <p className="px-4 py-2.5 text-sm text-gray-400">
+                              Buscando...
+                            </p>
+                          ) : resultadosAdicao.length === 0 ? (
+                            <p className="px-4 py-2.5 text-sm text-gray-400">
+                              Nenhum médico encontrado.
+                            </p>
+                          ) : (
+                            resultadosAdicao.map((u) => (
+                                <button
+                                  key={u.id}
+                                  type="button"
+                                  onClick={() => adicionarUsuario(u)}
+                                  disabled={!!u.afastamento}
+                                  className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+                                >
+                                  <SiglaBadge sigla={u.sigla} size="sm" />
+                                  <span className="min-w-0 truncate">
+                                    {nomeDe(u)}
+                                  </span>
+                                  {u.afastamento ? (
+                                    <AvisoAfastamento afastamento={u.afastamento} />
+                                  ) : (
+                                    <AvisoIndisponivel
+                                      dias={u.dias_disponiveis}
+                                      data={plantao.data}
+                                    />
+                                  )}
+                                </button>
+                              ))
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
-                </div>
-              )}
 
-              {painelTroca}
+                  {trocandoPosicao != null && turnoDaPosicao(trocandoPosicao) === t.valor && painelTroca}
+                </div>
+              ))}
             </div>
 
             {error && (
@@ -1326,13 +1276,16 @@ export default function PlantaoModal({
               <p className="text-sm text-gray-600">{plantao.descricao}</p>
             )}
 
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-2">
-                {rotuloLista}
-              </p>
-              <GradeParticipantes celulas={montarCelulas(false)} />
-              {painelTroca}
-            </div>
+            {TURNOS.map((t) => (
+              <div key={t.valor}>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  {t.rotulo}{" "}
+                  <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                </p>
+                <GradeParticipantes celulas={montarCelulas(t.valor, false)} />
+                {trocandoPosicao != null && turnoDaPosicao(trocandoPosicao) === t.valor && painelTroca}
+              </div>
+            ))}
 
             {error && (
               <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -1364,7 +1317,7 @@ export default function PlantaoModal({
                   const papel = r.eraCoordenador
                     ? " (coordenador)"
                     : r.posicao != null
-                      ? ` (${descreverPosicao(r.posicao, plantao.tipo)})`
+                      ? ` (${descreverPosicao(r.posicao)})`
                       : "";
                   return (
                     <li
@@ -1406,12 +1359,12 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` (${descreverPosicao(m.posicaoAnterior, plantao.tipo)})`}{" "}
+                              ` (${descreverPosicao(m.posicaoAnterior)})`}{" "}
                             com{" "}
                             <span className="font-semibold">
                               {nomeDe(m.usuarioTrocado)}
                             </span>{" "}
-                            ({descreverPosicao(m.posicaoNova, plantao.tipo)})
+                            ({descreverPosicao(m.posicaoNova)})
                           </>
                         ) : (
                           <>
@@ -1420,8 +1373,8 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` de ${descreverPosicao(m.posicaoAnterior, plantao.tipo)}`}{" "}
-                            para {descreverPosicao(m.posicaoNova, plantao.tipo)}
+                              ` de ${descreverPosicao(m.posicaoAnterior)}`}{" "}
+                            para {descreverPosicao(m.posicaoNova)}
                           </>
                         )}{" "}
                         em {new Date(m.alteradoEm).toLocaleString("pt-BR")}
@@ -1453,7 +1406,8 @@ export default function PlantaoModal({
                       solicitou trocar{" "}
                       <span className="font-semibold">
                         {nomeDe(t.usuarioSaida)}
-                      </span>{" "}
+                      </span>
+                      {t.posicao != null && ` (${descreverPosicao(t.posicao)})`}{" "}
                       por{" "}
                       <span className="font-semibold">
                         {nomeDe(t.usuarioEntrada)}

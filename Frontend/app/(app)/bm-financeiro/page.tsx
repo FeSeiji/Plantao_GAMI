@@ -391,7 +391,7 @@ export default function BmFinanceiroPage() {
                 <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
                   {termo
                     ? `Nenhum médico encontrado para "${busca.trim()}".`
-                    : `Nenhum plantão ${aba === "plantonista" ? "de plantonista" : "de sócio"} neste mês.`}
+                    : `Nenhum ${aba === "plantonista" ? "plantonista" : "sócio"} com plantão neste mês.`}
                 </td>
               </tr>
             )}

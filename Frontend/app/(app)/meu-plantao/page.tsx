@@ -6,79 +6,20 @@ import PlantaoModal from "../../../components/PlantaoModal"
 import {
   BadgeComMarcador,
   Plantao,
-  TURNOS,
-  Usuario,
   calcularIntervaloVisivel,
   formatarDataLocal,
-  Turno,
-  turnoDe,
 } from "../../../components/PlantaoCalendario"
 import {
-  POSICOES,
-  POSICOES_NOTURNO,
-  POSICOES_PLANTONISTA,
-  POSICAO_INTERMEDIARIO,
-  ordemDaPosicao,
-  posicoesDoPlantao,
+  TURNOS,
+  formatarTurno,
   rotuloPosicao,
   rotuloPosicaoCurto,
-  ehNoturno,
+  vagasDoTurno,
 } from "../../../components/posicoes"
 import { apiFetch } from "../../../components/sessao"
 
 // Médicos e a gestão (técnico e escritório) veem esta tela — mesma lista em components/Sidebar.tsx
 const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnico", "escritorio"]
-// A gestão acompanha as duas filas, então alterna entre as visões como quem é sócio e plantonista
-const ROLES_GESTAO_MEU_PLANTAO = ["tecnico", "escritorio"]
-
-type Visao = "socio" | "plantonista"
-
-// Uma linha da grade: o rótulo à esquerda e quem ocupa aquele lugar em cada plantão
-type Linha = {
-  chave: string
-  rotulo: string
-  rotuloCurto: string
-  separador?: boolean
-  ocupante: (p: Plantao) => Usuario | undefined
-}
-
-// Uma linha por vaga que existe nos plantões do turno: o diurno tem 1º a 7º + intermediário,
-// o noturno (19h em diante) tem 1º, 1º, 2º, 3º + intermediário. Sem plantão no turno, vale a fila
-// padrão dele (noite → noturna, manhã/tarde → diurna).
-function linhasSocio(plantoes: Plantao[], padrao: number[]): Linha[] {
-  const posicoes = plantoes.length
-    ? [...new Set(plantoes.flatMap((p) => posicoesDoPlantao("socio", p.hora_inicio)))].sort(
-        (a, b) => ordemDaPosicao(a) - ordemDaPosicao(b)
-      )
-    : padrao
-  return posicoes.map((posicao) => ({
-    chave: `posicao-${posicao}`,
-    rotulo: rotuloPosicao(posicao),
-    rotuloCurto: rotuloPosicaoCurto(posicao),
-    separador: posicao === POSICAO_INTERMEDIARIO,
-    ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
-  }))
-}
-
-// As vagas fixas da equipe: Coordenador, Coordenador e 2º a 7º
-function linhasPlantonista(): Linha[] {
-  return POSICOES_PLANTONISTA.map((posicao) => ({
-    chave: `posicao-${posicao}`,
-    rotulo: rotuloPosicao(posicao, "plantonista"),
-    rotuloCurto: rotuloPosicaoCurto(posicao, "plantonista"),
-    // Linha separando os coordenadores do resto da equipe
-    separador: posicao === 2,
-    ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
-  }))
-}
-
-// Na visão de sócio, o bloco da noite é o plantão noturno (19h em diante, fila 1º, 1º, 2º, 3º + intermediário);
-// um plantão de sócio às 18h tem fila diurna e fica na tarde. Na de plantonista vale o turno do calendário.
-function turnoNaVisao(visao: Visao | null, horaInicio: string): Turno {
-  if (visao === "plantonista") return turnoDe(horaInicio)
-  if (ehNoturno(horaInicio)) return "noite"
-  return Number(horaInicio.slice(0, 2)) >= 12 ? "tarde" : "manha"
-}
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
@@ -115,9 +56,6 @@ export default function MeuPlantaoPage() {
   const [error, setError] = useState("")
   const [meuId, setMeuId] = useState<string | null>(null)
   const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
-  const [visao, setVisao] = useState<Visao | null>(null)
-  // Alterna entre as duas visões quem é sócio e plantonista, e a gestão (técnico e escritório)
-  const [podeAlternar, setPodeAlternar] = useState(false)
 
   const { inicio, fim } = useMemo(() => calcularIntervaloVisivel(dataReferencia, "semana"), [dataReferencia])
 
@@ -132,25 +70,20 @@ export default function MeuPlantaoPage() {
       router.push("/login")
       return
     }
-    const roles = lerRoles()
-    if (!roles.some((r) => ROLES_MEU_PLANTAO.includes(r))) {
+    if (!lerRoles().some((r) => ROLES_MEU_PLANTAO.includes(r))) {
       router.push("/dashboard")
       return
     }
-    const ehSocio = roles.includes("anestesita_socio")
-    const ehGestao = roles.some((r) => ROLES_GESTAO_MEU_PLANTAO.includes(r))
-    setVisao(ehSocio || ehGestao ? "socio" : "plantonista")
-    setPodeAlternar((ehSocio && roles.includes("anestesita_plantonista")) || ehGestao)
     setMeuId(localStorage.getItem("userId"))
   }, [router])
 
   const carregarPlantoes = useCallback(() => {
     const token = localStorage.getItem("token")
-    if (!token || !visao) return
+    if (!token) return
 
     setLoading(true)
     setError("")
-    const params = new URLSearchParams({ inicio, fim, tipo: visao })
+    const params = new URLSearchParams({ inicio, fim })
     apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -161,43 +94,14 @@ export default function MeuPlantaoPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [inicio, fim, visao])
+  }, [inicio, fim])
 
   useEffect(() => {
     carregarPlantoes()
   }, [carregarPlantoes])
 
-  // Plantões de cada dia, em ordem de horário
-  const plantoesPorDia = useMemo(() => {
-    const mapa = new Map<string, Plantao[]>()
-    ;[...plantoes]
-      .sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
-      .forEach((p) => mapa.set(p.data, [...(mapa.get(p.data) ?? []), p]))
-    return mapa
-  }, [plantoes])
-
-  function doTurno(chave: string, turno: string) {
-    return (plantoesPorDia.get(chave) ?? []).filter((p) => turnoNaVisao(visao, p.hora_inicio) === turno)
-  }
-
-  // Um bloco de posições por turno: manhã e noite sempre, tarde só se a semana tiver plantão nela
-  const turnosVisiveis = TURNOS.filter(
-    (t) => t.valor !== "tarde" || plantoes.some((p) => turnoNaVisao(visao, p.hora_inicio) === "tarde")
-  )
-
-  function linhasDoTurno(turno: string) {
-    if (visao === "plantonista") return linhasPlantonista()
-    return linhasSocio(
-      plantoes.filter((p) => turnoNaVisao(visao, p.hora_inicio) === turno),
-      turno === "noite" ? POSICOES_NOTURNO : POSICOES
-    )
-  }
-
-  function mudarVisao(nova: Visao) {
-    if (nova === visao) return
-    setPlantoes([]) // evita mostrar os plantões da outra visão nas linhas novas enquanto carrega
-    setVisao(nova)
-  }
+  // Um plantão por dia
+  const plantaoPorDia = useMemo(() => new Map(plantoes.map((p) => [p.data, p])), [plantoes])
 
   const hoje = formatarDataLocal(new Date())
 
@@ -208,31 +112,7 @@ export default function MeuPlantaoPage() {
   return (
     <main className="max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4 sm:mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-gray-800">Meu plantão</h1>
-
-          {podeAlternar && (
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-              {(
-                [
-                  { valor: "socio", rotulo: "Sócio" },
-                  { valor: "plantonista", rotulo: "Plantonista" },
-                ] as const
-              ).map((opcao) => (
-                <button
-                  key={opcao.valor}
-                  type="button"
-                  onClick={() => mudarVisao(opcao.valor)}
-                  className={`text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                    visao === opcao.valor ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  {opcao.rotulo}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <h1 className="text-xl font-bold text-gray-800">Meu plantão</h1>
 
         <div className="flex items-center gap-1">
           <button
@@ -296,67 +176,50 @@ export default function MeuPlantaoPage() {
             </tr>
           </thead>
           <tbody>
-            {turnosVisiveis.map((turno) => (
+            {/* Como na escala do cliente: as vagas do diurno e do noturno nas linhas, um plantão por dia */}
+            {TURNOS.map((turno) => (
               <Fragment key={turno.valor}>
                 <tr className="bg-gray-50 border-y border-gray-200">
                   <td className="py-1.5 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
-                    {turno.rotulo}
+                    <span className="sm:hidden">{turno.rotulo.slice(0, 3)}</span>
+                    <span className="hidden sm:inline">{turno.rotulo}</span>
                   </td>
-                  {dias.map((dia) => {
-                    const chave = formatarDataLocal(dia)
-                    return (
-                      <td key={chave} className="py-1.5 text-center text-[11px] text-gray-500 leading-tight">
-                        {/* Um plantão por subcoluna, alinhada com as siglas abaixo */}
-                        <div className="flex">
-                          {doTurno(chave, turno.valor).map((p) => (
-                            <div key={p.id} className="flex-1 min-w-0">
-                              {p.hora_inicio.slice(0, 5)}
-                              <span className="hidden sm:block">{p.hora_fim.slice(0, 5)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                    )
-                  })}
+                  <td colSpan={7} className="py-1.5 px-2 text-[11px] text-gray-500">
+                    {formatarTurno(turno.valor)}
+                  </td>
                 </tr>
-                {linhasDoTurno(turno.valor).map((linha) => (
+                {vagasDoTurno(turno.valor).map((posicao) => (
                   <tr
-                    key={linha.chave}
-                    className={`border-b border-gray-100 ${linha.separador ? "border-t-2 border-t-gray-200" : ""}`}
+                    key={posicao}
+                    // Linha separando os coordenadores do resto do diurno
+                    className={`border-b border-gray-100 ${posicao === 3 ? "border-t-2 border-t-gray-200" : ""}`}
                   >
                     <td className="py-2 text-center text-xs font-semibold text-gray-400">
-                      <span className="sm:hidden">{linha.rotuloCurto}</span>
-                      <span className="hidden sm:inline">{linha.rotulo}</span>
+                      <span className="sm:hidden">{rotuloPosicaoCurto(posicao)}</span>
+                      <span className="hidden sm:inline">{rotuloPosicao(posicao)}</span>
                     </td>
                     {dias.map((dia) => {
                       const chave = formatarDataLocal(dia)
+                      const plantao = plantaoPorDia.get(chave)
+                      const usuario = plantao?.usuarios.find((u) => u.posicao === posicao)
                       return (
                         <td key={chave} className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
-                          <div className="flex items-center">
-                            {doTurno(chave, turno.valor).map((p) => {
-                              const usuario = linha.ocupante(p)
-                              return (
-                                <div key={p.id} className="flex-1 min-w-0 flex justify-center">
-                                  {usuario ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => setPlantaoSelecionado(p)}
-                                      className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
-                                        usuario.id === meuId || usuario.cobertura?.usuario.id === meuId
-                                          ? "ring-2 ring-offset-1 ring-amber-400"
-                                          : ""
-                                      }`}
-                                    >
-                                      {/* Mesmos indicadores do calendário; a posição já é a linha da tabela */}
-                                      <BadgeComMarcador usuario={usuario} size="responsivo" mostrarPosicao={false} />
-                                    </button>
-                                  ) : (
-                                    <span className="text-gray-300">—</span>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
+                          {usuario ? (
+                            <button
+                              type="button"
+                              onClick={() => setPlantaoSelecionado(plantao!)}
+                              className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
+                                usuario.id === meuId || usuario.cobertura?.usuario.id === meuId
+                                  ? "ring-2 ring-offset-1 ring-amber-400"
+                                  : ""
+                              }`}
+                            >
+                              {/* Mesmos indicadores do calendário; a vaga já é a linha da tabela */}
+                              <BadgeComMarcador usuario={usuario} size="responsivo" mostrarPosicao={false} />
+                            </button>
+                          ) : plantao ? (
+                            <span className="text-gray-300">—</span>
+                          ) : null}
                         </td>
                       )
                     })}

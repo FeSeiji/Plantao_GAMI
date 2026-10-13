@@ -2,17 +2,17 @@ const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
 const {
-  createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removeUsuario,
+  createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removerDaVaga,
   criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
   alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarTroca,
 } = require('../controllers/plantoes')
 
-// Criar e editar o plantão e mexer na equipe (adicionar, remover) é da gestão.
+// Criar e editar o plantão e preencher ou esvaziar vagas é da gestão.
 // Os médicos usam a troca, que pede aceite; sócios com a flag admin entram por 'admin'
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
-// Mudar posições: gestão e os próprios sócios (estes só na fila de sócio, conferido no controller).
-// No plantonista, mudar de vaga é também como se define o coordenador
-const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
+// Mudar médicos de vaga: gestão e os médicos escalados no plantão (conferido no controller).
+// Mudar de vaga é também como se define o coordenador
+const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'anestesita_plantonista', 'tecnico')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)
@@ -23,7 +23,7 @@ router.post('/', gestao, createPlantao)
 router.patch('/:id', gestao, updatePlantao)
 router.post('/:id/usuarios', gestao, addUsuarios)
 router.patch('/:id/posicao', mudarPosicao, alterarPosicao)
-router.delete('/:id/usuarios/:usuarioId', gestao, removeUsuario)
+router.delete('/:id/vagas/:posicao', gestao, removerDaVaga)
 router.get('/:id/trocas', listarTrocasDoPlantao)
 router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.get('/:id/mudancas-posicao', listarMudancasPosicaoDoPlantao)

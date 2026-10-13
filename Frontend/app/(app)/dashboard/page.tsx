@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
-import { POSICAO_INTERMEDIARIO, rotuloPosicao, rotuloPosicaoCurto } from "../../../components/posicoes"
+import { Turno, descreverPosicao, rotuloTurno } from "../../../components/posicoes"
 import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
@@ -22,13 +22,14 @@ const ROLE_LABELS: Record<string, string> = {
 
 type Pessoa = { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
 
+// Uma vaga (ou um turno, na visão da gestão) do plantão do dia: o horário é o do turno
 type PlantaoResumo = {
   id: string
   titulo: string
   data: string
+  turno: Turno
   hora_inicio: string
   hora_fim: string
-  tipo: "plantonista" | "socio"
   emAndamento: boolean
   meuPapel: {
     coordenador: boolean
@@ -43,7 +44,8 @@ type PlantaoResumo = {
 type Troca = {
   id: string
   solicitadoEm: string
-  plantao: { id: string; titulo: string; data: string; hora_inicio: string; hora_fim: string; tipo: string } | null
+  // O horário é o do turno da vaga trocada
+  plantao: { id: string; titulo: string; data: string; hora_inicio: string; hora_fim: string } | null
   usuarioSaida: Pessoa
   usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
@@ -123,12 +125,10 @@ function descreverPapel(p: PlantaoResumo) {
   const { cobrindo, coberto } = p.meuPapel
   if (cobrindo) return `Você cobre ${nomeDe(cobrindo.titular)} das ${formatarIntervalo(cobrindo.horaInicio, cobrindo.horaFim).replace("–", " às ")}`
   if (coberto) return `${nomeDe(coberto.por)} cobre ${formatarIntervalo(coberto.horaInicio, coberto.horaFim)} da sua vaga`
-  if (p.tipo === "socio") {
-    if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
-    return p.meuPapel.posicao != null ? `Posição ${rotuloPosicaoCurto(p.meuPapel.posicao)} na fila` : "Fila de sócios"
-  }
   if (p.meuPapel.coordenador) return "Você é o coordenador"
-  return p.meuPapel.posicao != null ? `${rotuloPosicao(p.meuPapel.posicao, "plantonista")} na equipe` : "Equipe de plantonistas"
+  if (p.meuPapel.posicao == null) return rotuloTurno(p.turno)
+  const vaga = descreverPosicao(p.meuPapel.posicao)
+  return `Você é o ${vaga === "intermediário" ? "intermediário do noturno" : vaga}`
 }
 
 function tempoDesde(iso: string) {
@@ -379,8 +379,7 @@ export default function DashboardPage() {
                 </p>
                 <p className="text-lg font-bold text-gray-800 group-hover:text-brand-700">{proximo.titulo}</p>
                 <p className="text-sm text-gray-500 capitalize mb-3">
-                  {formatarData(proximo.data)} · {formatarHorario(proximo)} ·{" "}
-                  {proximo.tipo === "socio" ? "Sócio" : "Plantonista"}
+                  {formatarData(proximo.data)} · {formatarHorario(proximo)} · {rotuloTurno(proximo.turno)}
                 </p>
                 <p className="text-sm font-medium text-gray-700 mb-2">{descreverPapel(proximo)}</p>
                 <Equipe usuarios={proximo.usuarios} />
@@ -457,7 +456,7 @@ export default function DashboardPage() {
             ) : (
               <ul className="space-y-1">
                 {resumo.agenda.map((p) => (
-                  <li key={p.id}>
+                  <li key={`${p.id}-${p.turno}`}>
                     <button
                       type="button"
                       onClick={() => abrirPlantao(p.id)}
@@ -476,7 +475,8 @@ export default function DashboardPage() {
                             : p.meuPapel.coberto
                               ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
                               : ""}
-                          {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${rotuloPosicaoCurto(p.meuPapel.posicao)}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
+                          {rotuloTurno(p.turno)}
+                          {p.meuPapel.posicao != null && ` · ${descreverPosicao(p.meuPapel.posicao).replace(/ do (diurno|noturno)$/, "")}`}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}
@@ -529,14 +529,14 @@ export default function DashboardPage() {
               ) : (
                 <ul className="space-y-3">
                   {gestao.emAndamento.map((p) => (
-                    <li key={p.id}>
+                    <li key={`${p.id}-${p.turno}`}>
                       <button type="button" onClick={() => abrirPlantao(p.id)} className="w-full text-left group">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                           <p className="text-sm font-medium text-gray-800 truncate group-hover:text-brand-700">{p.titulo}</p>
                         </div>
                         <p className="text-xs text-gray-500 mb-2">
-                          {formatarHorario(p)} · {p.tipo === "socio" ? "Sócio" : "Plantonista"}
+                          {formatarHorario(p)} · {rotuloTurno(p.turno)}
                         </p>
                         <Equipe usuarios={p.usuarios} />
                       </button>
@@ -553,7 +553,7 @@ export default function DashboardPage() {
               ) : (
                 <ul className="space-y-1">
                   {gestao.alertas.map(({ plantao: p, problema }) => (
-                    <li key={p.id}>
+                    <li key={`${p.id}-${p.turno}`}>
                       <button
                         type="button"
                         onClick={() => abrirPlantao(p.id)}
@@ -563,7 +563,7 @@ export default function DashboardPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                           <p className="text-xs text-gray-500 capitalize">
-                            {formatarData(p.data)} · {formatarHorario(p)}
+                            {formatarData(p.data)} · {rotuloTurno(p.turno)} {formatarHorario(p)}
                           </p>
                           <p className="text-xs font-semibold text-red-700">{problema}</p>
                         </div>
