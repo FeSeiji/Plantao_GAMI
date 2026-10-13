@@ -4,6 +4,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { pontosDaPosicao, ordemDaPosicao } = require('../services/posicoes')
 const { buscarCoberturas, repartirPlantao, duracaoDoPlantao, duracaoDaCobertura } = require('../services/coberturas')
+const { respondenteDaTroca } = require('../services/trocas')
 
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
@@ -45,18 +46,18 @@ exports.resumo = async (req, res) => {
       .order('data', { ascending: true })
       .order('hora_inicio', { ascending: true })
       .limit(10),
+    // Em que eu entro ou saio; abaixo ficam só as que esperam a minha resposta
     supabase
       .from('plantao_trocas')
       .select('*, plantoes(id, titulo, data, hora_inicio, hora_fim, tipo)')
-      .eq('usuario_entrada', eu)
+      .or(`usuario_entrada.eq.${eu},usuario_saida.eq.${eu}`)
       .eq('status', 'pendente')
       .order('solicitado_em', { ascending: false }),
-    // As que eu mesmo vou aceitar já aparecem em trocasParaMim
+    // Quem pediu nunca é quem responde: todas as que eu pedi esperam outra pessoa
     supabase
       .from('plantao_trocas')
       .select('*, plantoes(id, titulo, data, hora_inicio, hora_fim, tipo)')
       .eq('solicitado_por', eu)
-      .neq('usuario_entrada', eu)
       .eq('status', 'pendente')
       .order('solicitado_em', { ascending: false }),
     // Trocas por horas em que eu cubro parte da vaga de alguém
@@ -74,6 +75,7 @@ exports.resumo = async (req, res) => {
 
   const erro = [janela, proximos, trocasParaMim, trocasSolicitadas, minhasCoberturas].find(r => r.error)
   if (erro) return res.status(500).json({ error: erro.error.message })
+  trocasParaMim.data = trocasParaMim.data.filter(t => respondenteDaTroca(t) === eu)
 
   // Plantão que eu cubro em parte vira uma linha como as outras, com "eu" = a vaga do titular
   const comoCobertura = minhasCoberturas.data
@@ -127,7 +129,7 @@ exports.resumo = async (req, res) => {
   try {
     const perfis = await buscarPerfis([
       ...[proximoPlantao, ...agenda].filter(Boolean).flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
-      ...trocasParaMim.data.flatMap(t => [t.usuario_saida, t.solicitado_por]),
+      ...trocasParaMim.data.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por]),
       ...trocasSolicitadas.data.flatMap(t => [t.usuario_saida, t.usuario_entrada]),
       ...comoCobertura.map(p => p.cobertura.titular),
       ...coberturasDasMinhas.map(c => c.usuario_entrada),
@@ -359,6 +361,7 @@ function formatTroca(row, perfis) {
     usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
     usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
     solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+    respondenteId: respondenteDaTroca(row),
     horaInicio: row.hora_inicio ?? null,
     horaFim: row.hora_fim ?? null,
   }

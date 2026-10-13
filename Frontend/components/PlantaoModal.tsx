@@ -40,6 +40,8 @@ type TrocaPendente = {
   solicitadoEm: string;
   usuarioEntrada: Pessoa;
   solicitadoPor: Pessoa;
+  // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
+  respondenteId?: string;
   // Preenchidos na troca por horas
   horaInicio?: string | null;
   horaFim?: string | null;
@@ -187,6 +189,9 @@ export default function PlantaoModal({
       : null;
   // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
   const estouEscalado = plantao.usuarios.some((u) => u.id === meuId);
+  // Médico fora da gestão troca a própria vaga com quem quiser; na vaga de outro, só pede a vaga para si
+  const pedindoVagaParaMim =
+    trocandoId != null && !podeGerirEquipe && trocandoId !== meuId;
 
   useEffect(() => {
     setMeuId(localStorage.getItem("userId"));
@@ -394,6 +399,7 @@ export default function PlantaoModal({
                   solicitadoEm: result.solicitadoEm,
                   usuarioEntrada: result.usuarioEntrada,
                   solicitadoPor: result.solicitadoPor,
+                  respondenteId: result.respondenteId,
                   horaInicio: result.horaInicio,
                   horaFim: result.horaFim,
                 },
@@ -751,14 +757,23 @@ export default function PlantaoModal({
 
   function celulaMedico(u: Usuario, editavel: boolean): CelulaGrade {
     const pendente = u.trocaPendente;
-    const souConvidado =
-      pendente != null && pendente.usuarioEntrada.id === meuId;
+    // O titular responde quando o próprio substituto pediu a vaga; nos demais casos, o substituto
+    const respondente =
+      pendente &&
+      (pendente.respondenteId === u.id ? (u as Pessoa) : pendente.usuarioEntrada);
+    const souRespondente = respondente != null && respondente.id === meuId;
 
-    // Trocar fica fora do modo edição: qualquer um pede a troca, e ela só vale com o aceite
+    // Trocar fica fora do modo edição e só vale com o aceite. A gestão troca qualquer vaga;
+    // o médico troca a própria ou pede a de um colega para si (aí o colega precisa aceitar)
     const acoes: AcaoMenu[] = [];
+    const ehMinhaVaga = u.id === meuId;
+    const podePedirVaga = podeGerirEquipe || ehMinhaVaga || !estouEscalado;
     // Com troca por horas valendo, a vaga não aceita outra troca até a gestão desfazê-la
-    if (!pendente && !u.cobertura)
-      acoes.push({ rotulo: "Trocar", onClick: () => abrirTroca(u.id) });
+    if (!pendente && !u.cobertura && podePedirVaga)
+      acoes.push({
+        rotulo: podeGerirEquipe || ehMinhaVaga ? "Trocar" : "Pedir a vaga",
+        onClick: () => abrirTroca(u.id),
+      });
     if (editavel && podeGerirEquipe && u.cobertura) {
       const cobertura = u.cobertura;
       acoes.push({
@@ -847,14 +862,16 @@ export default function PlantaoModal({
                 {pendente.horaInicio && pendente.horaFim
                   ? `${formatarIntervalo(pendente.horaInicio, pendente.horaFim)}: `
                   : ""}
-                {souConvidado
-                  ? "aguardando seu aceite"
-                  : `aguardando aceite de ${nomeDe(pendente.usuarioEntrada)}`}
+                {souRespondente
+                  ? pendente.respondenteId === u.id
+                    ? `${nomeDe(pendente.usuarioEntrada)} pediu sua vaga: aguardando seu aceite`
+                    : "aguardando seu aceite"
+                  : `aguardando aceite de ${nomeDe(respondente!)}`}
               </span>
             )}
           </>
         ) : undefined,
-      extra: souConvidado && pendente && (
+      extra: souRespondente && pendente && (
         <div className="flex gap-3 text-xs">
           <button
             type="button"
@@ -935,7 +952,8 @@ export default function PlantaoModal({
           htmlFor="buscaTroca"
           className="text-xs font-semibold text-brand-700"
         >
-          Substituir {nomeDe(usuarioTrocando)}
+          {pedindoVagaParaMim ? "Pedir a vaga de" : "Substituir"}{" "}
+          {nomeDe(usuarioTrocando)}
           {usuarioTrocando.coordenador ? " (coordenador)" : ""}
         </label>
         <button
@@ -957,6 +975,37 @@ export default function PlantaoModal({
           setHoraParcial(corte);
         }}
       />
+      {pedindoVagaParaMim ? (
+        <button
+          type="button"
+          onClick={() =>
+            setConfirmacao({
+              titulo: "Pedir a vaga?",
+              mensagem: (
+                <p>
+                  Pedir a vaga de{" "}
+                  <span className="font-semibold">
+                    {nomeDe(usuarioTrocando)}
+                  </span>{" "}
+                  para você
+                  {intervaloTroca
+                    ? ` só das ${formatarIntervalo(intervaloTroca.horaInicio, intervaloTroca.horaFim).replace("–", " às ")}`
+                    : ""}
+                  . A troca só vale depois que {nomeDe(usuarioTrocando)}{" "}
+                  aceitar.
+                </p>
+              ),
+              rotuloConfirmar: "Pedir a vaga",
+              acao: () =>
+                solicitarTroca(usuarioTrocando.id, { id: meuId ?? "" }, intervaloTroca),
+            })
+          }
+          className="w-full bg-brand-700 hover:bg-brand-800 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
+        >
+          Pedir esta vaga para mim
+        </button>
+      ) : (
+      <>
       <input
         id="buscaTroca"
         autoFocus
@@ -996,7 +1045,8 @@ export default function PlantaoModal({
                           : usuarioTrocando.coordenador
                             ? " (inclusive como coordenador)"
                             : ""}
-                        . A troca só vale depois que {nomeDe(r)} aceitar.
+                        . A troca só vale depois que{" "}
+                        {nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.
                       </p>
                     ),
                     rotuloConfirmar: "Solicitar troca",
@@ -1021,6 +1071,8 @@ export default function PlantaoModal({
             ))
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

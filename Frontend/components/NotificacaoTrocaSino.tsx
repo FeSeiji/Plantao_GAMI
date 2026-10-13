@@ -15,7 +15,10 @@ type TrocaPendente = {
   id: string
   solicitadoEm: string
   usuarioSaida: Pessoa
+  usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
+  // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
+  respondenteId: string
   // Preenchidos na troca por horas
   horaInicio?: string | null
   horaFim?: string | null
@@ -243,8 +246,17 @@ export default function NotificacaoTrocaSino() {
               {pendentes.map((t) => (
                 <li key={t.id} className="px-4 py-3">
                   <p className="text-sm text-gray-700">
-                    <span className="font-semibold">{t.solicitadoPor.nome ?? t.solicitadoPor.email}</span> quer colocar
-                    você no lugar de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span>
+                    {t.respondenteId === t.usuarioSaida.id ? (
+                      <>
+                        <span className="font-semibold">{t.usuarioEntrada.nome ?? t.usuarioEntrada.email}</span> pediu a
+                        sua vaga
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold">{t.solicitadoPor.nome ?? t.solicitadoPor.email}</span> quer colocar
+                        você no lugar de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span>
+                      </>
+                    )}
                     {t.horaInicio && t.horaFim && (
                       <> só das <span className="font-semibold">{formatarIntervalo(t.horaInicio, t.horaFim).replace("–", " às ")}</span></>
                     )}{" "}

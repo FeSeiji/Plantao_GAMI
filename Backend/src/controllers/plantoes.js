@@ -9,6 +9,7 @@ const { ehNoturno, posicoesDoPlantao, rotuloPosicao, ordemDaPosicao } = require(
 const {
   duracaoDaCobertura, dataDaCobertura, validarIntervalo, buscarCoberturas,
 } = require('../services/coberturas')
+const { respondenteDaTroca } = require('../services/trocas')
 
 const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
@@ -509,6 +510,10 @@ exports.criarTroca = async (req, res) => {
   if (usuario_saida === usuario_entrada) {
     return res.status(400).json({ error: 'usuario_saida e usuario_entrada devem ser diferentes' })
   }
+  // Médico fora da gestão pede a troca da própria vaga ou a vaga de alguém para si
+  if (!ehGestao(req.user) && req.user.id !== usuario_saida && req.user.id !== usuario_entrada) {
+    return res.status(403).json({ error: 'Você só pode pedir a troca da sua vaga ou pedir a vaga de alguém para você' })
+  }
 
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
@@ -638,17 +643,19 @@ exports.listarTrocasDoPlantao = async (req, res) => {
 }
 
 exports.listarTrocasPendentes = async (req, res) => {
-  const { data, error } = await supabase
+  const { data: envolvido, error } = await supabase
     .from('plantao_trocas')
     .select('*, plantoes(id, titulo, data, hora_inicio, hora_fim)')
-    .eq('usuario_entrada', req.user.id)
+    .or(`usuario_entrada.eq.${req.user.id},usuario_saida.eq.${req.user.id}`)
     .eq('status', 'pendente')
     .order('solicitado_em', { ascending: false })
 
   if (error) return res.status(500).json({ error: error.message })
 
+  const data = envolvido.filter(t => respondenteDaTroca(t) === req.user.id)
+
   try {
-    const ids = data.flatMap(t => [t.usuario_saida, t.solicitado_por])
+    const ids = data.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por])
     const perfis = await buscarPerfis(ids)
     return res.json(data.map(({ plantoes: plantao, ...t }) => ({ ...formatTroca(t, perfis), plantao })))
   } catch (err) {
@@ -665,9 +672,11 @@ exports.responderTroca = (aceitar) => async (req, res) => {
 
   if (trocaError) return res.status(500).json({ error: trocaError.message })
   if (!troca) return res.status(404).json({ error: 'Solicitação não encontrada' })
-  if (troca.usuario_entrada !== req.user.id) {
-    return res.status(403).json({ error: 'Só o médico convidado pode responder essa solicitação' })
+  if (respondenteDaTroca(troca) !== req.user.id) {
+    return res.status(403).json({ error: 'Essa solicitação não está esperando a sua resposta' })
   }
+  // Quem responde pode ser quem entra ou, quando ele mesmo pediu a vaga, o titular
+  const quemEntra = troca.usuario_entrada === req.user.id ? 'Você' : 'O médico que entra'
   if (troca.status !== 'pendente') {
     return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
   }
@@ -686,7 +695,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
     }
 
     if (slot?.plantoes?.data && (await usuariosAfastados([troca.usuario_entrada], slot.plantoes.data)).size > 0) {
-      return res.status(409).json({ error: 'Você está de férias ou em congresso no dia desse plantão' })
+      return res.status(409).json({ error: `${quemEntra} está de férias ou em congresso no dia desse plantão` })
     }
 
     // A troca pode ter ficado dias pendente: confere de novo se o convidado continua livre nesse horário
@@ -698,7 +707,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
         : [p.data, p.hora_inicio, p.hora_fim]
       const ocupados = await usuariosComConflito([troca.usuario_entrada], ...janela, troca.plantao_id)
       if (ocupados.size > 0) {
-        return res.status(409).json({ error: 'Você já está escalado em outro plantão nesse horário' })
+        return res.status(409).json({ error: `${quemEntra} já está escalado em outro plantão nesse horário` })
       }
     }
 
@@ -737,7 +746,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
         .update({ status: 'pendente', respondido_em: null })
         .eq('id', req.params.trocaId)
 
-      if (swapError?.code === '23505') return res.status(409).json({ error: 'Você já está nesse plantão' })
+      if (swapError?.code === '23505') return res.status(409).json({ error: `${quemEntra} já está nesse plantão` })
       if (swapError) return res.status(400).json({ error: swapError.message })
       return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
     }
@@ -982,6 +991,7 @@ async function buscarTrocasPendentesPorSlot(plantaoIds) {
       solicitadoEm: t.solicitado_em,
       usuarioEntrada: perfis.get(t.usuario_entrada) ?? { id: t.usuario_entrada },
       solicitadoPor: perfis.get(t.solicitado_por) ?? { id: t.solicitado_por },
+      respondenteId: respondenteDaTroca(t),
       horaInicio: t.hora_inicio,
       horaFim: t.hora_fim,
     },
@@ -1014,6 +1024,7 @@ function formatTroca(row, perfis) {
     usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
     usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
     solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+    respondenteId: respondenteDaTroca(row),
     horaInicio: row.hora_inicio ?? null,
     horaFim: row.hora_fim ?? null,
   }

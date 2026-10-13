@@ -47,6 +47,8 @@ type Troca = {
   usuarioSaida: Pessoa
   usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
+  // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
+  respondenteId: string
   horaInicio?: string | null
   horaFim?: string | null
 }
@@ -177,7 +179,11 @@ function DescricaoTroca({ troca, perspectiva }: { troca: Troca; perspectiva: "pa
   return (
     <div className="min-w-0">
       <p className="text-sm text-gray-800">
-        {perspectiva === "paraMim" ? (
+        {perspectiva === "paraMim" && troca.respondenteId === troca.usuarioSaida.id ? (
+          <>
+            <span className="font-semibold">{nomeDe(troca.usuarioEntrada)}</span> pediu a sua vaga
+          </>
+        ) : perspectiva === "paraMim" ? (
           <>
             Substituir <span className="font-semibold">{nomeDe(troca.usuarioSaida)}</span>
           </>
