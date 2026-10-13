@@ -16,6 +16,7 @@ import {
 import {
   POSICOES,
   POSICOES_NOTURNO,
+  POSICOES_PLANTONISTA,
   POSICAO_INTERMEDIARIO,
   ordemDaPosicao,
   posicoesDoPlantao,
@@ -42,11 +43,11 @@ type Linha = {
 }
 
 // Uma linha por vaga que existe nos plantões do turno: o diurno tem 1º a 7º + intermediário,
-// o noturno (19h em diante) tem 1º, 1º, 2º, 3º, 4º. Sem plantão no turno, vale a fila padrão dele
-// (noite → noturna, manhã/tarde → diurna).
+// o noturno (19h em diante) tem 1º, 1º, 2º, 3º + intermediário. Sem plantão no turno, vale a fila
+// padrão dele (noite → noturna, manhã/tarde → diurna).
 function linhasSocio(plantoes: Plantao[], padrao: number[]): Linha[] {
   const posicoes = plantoes.length
-    ? [...new Set(plantoes.flatMap((p) => posicoesDoPlantao(p.hora_inicio)))].sort(
+    ? [...new Set(plantoes.flatMap((p) => posicoesDoPlantao("socio", p.hora_inicio)))].sort(
         (a, b) => ordemDaPosicao(a) - ordemDaPosicao(b)
       )
     : padrao
@@ -59,29 +60,19 @@ function linhasSocio(plantoes: Plantao[], padrao: number[]): Linha[] {
   }))
 }
 
-const membrosDaEquipe = (p: Plantao) => p.usuarios.filter((u) => !u.coordenador)
-
-// Coordenador no topo e uma linha por membro, até o tamanho da maior equipe da semana
-function linhasPlantonista(plantoes: Plantao[]): Linha[] {
-  const maiorEquipe = Math.max(1, ...plantoes.map((p) => membrosDaEquipe(p).length))
-  return [
-    {
-      chave: "coordenador",
-      rotulo: "Coordenador",
-      rotuloCurto: "C",
-      ocupante: (p) => p.usuarios.find((u) => u.coordenador),
-    },
-    ...Array.from({ length: maiorEquipe }, (_, i) => ({
-      chave: `membro-${i}`,
-      rotulo: `Membro ${i + 1}`,
-      rotuloCurto: String(i + 1),
-      separador: i === 0,
-      ocupante: (p: Plantao) => membrosDaEquipe(p)[i],
-    })),
-  ]
+// As vagas fixas da equipe: Coordenador, Coordenador e 2º a 7º
+function linhasPlantonista(): Linha[] {
+  return POSICOES_PLANTONISTA.map((posicao) => ({
+    chave: `posicao-${posicao}`,
+    rotulo: rotuloPosicao(posicao, "plantonista"),
+    rotuloCurto: rotuloPosicaoCurto(posicao, "plantonista"),
+    // Linha separando os coordenadores do resto da equipe
+    separador: posicao === 2,
+    ocupante: (p) => p.usuarios.find((u) => u.posicao === posicao),
+  }))
 }
 
-// Na visão de sócio, o bloco da noite é o plantão noturno (19h em diante, fila 1º, 1º, 2º, 3º, 4º);
+// Na visão de sócio, o bloco da noite é o plantão noturno (19h em diante, fila 1º, 1º, 2º, 3º + intermediário);
 // um plantão de sócio às 18h tem fila diurna e fica na tarde. Na de plantonista vale o turno do calendário.
 function turnoNaVisao(visao: Visao | null, horaInicio: string): Turno {
   if (visao === "plantonista") return turnoDe(horaInicio)
@@ -194,9 +185,8 @@ export default function MeuPlantaoPage() {
     (t) => t.valor !== "tarde" || plantoes.some((p) => turnoNaVisao(visao, p.hora_inicio) === "tarde")
   )
 
-  const linhasPlantonistaSemana = useMemo(() => linhasPlantonista(plantoes), [plantoes])
   function linhasDoTurno(turno: string) {
-    if (visao === "plantonista") return linhasPlantonistaSemana
+    if (visao === "plantonista") return linhasPlantonista()
     return linhasSocio(
       plantoes.filter((p) => turnoNaVisao(visao, p.hora_inicio) === turno),
       turno === "noite" ? POSICOES_NOTURNO : POSICOES

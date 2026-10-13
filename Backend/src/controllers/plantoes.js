@@ -5,7 +5,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
 const { ehGestao } = require('../middleware/auth')
-const { ehNoturno, posicoesDoPlantao, rotuloPosicao, ordemDaPosicao } = require('../services/posicoes')
+const {
+  ehNoturno, posicoesDoPlantao, ehPosicaoDeCoordenador, rotuloPosicao, ordemDaPosicao,
+} = require('../services/posicoes')
 const {
   duracaoDaCobertura, dataDaCobertura, validarIntervalo, buscarCoberturas,
 } = require('../services/coberturas')
@@ -15,7 +17,7 @@ const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 
 exports.createPlantao = async (req, res) => {
-  const { titulo, descricao, data, hora_inicio, hora_fim, tipo, usuarios, coordenador_id, fila } = req.body
+  const { titulo, descricao, data, hora_inicio, hora_fim, tipo, fila } = req.body
 
   if (!titulo || !data || !hora_inicio || !hora_fim) {
     return res.status(400).json({ error: 'titulo, data, hora_inicio e hora_fim são obrigatórios' })
@@ -34,9 +36,7 @@ exports.createPlantao = async (req, res) => {
 
   let membros
   try {
-    membros = tipo === 'plantonista'
-      ? await validarEquipePlantonista(usuarios, coordenador_id, { janela })
-      : await validarFilaSocio(fila, { janela })
+    membros = await validarFila(tipo, fila, { janela, exigirCoordenador: tipo === 'plantonista' })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -185,13 +185,13 @@ exports.updatePlantao = async (req, res) => {
       }
     }
 
-    // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
-    // que não existe no novo tipo precisa sair antes
+    // No sócio, passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
+    // que não existe no novo tipo precisa sair antes. As vagas do plantonista não dependem do horário.
     if (atual.tipo === 'socio' && mudouInicio) {
-      const permitidas = posicoesDoPlantao(hora_inicio)
+      const permitidas = posicoesDoPlantao(atual.tipo, hora_inicio)
       const foraDaFila = atual.plantao_usuarios.filter(u => u.posicao != null && !permitidas.includes(u.posicao))
       if (foraDaFila.length > 0) {
-        const vagas = [...new Set(foraDaFila.map(u => rotuloPosicao(u.posicao)))].join(', ')
+        const vagas = [...new Set(foraDaFila.map(u => rotuloPosicao(u.posicao, atual.tipo)))].join(', ')
         const novoTipo = ehNoturno(hora_inicio) ? 'noturno' : 'diurno'
         return res.status(400).json({
           error: `Com esse horário o plantão vira ${novoTipo}, e as vagas ${vagas} deixam de existir. Remova quem está nelas antes de mudar o horário.`
@@ -246,8 +246,20 @@ exports.removeUsuario = async (req, res) => {
   if (membroError) return res.status(500).json({ error: membroError.message })
   if (!membro) return res.status(404).json({ error: 'Médico não está neste plantão' })
 
+  // O plantonista tem duas vagas de coordenador: só sai quem não é o único coordenador
   if (membro.is_coordenador) {
-    return res.status(400).json({ error: 'Defina outro coordenador antes de remover o atual' })
+    const { count, error: coordError } = await supabase
+      .from('plantao_usuarios')
+      .select('usuario_id', { count: 'exact', head: true })
+      .eq('plantao_id', req.params.id)
+      .eq('is_coordenador', true)
+
+    if (coordError) return res.status(500).json({ error: coordError.message })
+    if (count < 2) {
+      return res.status(400).json({
+        error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de remover este.'
+      })
+    }
   }
 
   const { error } = await supabase
@@ -308,8 +320,8 @@ exports.listarRemocoesDoPlantao = async (req, res) => {
   }
 }
 
-// Move um sócio para outra posição da fila. Se a posição estiver ocupada, os dois trocam de lugar.
-// Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
+// Move um médico para outra posição da fila (sócio) ou da equipe (plantonista). Se a posição estiver
+// ocupada, os dois trocam de lugar. Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
 exports.alterarPosicao = async (req, res) => {
   const { usuario_id, posicao } = req.body
 
@@ -325,16 +337,19 @@ exports.alterarPosicao = async (req, res) => {
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
-  if (plantao.tipo !== 'socio') {
-    return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
-  }
-  if (!posicoesDoPlantao(plantao.hora_inicio).includes(posicao)) {
-    return res.status(400).json({ error: 'Essa posição não existe na fila desse plantão' })
+  if (!posicoesDoPlantao(plantao.tipo, plantao.hora_inicio).includes(posicao)) {
+    return res.status(400).json({ error: 'Essa posição não existe nesse plantão' })
   }
 
-  // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
-  if (!ehGestao(req.user) && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
-    return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
+  // A equipe de plantonistas é organizada pela gestão. Sócio fora da gestão só reordena a fila
+  // dos plantões em que está escalado
+  if (!ehGestao(req.user)) {
+    if (plantao.tipo !== 'socio') {
+      return res.status(403).json({ error: 'Só a gestão muda as posições da equipe de plantonistas' })
+    }
+    if (!plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
+      return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
+    }
   }
 
   const membro = plantao.plantao_usuarios.find(u => u.usuario_id === usuario_id)
@@ -343,9 +358,30 @@ exports.alterarPosicao = async (req, res) => {
 
   const ocupante = plantao.plantao_usuarios.find(u => u.posicao === posicao)
 
+  if (plantao.tipo === 'plantonista') {
+    // Quem é só sócio continua numa vaga de coordenador, e o plantão continua com algum coordenador
+    const naVagaDeMembro = [
+      !ehPosicaoDeCoordenador(plantao.tipo, posicao) && usuario_id,
+      ocupante && !ehPosicaoDeCoordenador(plantao.tipo, membro.posicao) && ocupante.usuario_id,
+    ].filter(Boolean)
+    if ((await usuariosSoSocio(naVagaDeMembro)).length > 0) {
+      return res.status(400).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
+    }
+
+    const posicoesDepois = plantao.plantao_usuarios.map(u =>
+      u.usuario_id === usuario_id ? posicao : u === ocupante ? membro.posicao : u.posicao
+    )
+    if (!posicoesDepois.some(p => ehPosicaoDeCoordenador(plantao.tipo, p))) {
+      return res.status(400).json({
+        error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de mover este.'
+      })
+    }
+  }
+
+  // No plantonista, a vaga define quem é coordenador
   const moverPara = (id, novaPosicao) => supabase
     .from('plantao_usuarios')
-    .update({ posicao: novaPosicao })
+    .update({ posicao: novaPosicao, is_coordenador: ehPosicaoDeCoordenador(plantao.tipo, novaPosicao) })
     .eq('plantao_id', plantao.id)
     .eq('usuario_id', id)
 
@@ -428,9 +464,7 @@ exports.addUsuarios = async (req, res) => {
 
   let membros
   try {
-    membros = plantao.tipo === 'plantonista'
-      ? (await validarEquipePlantonista(req.body.usuarios, null, { exigirCoordenador: false, janela }))
-      : await validarFilaSocio(req.body.fila, { janela })
+    membros = await validarFila(plantao.tipo, req.body.fila, { janela })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -439,7 +473,7 @@ exports.addUsuarios = async (req, res) => {
     .from('plantao_usuarios')
     .upsert(
       membros.map(m => ({ plantao_id: req.params.id, ...m })),
-      { onConflict: 'plantao_id,usuario_id', ignoreDuplicates: plantao.tipo === 'plantonista' }
+      { onConflict: 'plantao_id,usuario_id' }
     )
 
   if (error) {
@@ -448,78 +482,6 @@ exports.addUsuarios = async (req, res) => {
   }
 
   return res.status(201).json({ message: 'Médicos adicionados ao plantão' })
-}
-
-exports.definirCoordenador = async (req, res) => {
-  const { usuario_id } = req.body
-  if (!usuario_id) return res.status(400).json({ error: 'usuario_id é obrigatório' })
-
-  const { data: plantao, error: plantaoError } = await supabase
-    .from('plantoes')
-    .select('id, tipo')
-    .eq('id', req.params.id)
-    .maybeSingle()
-
-  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
-  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
-  if (plantao.tipo !== 'plantonista') {
-    return res.status(400).json({ error: 'Somente plantões de plantonista têm coordenador' })
-  }
-
-  const { data: membro, error: membroError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_id)
-    .maybeSingle()
-
-  if (membroError) return res.status(500).json({ error: membroError.message })
-  if (!membro) return res.status(400).json({ error: 'O médico precisa estar na equipe do plantão para ser coordenador' })
-
-  const { data: atual, error: atualError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .eq('plantao_id', req.params.id)
-    .eq('is_coordenador', true)
-    .maybeSingle()
-
-  if (atualError) return res.status(500).json({ error: atualError.message })
-  if (atual && atual.usuario_id !== usuario_id && (await usuariosSoSocio([atual.usuario_id])).length > 0) {
-    return res.status(400).json({
-      error: 'O coordenador atual é sócio e não pode continuar na equipe como membro. Use "Trocar" para substituí-lo.'
-    })
-  }
-
-  const { error: limparError } = await supabase
-    .from('plantao_usuarios')
-    .update({ is_coordenador: false })
-    .eq('plantao_id', req.params.id)
-
-  if (limparError) return res.status(400).json({ error: limparError.message })
-
-  const { error: definirError } = await supabase
-    .from('plantao_usuarios')
-    .update({ is_coordenador: true })
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_id)
-
-  if (definirError) {
-    // Devolve o coordenador anterior para o plantão não ficar sem nenhum
-    if (atual) {
-      await supabase
-        .from('plantao_usuarios')
-        .update({ is_coordenador: true })
-        .eq('plantao_id', req.params.id)
-        .eq('usuario_id', atual.usuario_id)
-    }
-    // Índice único: outra pessoa definiu um coordenador ao mesmo tempo
-    if (definirError.code === '23505') {
-      return res.status(409).json({ error: 'O coordenador acabou de ser alterado por outra pessoa. Recarregue o plantão.' })
-    }
-    return res.status(400).json({ error: definirError.message })
-  }
-
-  return res.json({ message: 'Coordenador definido' })
 }
 
 // Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo)
@@ -810,56 +772,23 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   }
 }
 
-async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoordenador = true, janela } = {}) {
-  if (!Array.isArray(usuarios) || usuarios.length === 0) {
-    throw new Error('usuarios deve ser um array não vazio de ids')
-  }
-
-  if (exigirCoordenador && (!coordenadorId || !usuarios.includes(coordenadorId))) {
-    throw new Error('coordenador_id é obrigatório e deve estar entre os usuarios')
-  }
-
-  const invalidos = await usuariosSemRoleMedico(usuarios)
-  if (invalidos.length > 0) {
-    throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
-  }
-
-  const socios = await usuariosSoSocio(usuarios.filter(id => id !== coordenadorId))
-  if (socios.length > 0) {
-    throw new Error('Sócios só podem entrar em plantão de plantonista como coordenador')
-  }
-
-  if (janela) {
-    const ocupados = await usuariosComConflito(usuarios, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
-    if (ocupados.size > 0) {
-      throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
-    }
-    await validarSemAfastamento(usuarios, janela.data)
-  }
-
-  return usuarios.map(usuario_id => ({
-    usuario_id,
-    is_coordenador: usuario_id === coordenadorId,
-    posicao: null,
-  }))
-}
-
-async function validarFilaSocio(fila, { janela } = {}) {
+// Fila do sócio ou equipe do plantonista: cada médico numa vaga do plantão (posicoesDoPlantao)
+async function validarFila(tipo, fila, { janela, exigirCoordenador = false } = {}) {
   if (!Array.isArray(fila) || fila.length === 0) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
   }
 
-  // Diurno: 1 a 7 e 8 = intermediário. Noturno (19h em diante): 1, 9 (segundo 1º), 2, 3 e 4
-  const permitidas = posicoesDoPlantao(janela.horaInicio)
+  const permitidas = posicoesDoPlantao(tipo, janela.horaInicio)
   const posicaoInvalida = fila.some(
     f => !f?.usuario_id || !Number.isInteger(f.posicao) || !permitidas.includes(f.posicao)
   )
   if (posicaoInvalida) {
-    throw new Error(
-      ehNoturno(janela.horaInicio)
-        ? 'cada item da fila precisa de usuario_id e posicao (plantão noturno: 1, 9 = segundo 1º, 2, 3 ou 4)'
-        : 'cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)'
-    )
+    const vagas = tipo === 'plantonista'
+      ? 'plantão de plantonista: 1 e 9 = coordenadores, 2 a 7'
+      : ehNoturno(janela.horaInicio)
+        ? 'plantão noturno: 1, 9 = segundo 1º, 2, 3 ou 8 = intermediário'
+        : 'número inteiro entre 1 e 8; 8 = intermediário'
+    throw new Error(`cada item da fila precisa de usuario_id e posicao (${vagas})`)
   }
 
   const posicoes = fila.map(f => f.posicao)
@@ -872,9 +801,20 @@ async function validarFilaSocio(fila, { janela } = {}) {
     throw new Error('um médico não pode ocupar duas posições na mesma fila')
   }
 
+  if (exigirCoordenador && !fila.some(f => ehPosicaoDeCoordenador(tipo, f.posicao))) {
+    throw new Error('O plantão de plantonista precisa de um coordenador')
+  }
+
   const invalidos = await usuariosSemRoleMedico(usuarioIds)
   if (invalidos.length > 0) {
     throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+  }
+
+  if (tipo === 'plantonista') {
+    const membros = fila.filter(f => !ehPosicaoDeCoordenador(tipo, f.posicao)).map(f => f.usuario_id)
+    if ((await usuariosSoSocio(membros)).length > 0) {
+      throw new Error('Sócios só podem entrar em plantão de plantonista como coordenador')
+    }
   }
 
   if (janela) {
@@ -885,7 +825,11 @@ async function validarFilaSocio(fila, { janela } = {}) {
     await validarSemAfastamento(usuarioIds, janela.data)
   }
 
-  return fila.map(({ usuario_id, posicao }) => ({ usuario_id, is_coordenador: false, posicao }))
+  return fila.map(({ usuario_id, posicao }) => ({
+    usuario_id,
+    is_coordenador: ehPosicaoDeCoordenador(tipo, posicao),
+    posicao,
+  }))
 }
 
 async function usuariosSemRoleMedico(usuarioIds) {
@@ -1091,8 +1035,8 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
       cobertura: coberturas.get(`${plantao.id}:${u.usuario_id}`) ?? null,
     }))
-    // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
-    // para o "Membro N" não mudar de lugar entre uma carga e outra
+    // Pela posição na fila/equipe. Quem ficou sem posição (plantonista de antes das vagas fixas):
+    // coordenador primeiro e depois pelo nome, para não mudar de lugar entre uma carga e outra
     .sort((a, b) =>
       ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao) ||
       Number(b.coordenador) - Number(a.coordenador) ||

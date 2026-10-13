@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
-import { POSICAO_INTERMEDIARIO, rotuloPosicaoCurto } from "../../../components/posicoes"
+import { POSICAO_INTERMEDIARIO, rotuloPosicao, rotuloPosicaoCurto } from "../../../components/posicoes"
 import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
@@ -127,7 +127,8 @@ function descreverPapel(p: PlantaoResumo) {
     if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
     return p.meuPapel.posicao != null ? `Posição ${rotuloPosicaoCurto(p.meuPapel.posicao)} na fila` : "Fila de sócios"
   }
-  return p.meuPapel.coordenador ? "Você é o coordenador" : "Equipe de plantonistas"
+  if (p.meuPapel.coordenador) return "Você é o coordenador"
+  return p.meuPapel.posicao != null ? `${rotuloPosicao(p.meuPapel.posicao, "plantonista")} na equipe` : "Equipe de plantonistas"
 }
 
 function tempoDesde(iso: string) {

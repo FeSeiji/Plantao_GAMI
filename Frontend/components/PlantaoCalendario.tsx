@@ -56,7 +56,7 @@ const ESTILO_TIPO = {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila de sócios.
+// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila ou na equipe.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 export function BadgeComMarcador({
   usuario,
@@ -105,7 +105,8 @@ export function BadgeComMarcador({
           ½
         </span>
       )}
-      {mostrarPosicao && usuario.posicao != null && (
+      {/* No plantonista, o coordenador já tem o anel; os demais mostram a vaga (2 a 7) */}
+      {mostrarPosicao && usuario.posicao != null && !usuario.coordenador && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
           {rotuloPosicaoCurto(usuario.posicao)}
         </span>

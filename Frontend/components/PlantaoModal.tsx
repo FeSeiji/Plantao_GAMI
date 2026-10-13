@@ -19,6 +19,7 @@ import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino";
 import {
   posicoesDoPlantao,
   descreverPosicao,
+  ehPosicaoDeCoordenador,
   rotuloPosicao,
   rotuloPosicaoCurto,
 } from "./posicoes";
@@ -93,7 +94,7 @@ type EventoHistorico =
 
 // Quem pode mudar a ordem da fila de sócios — mesma lista do requireRole em Backend/src/routes/plantoes.js
 const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "tecnico"];
-// Adicionar, remover e definir coordenador: só a gestão — mesma lista em Backend/src/routes/plantoes.js
+// Adicionar, remover e mudar a equipe de plantonistas de vaga: só a gestão — mesma lista em Backend/src/routes/plantoes.js
 const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
 // Criar e editar plantões (data, horário, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
 export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "tecnico"];
@@ -174,14 +175,15 @@ export default function PlantaoModal({
   const [resultadosTroca, setResultadosTroca] = useState<Usuario[]>([]);
   const [buscandoTroca, setBuscandoTroca] = useState(false);
   const [meuId, setMeuId] = useState<string | null>(null);
-  // Célula "+" que abriu a busca de adição: a posição da fila (sócio) ou o fim da equipe (plantonista)
-  const [adicionando, setAdicionando] = useState<{ posicao?: number } | null>(
+  // Vaga vazia que abriu a busca de adição
+  const [adicionando, setAdicionando] = useState<{ posicao: number } | null>(
     null,
   );
 
   const ehSocio = plantao.tipo === "socio";
-  // Diurno: 1º a 7º + intermediário; noturno (19h em diante): 1º, 1º, 2º, 3º, 4º
-  const posicoesDaFila = posicoesDoPlantao(plantao.hora_inicio);
+  // Plantonista: Coordenador, Coordenador, 2º a 7º. Sócio diurno: 1º a 7º + intermediário;
+  // sócio noturno (19h em diante): 1º, 1º, 2º, 3º + intermediário
+  const posicoesDaFila = posicoesDoPlantao(plantao.tipo, plantao.hora_inicio);
   // Troca por horas: o intervalo escolhido na linha do tempo do painel de troca
   const intervaloTroca =
     trocaParcial && horaParcial
@@ -291,12 +293,13 @@ export default function PlantaoModal({
     setBuscando(true);
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token");
-      // Adição em plantão de plantonista é sempre como membro, e sócios só entram como coordenador
+      // Em plantão de plantonista, sócios só entram nas vagas de coordenador
       const params = new URLSearchParams({
         search: termo,
-        role: ehSocio
-          ? "anestesita_plantonista,anestesita_socio"
-          : "anestesita_plantonista",
+        role:
+          ehSocio || ehPosicaoDeCoordenador(plantao.tipo, adicionando?.posicao)
+            ? "anestesita_plantonista,anestesita_socio"
+            : "anestesita_plantonista",
         data: plantao.data,
         horaInicio: plantao.hora_inicio,
         horaFim: plantao.hora_fim,
@@ -313,7 +316,7 @@ export default function PlantaoModal({
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [busca, ehSocio]);
+  }, [busca, ehSocio, adicionando?.posicao]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -341,7 +344,7 @@ export default function PlantaoModal({
     abrirTroca(null);
   }
 
-  function abrirAdicao(alvo: { posicao?: number } | null) {
+  function abrirAdicao(alvo: { posicao: number } | null) {
     setAdicionando(alvo);
     setBusca("");
     setResultados([]);
@@ -569,23 +572,21 @@ export default function PlantaoModal({
 
     if (!alvo || selecionados.some((u) => u.id === usuario.id)) return;
 
-    const posicao = ehSocio ? (alvo.posicao ?? null) : null;
-    if (
-      ehSocio &&
-      (posicao == null || selecionados.some((u) => u.posicao === posicao))
-    )
-      return;
+    const posicao = alvo.posicao;
+    if (selecionados.some((u) => u.posicao === posicao)) return;
     const anterior = selecionados;
     setSelecionados((prev) => [
       ...prev,
-      { ...usuario, posicao, coordenador: false },
+      {
+        ...usuario,
+        posicao,
+        coordenador: ehPosicaoDeCoordenador(plantao.tipo, posicao),
+      },
     ]);
 
     try {
       const token = localStorage.getItem("token");
-      const body = ehSocio
-        ? { fila: [{ usuario_id: usuario.id, posicao }] }
-        : { usuarios: [usuario.id] };
+      const body = { fila: [{ usuario_id: usuario.id, posicao }] };
 
       const res = await apiFetch(
         `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/usuarios`,
@@ -615,15 +616,21 @@ export default function PlantaoModal({
     }
   }
 
-  // Se a posição escolhida estiver ocupada, os dois médicos trocam de lugar
+  // Se a posição escolhida estiver ocupada, os dois médicos trocam de lugar.
+  // No plantonista, a vaga define quem é coordenador
   async function alterarPosicao(id: string, novaPosicao: number) {
     setError("");
     const anterior = selecionados;
     const posicaoAtual = selecionados.find((u) => u.id === id)?.posicao ?? null;
+    const naPosicao = (u: Usuario, posicao: number | null) => ({
+      ...u,
+      posicao,
+      coordenador: ehPosicaoDeCoordenador(plantao.tipo, posicao),
+    });
     setSelecionados((prev) =>
       prev.map((u) => {
-        if (u.id === id) return { ...u, posicao: novaPosicao };
-        if (u.posicao === novaPosicao) return { ...u, posicao: posicaoAtual };
+        if (u.id === id) return naPosicao(u, novaPosicao);
+        if (u.posicao === novaPosicao) return naPosicao(u, posicaoAtual);
         return u;
       }),
     );
@@ -655,45 +662,6 @@ export default function PlantaoModal({
         err instanceof Error
           ? err.message
           : "Não foi possível alterar a posição.",
-      );
-    }
-  }
-
-  async function tornarCoordenador(id: string) {
-    setError("");
-    const anterior = selecionados;
-    setSelecionados((prev) =>
-      prev.map((u) => ({ ...u, coordenador: u.id === id })),
-    );
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await apiFetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/coordenador`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ usuario_id: id }),
-        },
-      );
-
-      if (!res.ok) {
-        const result = await res.json();
-        throw new Error(
-          result.error ?? "Não foi possível definir o coordenador.",
-        );
-      }
-
-      onUpdated();
-    } catch (err) {
-      setSelecionados(anterior);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Não foi possível definir o coordenador.",
       );
     }
   }
@@ -783,8 +751,8 @@ export default function PlantaoModal({
           <p>
             <span className="font-semibold">{nomeDe(u)}</span> será removido
             deste plantão
-            {ehSocio && u.posicao != null
-              ? ` (${descreverPosicao(u.posicao)})`
+            {u.posicao != null
+              ? ` (${descreverPosicao(u.posicao, plantao.tipo)})`
               : ""}
             . A remoção fica registrada no histórico.
           </p>
@@ -834,28 +802,22 @@ export default function PlantaoModal({
         onClick: () => desfazerCobertura(u.id, cobertura),
       });
     }
-    if (editavel) {
-      if (podeGerirEquipe && !ehSocio && !u.coordenador && !pendente) {
-        acoes.push({
-          rotulo: "Tornar coordenador",
-          onClick: () => tornarCoordenador(u.id),
-        });
-      }
-      if (podeGerirEquipe)
-        acoes.push({
-          rotulo: "Remover",
-          perigo: true,
-          onClick: () => confirmarRemocao(u),
-        });
+    if (editavel && podeGerirEquipe) {
+      acoes.push({
+        rotulo: "Remover",
+        perigo: true,
+        onClick: () => confirmarRemocao(u),
+      });
     }
 
-    // A gestão muda a posição no modo edição; o sócio escalado (que não entra nesse modo) muda direto na visualização
+    // A gestão muda a posição no modo edição; o sócio escalado (que não entra nesse modo) muda direto
+    // na visualização, só na fila de sócio. No plantonista, mudar de vaga é como se define o coordenador
     const mostraSeletorPosicao = podeEditarPlantao
       ? editavel
-      : podeMudarPosicao && estouEscalado;
+      : ehSocio && podeMudarPosicao && estouEscalado;
 
     let rotulo: React.ReactNode = undefined;
-    if (ehSocio && !pendente && mostraSeletorPosicao) {
+    if (!pendente && mostraSeletorPosicao) {
       rotulo = (
         <select
           aria-label="Posição na fila"
@@ -865,7 +827,7 @@ export default function PlantaoModal({
         >
           {posicoesDaFila.map((p) => (
             <option key={p} value={p}>
-              {rotuloPosicaoCurto(p)}
+              {rotuloPosicaoCurto(p, plantao.tipo)}
               {p !== u.posicao && selecionados.some((o) => o.posicao === p)
                 ? " (trocar)"
                 : ""}
@@ -873,8 +835,8 @@ export default function PlantaoModal({
           ))}
         </select>
       );
-    } else if (ehSocio) {
-      rotulo = u.posicao != null ? rotuloPosicao(u.posicao) : undefined;
+    } else if (u.posicao != null) {
+      rotulo = rotuloPosicao(u.posicao, plantao.tipo);
     } else if (u.coordenador) {
       rotulo = "Coordenador";
     }
@@ -884,7 +846,6 @@ export default function PlantaoModal({
       chave: u.id,
       pessoa: u,
       rotulo,
-      larga: !ehSocio && u.coordenador,
       // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
       destaque: u.afastamento && !afastamentoPendente(u.afastamento)
         ? "indisponivel"
@@ -946,14 +907,14 @@ export default function PlantaoModal({
   }
 
   function montarCelulas(editavel: boolean): CelulaGrade[] {
-    if (ehSocio) {
-      return posicoesDaFila.map((p) => {
+    return [
+      ...posicoesDaFila.map((p): CelulaGrade => {
         const u = selecionados.find((s) => s.posicao === p);
         if (u) return celulaMedico(u, editavel);
         return {
           tipo: "vazia",
           chave: `posicao-${p}`,
-          rotulo: rotuloPosicao(p),
+          rotulo: rotuloPosicao(p, plantao.tipo),
           texto: "Vaga",
           ativa: adicionando?.posicao === p,
           onClick:
@@ -961,34 +922,12 @@ export default function PlantaoModal({
               ? () => abrirAdicao({ posicao: p })
               : undefined,
         };
-      });
-    }
-
-    const coordenador = selecionados.find((u) => u.coordenador);
-    const celulas: CelulaGrade[] = [
-      coordenador
-        ? celulaMedico(coordenador, editavel)
-        : {
-            tipo: "vazia",
-            chave: "coordenador",
-            rotulo: "Coordenador",
-            texto: "Sem coordenador",
-            larga: true,
-          },
+      }),
+      // Plantonista escalado antes das vagas fixas (sem posição) aparece no fim, para a gestão realocar
       ...selecionados
-        .filter((u) => !u.coordenador)
+        .filter((u) => u.posicao == null || !posicoesDaFila.includes(u.posicao))
         .map((u) => celulaMedico(u, editavel)),
     ];
-    if (editavel && podeGerirEquipe) {
-      celulas.push({
-        tipo: "vazia",
-        chave: "adicionar",
-        texto: "Adicionar",
-        ativa: adicionando != null,
-        onClick: () => abrirAdicao({}),
-      });
-    }
-    return celulas;
   }
 
   const usuarioTrocando = selecionados.find((u) => u.id === trocandoId);
@@ -1289,9 +1228,7 @@ export default function PlantaoModal({
                       htmlFor="buscaUsuario"
                       className="text-xs font-semibold text-brand-700"
                     >
-                      {adicionando.posicao != null
-                        ? `Adicionar: ${descreverPosicao(adicionando.posicao)}`
-                        : "Adicionar à equipe"}
+                      Adicionar: {descreverPosicao(adicionando.posicao, plantao.tipo)}
                     </label>
                     <button
                       type="button"
@@ -1393,13 +1330,7 @@ export default function PlantaoModal({
               <p className="text-sm font-medium text-gray-700 mb-2">
                 {rotuloLista}
               </p>
-              {!ehSocio && selecionados.length === 0 ? (
-                <p className="text-sm text-gray-400">
-                  Nenhum médico atribuído.
-                </p>
-              ) : (
-                <GradeParticipantes celulas={montarCelulas(false)} />
-              )}
+              <GradeParticipantes celulas={montarCelulas(false)} />
               {painelTroca}
             </div>
 
@@ -1433,7 +1364,7 @@ export default function PlantaoModal({
                   const papel = r.eraCoordenador
                     ? " (coordenador)"
                     : r.posicao != null
-                      ? ` (${descreverPosicao(r.posicao)})`
+                      ? ` (${descreverPosicao(r.posicao, plantao.tipo)})`
                       : "";
                   return (
                     <li
@@ -1475,12 +1406,12 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` (${descreverPosicao(m.posicaoAnterior)})`}{" "}
+                              ` (${descreverPosicao(m.posicaoAnterior, plantao.tipo)})`}{" "}
                             com{" "}
                             <span className="font-semibold">
                               {nomeDe(m.usuarioTrocado)}
                             </span>{" "}
-                            ({descreverPosicao(m.posicaoNova)})
+                            ({descreverPosicao(m.posicaoNova, plantao.tipo)})
                           </>
                         ) : (
                           <>
@@ -1489,8 +1420,8 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` de ${descreverPosicao(m.posicaoAnterior)}`}{" "}
-                            para {descreverPosicao(m.posicaoNova)}
+                              ` de ${descreverPosicao(m.posicaoAnterior, plantao.tipo)}`}{" "}
+                            para {descreverPosicao(m.posicaoNova, plantao.tipo)}
                           </>
                         )}{" "}
                         em {new Date(m.alteradoEm).toLocaleString("pt-BR")}

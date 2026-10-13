@@ -5,7 +5,14 @@ import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
-import { descreverPosicao, ehNoturno, posicoesDoPlantao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
+import {
+  descreverPosicao,
+  ehNoturno,
+  ehPosicaoDeCoordenador,
+  posicoesDoPlantao,
+  rotuloPosicao,
+  rotuloPosicaoCurto,
+} from "./posicoes"
 import { apiFetch } from "./sessao"
 
 type Usuario = {
@@ -24,8 +31,8 @@ type FilaItem = {
   posicao: number
 }
 
-// Qual célula "+" abriu a busca: uma posição da fila, a vaga de coordenador ou o fim da equipe
-type Adicionando = { posicao?: number; coordenador?: boolean }
+// Qual vaga abriu a busca
+type Adicionando = { posicao: number }
 
 type Props = {
   onClose: () => void
@@ -46,13 +53,12 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const [resultados, setResultados] = useState<Usuario[]>([])
   const [buscando, setBuscando] = useState(false)
 
-  const [equipe, setEquipe] = useState<Usuario[]>([])
-  const [coordenadorId, setCoordenadorId] = useState<string | null>(null)
-
+  // Fila do sócio ou equipe do plantonista: cada médico numa vaga
   const [fila, setFila] = useState<FilaItem[]>([])
-  // A fila depende do horário: diurno 1º a 7º + intermediário; noturno (19h em diante) 1º, 1º, 2º, 3º, 4º
-  const noturno = horaInicio !== "" && ehNoturno(horaInicio)
-  const posicoesDaFila = posicoesDoPlantao(horaInicio || "00:00")
+  // Plantonista: Coordenador, Coordenador, 2º a 7º. Sócio: depende do horário — diurno 1º a 7º + intermediário;
+  // noturno (19h em diante) 1º, 1º, 2º, 3º + intermediário
+  const noturno = tipo === "socio" && horaInicio !== "" && ehNoturno(horaInicio)
+  const posicoesDaFila = posicoesDoPlantao(tipo, horaInicio || "00:00")
   const foraDaFila = fila.filter((f) => !posicoesDaFila.includes(f.posicao))
   const [adicionando, setAdicionando] = useState<Adicionando | null>(null)
 
@@ -78,8 +84,8 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
       return
     }
 
-    // Em plantão de plantonista, sócios só entram como coordenador (o primeiro adicionado vira coordenador)
-    const vagaDeMembro = tipo === "plantonista" && coordenadorId != null && !adicionando?.coordenador
+    // Em plantão de plantonista, sócios só entram nas vagas de coordenador
+    const vagaDeMembro = tipo === "plantonista" && !ehPosicaoDeCoordenador(tipo, adicionando?.posicao)
     const role = vagaDeMembro ? "anestesita_plantonista" : "anestesita_plantonista,anestesita_socio"
 
     setBuscando(true)
@@ -104,7 +110,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [busca, tipo, data, horaInicio, horaFim, coordenadorId, adicionando])
+  }, [busca, tipo, data, horaInicio, horaFim, adicionando])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -122,8 +128,6 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
   function trocarTipo(novoTipo: Tipo) {
     setTipo(novoTipo)
-    setEquipe([])
-    setCoordenadorId(null)
     setFila([])
     abrirBusca(null)
   }
@@ -145,23 +149,11 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     abrirBusca(null)
     if (!alvo) return
 
-    if (tipo === "plantonista") {
-      if (equipe.some((u) => u.id === usuario.id)) return
-      setEquipe((prev) => [...prev, usuario])
-      if (alvo.coordenador || !coordenadorId) setCoordenadorId(usuario.id)
-    } else {
-      const posicao = alvo.posicao
-      if (posicao == null) return
-      setFila((prev) => {
-        if (prev.some((f) => f.usuario.id === usuario.id || f.posicao === posicao)) return prev
-        return [...prev, { usuario, posicao }]
-      })
-    }
-  }
-
-  function removerDaEquipe(id: string) {
-    setEquipe((prev) => prev.filter((u) => u.id !== id))
-    if (coordenadorId === id) setCoordenadorId(null)
+    const posicao = alvo.posicao
+    setFila((prev) => {
+      if (prev.some((f) => f.usuario.id === usuario.id || f.posicao === posicao)) return prev
+      return [...prev, { usuario, posicao }]
+    })
   }
 
   function removerDaFila(id: string) {
@@ -176,15 +168,15 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     e.preventDefault()
     setError("")
 
-    if (tipo === "plantonista" && !coordenadorId) {
-      setError("Selecione um médico coordenador para a equipe.")
+    if (tipo === "plantonista" && !fila.some((f) => ehPosicaoDeCoordenador(tipo, f.posicao))) {
+      setError("Coloque um médico numa das vagas de coordenador.")
       return
     }
-    if (tipo === "socio" && fila.length === 0) {
+    if (fila.length === 0) {
       setError("Adicione ao menos um médico à fila.")
       return
     }
-    if (tipo === "socio" && foraDaFila.length > 0) {
+    if (foraDaFila.length > 0) {
       setError("Há médicos em vagas que não existem nesse horário. Mude a posição deles ou remova-os.")
       return
     }
@@ -193,27 +185,15 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
     try {
       const token = localStorage.getItem("token")
-      const body =
-        tipo === "plantonista"
-          ? {
-              titulo,
-              descricao: descricao || undefined,
-              data,
-              hora_inicio: horaInicio,
-              hora_fim: horaFim,
-              tipo,
-              usuarios: equipe.map((u) => u.id),
-              coordenador_id: coordenadorId,
-            }
-          : {
-              titulo,
-              descricao: descricao || undefined,
-              data,
-              hora_inicio: horaInicio,
-              hora_fim: horaFim,
-              tipo,
-              fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
-            }
+      const body = {
+        titulo,
+        descricao: descricao || undefined,
+        data,
+        hora_inicio: horaInicio,
+        hora_fim: horaFim,
+        tipo,
+        fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
+      }
 
       const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
         method: "POST",
@@ -240,70 +220,26 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
   }
 
-  const jaSelecionados = tipo === "plantonista" ? equipe.map((u) => u.id) : fila.map((f) => f.usuario.id)
+  const jaSelecionados = fila.map((f) => f.usuario.id)
 
-  const coordenador = equipe.find((u) => u.id === coordenadorId)
-  const celulas: CelulaGrade[] =
-    tipo === "plantonista"
-      ? [
-          coordenador
-            ? {
-                tipo: "medico",
-                chave: coordenador.id,
-                pessoa: coordenador,
-                rotulo: "Coordenador",
-                destaque: "coordenador",
-                larga: true,
-                acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(coordenador.id) }],
-              }
-            : {
-                tipo: "vazia",
-                chave: "coordenador",
-                rotulo: "Coordenador",
-                texto: "Definir coordenador",
-                larga: true,
-                ativa: adicionando?.coordenador,
-                onClick: () => abrirBusca({ coordenador: true }),
-              },
-          ...equipe
-            .filter((u) => u.id !== coordenadorId)
-            .map(
-              (u): CelulaGrade => ({
-                tipo: "medico",
-                chave: u.id,
-                pessoa: u,
-                acoes: [
-                  { rotulo: "Tornar coordenador", onClick: () => setCoordenadorId(u.id) },
-                  { rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(u.id) },
-                ],
-              })
-            ),
-          {
-            tipo: "vazia",
-            chave: "adicionar",
-            texto: "Adicionar",
-            ativa: adicionando != null && !adicionando.coordenador,
-            onClick: () => abrirBusca({}),
-          },
-        ]
-      : [
-          ...posicoesDaFila.map((p): CelulaGrade => {
-            const f = fila.find((item) => item.posicao === p)
-            if (!f) {
-              return {
-                tipo: "vazia",
-                chave: `posicao-${p}`,
-                rotulo: rotuloPosicao(p),
-                texto: "Vaga",
-                ativa: adicionando?.posicao === p,
-                onClick: () => abrirBusca({ posicao: p }),
-              }
-            }
-            return celulaFila(f)
-          }),
-          // Mudou o horário (diurno <-> noturno) e a vaga dele deixou de existir: aparece no fim para ser realocado
-          ...foraDaFila.map(celulaFila),
-        ]
+  const celulas: CelulaGrade[] = [
+    ...posicoesDaFila.map((p): CelulaGrade => {
+      const f = fila.find((item) => item.posicao === p)
+      if (!f) {
+        return {
+          tipo: "vazia",
+          chave: `posicao-${p}`,
+          rotulo: rotuloPosicao(p, tipo),
+          texto: "Vaga",
+          ativa: adicionando?.posicao === p,
+          onClick: () => abrirBusca({ posicao: p }),
+        }
+      }
+      return celulaFila(f)
+    }),
+    // Mudou o horário (diurno <-> noturno) e a vaga dele deixou de existir: aparece no fim para ser realocado
+    ...foraDaFila.map(celulaFila),
+  ]
 
   function celulaFila(f: FilaItem): CelulaGrade {
     const opcoes = posicoesDaFila.includes(f.posicao) ? posicoesDaFila : [f.posicao, ...posicoesDaFila]
@@ -311,6 +247,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
       tipo: "medico",
       chave: f.usuario.id,
       pessoa: f.usuario,
+      destaque: ehPosicaoDeCoordenador(tipo, f.posicao) ? "coordenador" : undefined,
       rotulo: (
         <select
           aria-label="Posição na fila"
@@ -324,7 +261,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               value={op}
               disabled={!posicoesDaFila.includes(op) || (op !== f.posicao && fila.some((o) => o.posicao === op))}
             >
-              {rotuloPosicaoCurto(op)}
+              {rotuloPosicaoCurto(op, tipo)}
             </option>
           ))}
         </select>
@@ -333,13 +270,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
   }
 
-  const rotuloBusca = !adicionando
-    ? ""
-    : adicionando.coordenador
-    ? "Adicionar coordenador"
-    : adicionando.posicao != null
-    ? `Adicionar: ${descreverPosicao(adicionando.posicao)}`
-    : "Adicionar à equipe"
+  const rotuloBusca = adicionando ? `Adicionar: ${descreverPosicao(adicionando.posicao, tipo)}` : ""
 
   return (
     <div
@@ -473,9 +404,9 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
               <GradeParticipantes celulas={celulas} />
 
-              {tipo === "socio" && foraDaFila.length > 0 && (
+              {foraDaFila.length > 0 && (
                 <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  {noturno ? "No plantão noturno a fila é 1º, 1º, 2º, 3º e 4º." : "No plantão diurno a fila vai do 1º ao 7º, mais o intermediário."}{" "}
+                  {noturno ? "No plantão noturno a fila é 1º, 1º, 2º, 3º e intermediário." : "No plantão diurno a fila vai do 1º ao 7º, mais o intermediário."}{" "}
                   Mude a posição de {foraDaFila.map((f) => f.usuario.nome ?? f.usuario.email).join(", ")} ou remova.
                 </p>
               )}
@@ -540,7 +471,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
               <p className="text-xs text-gray-400 mt-1">
                 {tipo === "plantonista"
-                  ? "Clique em + para adicionar médicos e em um médico para ver as opções. O coordenador é obrigatório e sócios só entram como coordenador."
+                  ? "Clique em uma vaga para preenchê-la e em um médico para ver as opções. Pelo menos um coordenador é obrigatório, e sócios só entram como coordenador."
                   : "Clique em uma vaga para preenchê-la e em um médico para ver as opções."}
               </p>
             </div>

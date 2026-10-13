@@ -161,8 +161,10 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 
 ### Plantões
 Existem dois tipos de plantão:
-- **Plantonista** — uma equipe de médicos, sem limite de tamanho, com **um coordenador obrigatório**.
-- **Sócio** — uma fila de até 8 médicos: **posições de 1 a 7** e, no fim, o **intermediário** (gravado como posição 8).
+As vagas seguem a escala anual do cliente (diurno 7h–19h com plantonistas, noturno 19h–7h com sócios):
+- **Plantonista** — uma equipe com vagas fixas: **Coordenador, Coordenador, 2º a 7º** (o segundo coordenador é gravado como posição 9). Pelo menos **um coordenador é obrigatório**.
+- **Sócio diurno** — uma fila de até 8 médicos: **posições de 1 a 7** e, no fim, o **intermediário** (gravado como posição 8).
+- **Sócio noturno** (começa às 19h ou depois) — **1º, 1º, 2º, 3º** e o **intermediário** (o segundo 1º é gravado como posição 9).
 
 Regras de escala:
 - Em plantão de **plantonista**, quem é só sócio entra **apenas como coordenador**. Quem tem as duas roles pode ser membro.
@@ -170,7 +172,7 @@ Regras de escala:
 - Um médico não pode estar em dois plantões com horários sobrepostos.
 - Médico de **férias ou em congresso** não pode ser escalado nesses dias (veja abaixo).
 
-Os participantes aparecem num **grid**: no sócio, 7 células fixas (clique numa vaga para preenchê-la); no plantonista, o coordenador em destaque, a equipe e uma célula **+** para crescer. As ações de cada médico (tornar coordenador, trocar, remover) ficam num menu ao clicar na célula.
+Os participantes aparecem num **grid** com uma célula por vaga (clique numa vaga vazia para preenchê-la). No plantonista, as vagas de coordenador ficam em destaque, e quem vira coordenador é definido mudando o médico de vaga. As ações de cada médico (trocar, remover) ficam num menu ao clicar na célula.
 
 O calendário tem visões de **semana** e **mês**, filtro por tipo e uma **cor por tipo** (azul-claro = plantonista, verde-água = sócio). No celular, a semana mostra os dias empilhados.
 
@@ -197,7 +199,7 @@ Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: qu
 ### BM Financeiro
 Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado):
 - **Plantonista** — soma das **horas trabalhadas**. Plantões que viram a noite contam inteiros no mês em que começam.
-- **Sócio** — soma de **pontos por posição**: posição 1 = 7 pts, 2 = 6 pts … 7 = 1 pt; intermediário = 7 pts.
+- **Sócio** — soma de **pontos por posição**: posição 1 = 7 pts, 2 = 6 pts … 7 = 1 pt; intermediário e segundo 1º do noturno = 7 pts.
 
 Tem seletor de mês, busca por médico e **exportação para Excel** (uma aba por tipo). Acesso: `admin`, `anestesita_socio` e `tecnico`.
 
@@ -248,10 +250,10 @@ Authorization: Bearer <access_token>
 | `GET` | `/plantoes/:id` | Detalhe de um plantão |
 | `POST` | `/plantoes` | Cria plantão |
 | `PATCH` | `/plantoes/:id` | Edita plantão |
-| `POST` | `/plantoes/:id/usuarios` | Adiciona médicos à equipe/fila |
+| `POST` | `/plantoes/:id/usuarios` | Adiciona médicos à equipe/fila (`fila: [{ usuario_id, posicao }]`) |
 | `DELETE` | `/plantoes/:id/usuarios/:usuarioId` | Remove médico (registra no histórico e cancela a troca pendente do slot) |
 | `GET` | `/plantoes/:id/remocoes` | Histórico de remoções do plantão |
-| `PATCH` | `/plantoes/:id/coordenador` | Define o coordenador |
+| `PATCH` | `/plantoes/:id/posicao` | Muda o médico de vaga (troca com quem estiver nela); no plantonista, define o coordenador |
 | `GET` | `/plantoes/:id/trocas` | Histórico de trocas do plantão |
 | `POST` | `/plantoes/:id/trocas` | Solicita troca de médico |
 | `GET` | `/plantoes/trocas/pendentes` | Trocas aguardando o aceite do usuário logado |
