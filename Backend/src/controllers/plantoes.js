@@ -144,17 +144,24 @@ exports.updatePlantao = async (req, res) => {
     return res.status(400).json({ error: 'Nenhum campo para atualizar' })
   }
 
-  // Mudou dia ou horário: a equipe atual precisa estar livre e sem afastamento na nova janela
-  if (data !== undefined || hora_inicio !== undefined || hora_fim !== undefined) {
-    const { data: atual, error: atualError } = await supabase
-      .from('plantoes')
-      .select('id, tipo, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id, posicao)')
-      .eq('id', req.params.id)
-      .maybeSingle()
+  // A tela manda dia e horário mesmo quando só o título mudou: compara com o que está gravado
+  // ("07:00" e "07:00:00" são o mesmo horário) para só validar o que mudou de fato
+  const { data: atual, error: atualError } = await supabase
+    .from('plantoes')
+    .select('id, tipo, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id, posicao)')
+    .eq('id', req.params.id)
+    .maybeSingle()
 
-    if (atualError) return res.status(500).json({ error: atualError.message })
-    if (!atual) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (atualError) return res.status(500).json({ error: atualError.message })
+  if (!atual) return res.status(404).json({ error: 'Plantão não encontrado' })
 
+  const mesmaHora = (a, b) => String(a).slice(0, 5) === String(b).slice(0, 5)
+  const mudouData = data !== undefined && data !== atual.data
+  const mudouInicio = hora_inicio !== undefined && !mesmaHora(hora_inicio, atual.hora_inicio)
+  const mudouFim = hora_fim !== undefined && !mesmaHora(hora_fim, atual.hora_fim)
+
+  // Mudou dia ou horário: a equipe atual precisa estar livre na nova janela (e sem afastamento, se mudou o dia)
+  if (mudouData || mudouInicio || mudouFim) {
     const ids = atual.plantao_usuarios.map(u => u.usuario_id)
     const novaData = data ?? atual.data
 
@@ -165,7 +172,7 @@ exports.updatePlantao = async (req, res) => {
 
     // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
     // que não existe no novo tipo precisa sair antes
-    if (atual.tipo === 'socio' && hora_inicio !== undefined) {
+    if (atual.tipo === 'socio' && mudouInicio) {
       const permitidas = posicoesDoPlantao(hora_inicio)
       const foraDaFila = atual.plantao_usuarios.filter(u => u.posicao != null && !permitidas.includes(u.posicao))
       if (foraDaFila.length > 0) {
@@ -186,7 +193,8 @@ exports.updatePlantao = async (req, res) => {
         const nomes = [...ocupados].map(id => perfis.get(id)?.nome ?? perfis.get(id)?.email ?? id)
         return res.status(400).json({ error: `Médico(s) já escalado(s) em outro plantão nesse horário: ${nomes.join(', ')}` })
       }
-      await validarSemAfastamento(ids, novaData)
+      // Afastamento é por dia: no mesmo dia, a escala existente só fica sinalizada
+      if (mudouData) await validarSemAfastamento(ids, novaData)
     } catch (err) {
       return res.status(400).json({ error: err.message })
     }

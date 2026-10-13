@@ -134,11 +134,13 @@ function nomeDe(p: Pessoa) {
 }
 
 export default function PlantaoModal({
-  plantao,
+  plantao: plantaoInicial,
   podeEditar,
   onClose,
   onUpdated,
 }: Props) {
+  // A tela que abriu o modal guarda uma cópia do plantão; depois de salvar, vale o que o servidor devolveu
+  const [plantao, setPlantao] = useState(plantaoInicial);
   const [editando, setEditando] = useState(false);
 
   const [titulo, setTitulo] = useState(plantao.titulo);
@@ -188,7 +190,7 @@ export default function PlantaoModal({
         : { horaInicio: horaParcial, horaFim: plantao.hora_fim.slice(0, 5) }
       : null;
   // Sócio fora da gestão só mexe na fila dos plantões em que está escalado
-  const estouEscalado = plantao.usuarios.some((u) => u.id === meuId);
+  const estouEscalado = selecionados.some((u) => u.id === meuId);
   // Médico fora da gestão troca a própria vaga com quem quiser; na vaga de outro, só pede a vaga para si
   const pedindoVagaParaMim =
     trocandoId != null && !podeGerirEquipe && trocandoId !== meuId;
@@ -718,6 +720,8 @@ export default function PlantaoModal({
         return;
       }
 
+      setPlantao(result);
+      setSelecionados(result.usuarios);
       onUpdated();
       setEditando(false);
     } catch {
