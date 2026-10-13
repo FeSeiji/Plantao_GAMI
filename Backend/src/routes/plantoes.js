@@ -4,7 +4,7 @@ const { requireRole } = require('../middleware/auth')
 const {
   createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removeUsuario, definirCoordenador,
   criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
-  alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarCobertura,
+  alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarTroca,
 } = require('../controllers/plantoes')
 
 // Criar e editar o plantão e mexer na equipe (adicionar, remover, coordenador) é da gestão.
@@ -28,6 +28,7 @@ router.get('/:id/trocas', listarTrocasDoPlantao)
 router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.get('/:id/mudancas-posicao', listarMudancasPosicaoDoPlantao)
 router.post('/:id/trocas', criarTroca)
-router.patch('/:id/trocas/:trocaId/cancelar', gestao, cancelarCobertura)
+// Pedido pendente: quem pediu ou a gestão. Troca por horas já aceita: só a gestão (conferido no controller)
+router.patch('/:id/trocas/:trocaId/cancelar', cancelarTroca)
 
 module.exports = router

@@ -169,6 +169,21 @@ exports.updatePlantao = async (req, res) => {
     if ((await buscarCoberturas([atual.id])).length > 0) {
       return res.status(400).json({ error: 'Esse plantão tem troca por horas valendo. Cancele-a antes de mudar o dia ou o horário.' })
     }
+    // A pendente também: aceita depois, ficaria fora do novo horário (mudar só o dia não a afeta)
+    if (mudouInicio || mudouFim) {
+      const { data: parciaisPendentes, error: parciaisError } = await supabase
+        .from('plantao_trocas')
+        .select('id')
+        .eq('plantao_id', atual.id)
+        .eq('status', 'pendente')
+        .not('hora_inicio', 'is', null)
+        .limit(1)
+
+      if (parciaisError) return res.status(500).json({ error: parciaisError.message })
+      if (parciaisPendentes.length > 0) {
+        return res.status(400).json({ error: 'Esse plantão tem pedido de troca por horas pendente. Cancele o pedido antes de mudar o horário.' })
+      }
+    }
 
     // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
     // que não existe no novo tipo precisa sair antes
@@ -615,19 +630,42 @@ exports.criarTroca = async (req, res) => {
   }
 }
 
-// Gestão desfaz uma troca por horas já aceita: a vaga volta inteira para o titular
-exports.cancelarCobertura = async (req, res) => {
+// Cancela um pedido de troca pendente (quem pediu ou a gestão) ou desfaz uma troca por horas já aceita
+// (só a gestão: a vaga volta inteira para o titular). Troca da vaga inteira já aceita não se desfaz.
+exports.cancelarTroca = async (req, res) => {
+  const { data: troca, error: trocaError } = await supabase
+    .from('plantao_trocas')
+    .select('id, status, solicitado_por, hora_inicio')
+    .eq('id', req.params.trocaId)
+    .eq('plantao_id', req.params.id)
+    .maybeSingle()
+
+  if (trocaError) return res.status(500).json({ error: trocaError.message })
+  if (!troca) return res.status(404).json({ error: 'Troca não encontrada' })
+
+  const gestao = ehGestao(req.user)
+  if (troca.status === 'pendente') {
+    if (!gestao && troca.solicitado_por !== req.user.id) {
+      return res.status(403).json({ error: 'Só quem pediu a troca ou a gestão pode cancelar o pedido' })
+    }
+  } else if (troca.status === 'aceita' && troca.hora_inicio) {
+    if (!gestao) return res.status(403).json({ error: 'Só a gestão pode desfazer uma troca por horas' })
+  } else {
+    return res.status(400).json({ error: 'Essa troca não pode mais ser cancelada' })
+  }
+
+  // Só passa se ninguém respondeu ou cancelou nesse meio-tempo
   const { data, error } = await supabase
     .from('plantao_trocas')
     .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
-    .eq('id', req.params.trocaId)
-    .eq('plantao_id', req.params.id)
-    .eq('status', 'aceita')
-    .not('hora_inicio', 'is', null)
+    .eq('id', troca.id)
+    .eq('status', troca.status)
     .select('id')
 
   if (error) return res.status(400).json({ error: error.message })
-  if (!data || data.length === 0) return res.status(404).json({ error: 'Troca por horas não encontrada' })
+  if (!data || data.length === 0) {
+    return res.status(409).json({ error: 'Essa troca acabou de ser respondida ou cancelada. Recarregue o plantão.' })
+  }
 
   return res.status(204).send()
 }
@@ -686,7 +724,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   // Quem responde pode ser quem entra ou, quando ele mesmo pediu a vaga, o titular
   const quemEntra = troca.usuario_entrada === req.user.id ? 'Você' : 'O médico que entra'
   if (troca.status !== 'pendente') {
-    return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+    return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
   }
 
   if (aceitar) {
@@ -721,6 +759,10 @@ exports.responderTroca = (aceitar) => async (req, res) => {
 
     if (troca.hora_inicio) {
       if (!slot) return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
+      // O horário do plantão pode ter mudado desde o pedido
+      if (validarIntervalo(slot.plantoes, troca.hora_inicio, troca.hora_fim)) {
+        return res.status(409).json({ error: 'O horário do plantão mudou e esse intervalo não cabe mais nele. Peça a troca de novo.' })
+      }
       const outra = (await buscarCoberturas([troca.plantao_id])).find(c => c.usuario_saida === troca.usuario_saida)
       if (outra) return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas valendo' })
     }
@@ -736,7 +778,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
     .maybeSingle()
 
   if (error) return res.status(400).json({ error: error.message })
-  if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+  if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
 
   // Troca por horas não mexe na equipe: a vaga continua do titular e a troca aceita é a cobertura
   if (aceitar && !troca.hora_inicio) {

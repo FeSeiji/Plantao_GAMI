@@ -458,6 +458,48 @@ export default function PlantaoModal({
     });
   }
 
+  // Quem pediu (ou a gestão) desiste do pedido antes do aceite
+  function cancelarPedidoTroca(usuarioId: string, pendente: TrocaPendente) {
+    setConfirmacao({
+      titulo: "Cancelar pedido de troca?",
+      mensagem: (
+        <p>
+          O pedido para {nomeDe(pendente.usuarioEntrada)} entrar
+          {pendente.horaInicio && pendente.horaFim
+            ? ` das ${formatarIntervalo(pendente.horaInicio, pendente.horaFim).replace("–", " às ")}`
+            : ""}{" "}
+          é cancelado e a vaga fica livre para outro pedido.
+        </p>
+      ),
+      rotuloConfirmar: "Cancelar pedido",
+      perigo: true,
+      acao: async () => {
+        setError("");
+        try {
+          const token = localStorage.getItem("token");
+          const res = await apiFetch(
+            `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/trocas/${pendente.id}/cancelar`,
+            { method: "PATCH", headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!res.ok) {
+            const result = await res.json().catch(() => ({}));
+            throw new Error(result.error ?? "Não foi possível cancelar o pedido.");
+          }
+          setSelecionados((prev) =>
+            prev.map((u) => (u.id === usuarioId ? { ...u, trocaPendente: null } : u)),
+          );
+          carregarHistorico();
+          window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
+          onUpdated();
+        } catch (err) {
+          setError(
+            err instanceof Error ? err.message : "Não foi possível cancelar o pedido.",
+          );
+        }
+      },
+    });
+  }
+
   async function responderTrocaAqui(
     trocaId: string,
     usuarioSaidaId: string,
@@ -777,6 +819,12 @@ export default function PlantaoModal({
       acoes.push({
         rotulo: podeGerirEquipe || ehMinhaVaga ? "Trocar" : "Pedir a vaga",
         onClick: () => abrirTroca(u.id),
+      });
+    if (pendente && (podeGerirEquipe || pendente.solicitadoPor.id === meuId))
+      acoes.push({
+        rotulo: "Cancelar pedido de troca",
+        perigo: true,
+        onClick: () => cancelarPedidoTroca(u.id, pendente),
       });
     if (editavel && podeGerirEquipe && u.cobertura) {
       const cobertura = u.cobertura;
@@ -1505,7 +1553,6 @@ export default function PlantaoModal({
                           {new Date(t.respondidoEm).toLocaleString(
                             "pt-BR",
                           )}
-                          {t.horaInicio ? "" : " (médico removido)"}
                         </>
                       )}
                     </span>

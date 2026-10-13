@@ -293,6 +293,27 @@ export default function DashboardPage() {
     }
   }
 
+  async function cancelarTroca(t: Troca) {
+    if (!t.plantao) return
+    const token = localStorage.getItem("token")
+    setRespondendo(t.id)
+    try {
+      const res = await apiFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${t.plantao.id}/trocas/${t.id}/cancelar`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${token}` } }
+      )
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? "Não foi possível cancelar o pedido.")
+      }
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível cancelar o pedido.")
+    } finally {
+      setRespondendo(null)
+    }
+  }
+
   // O resumo não traz tudo que o modal precisa (descrição, trocas por slot), então busca o plantão completo
   async function abrirPlantao(id: string) {
     const token = localStorage.getItem("token")
@@ -477,7 +498,17 @@ export default function DashboardPage() {
                 {resumo.trocasSolicitadas.map((t) => (
                   <li key={t.id} className="flex items-start gap-2 border-b border-gray-100 last:border-0 pb-3 last:pb-0">
                     <span className="mt-1.5 w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Aguardando aceite" />
-                    <DescricaoTroca troca={t} perspectiva="solicitada" />
+                    <div className="min-w-0 flex-1">
+                      <DescricaoTroca troca={t} perspectiva="solicitada" />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={respondendo === t.id}
+                      onClick={() => cancelarTroca(t)}
+                      className="shrink-0 text-xs font-bold px-3 py-1.5 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
                   </li>
                 ))}
               </ul>
