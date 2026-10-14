@@ -46,6 +46,15 @@ exports.limiteEsqueciSenha = limitador({
   mensagem: 'Muitos pedidos de redefinição de senha. Aguarde uma hora e tente de novo.',
 })
 
+// Troca de senha de quem está logado: só as tentativas que falham contam (senha atual errada), por usuário
+exports.limiteTrocaSenha = limitador({
+  janela: QUINZE_MIN,
+  limite: 5,
+  keyGenerator: req => req.user.id,
+  skipSuccessfulRequests: true,
+  mensagem: 'Muitas tentativas de trocar a senha. Aguarde 15 minutos e tente de novo.',
+})
+
 exports.limiteCadastro = limitador({
   janela: UMA_HORA,
   limite: 10,

@@ -8,6 +8,7 @@ import { EVENTO_PERFIL_ATUALIZADO, apiFetch } from "../../../components/sessao"
 import { DIAS_SEMANA } from "../../../components/disponibilidade"
 import { formatarTelefone } from "../../../components/telefone"
 import AfastamentosPerfil from "../../../components/AfastamentosPerfil"
+import TrocarSenha from "../../../components/TrocarSenha"
 
 type Perfil = {
   id: string
@@ -383,6 +384,8 @@ export default function PerfilPage() {
           )}
         </div>
       )}
+
+      {perfil && <TrocarSenha />}
 
       {exigeCrm && <AfastamentosPerfil />}
     </main>

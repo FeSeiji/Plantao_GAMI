@@ -232,6 +232,7 @@ Authorization: Bearer <access_token>
 |--------|------|-----------|
 | `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`, CRM, telefone, data de nascimento, dias disponíveis) |
 | `PATCH` | `/auth/me` | Edita o próprio cadastro (nome, sigla, telefone, data de nascimento, CRM, dias disponíveis) |
+| `POST` | `/auth/me/senha` | Troca a própria senha (`senha_atual` + `nova_senha`, mínimo 8). Encerra as sessões da conta e devolve uma nova (`token`, `refresh_token`, `expires_at`) |
 
 **Usuários**
 
