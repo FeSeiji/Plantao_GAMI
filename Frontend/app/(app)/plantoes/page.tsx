@@ -26,9 +26,6 @@ export default function PlantoesPage() {
     null,
   );
   const [carregouUmaVez, setCarregouUmaVez] = useState(false);
-  const [filtroTipo, setFiltroTipo] = useState<
-    "todos" | "plantonista" | "socio"
-  >("todos");
 
   const { inicio, fim } = useMemo(
     () => calcularIntervaloVisivel(dataReferencia, visualizacao),
@@ -41,7 +38,6 @@ export default function PlantoesPage() {
 
     setLoading(true);
     const params = new URLSearchParams({ inicio, fim });
-    if (filtroTipo !== "todos") params.set("tipo", filtroTipo);
     apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -58,7 +54,7 @@ export default function PlantoesPage() {
         setLoading(false);
         setCarregouUmaVez(true);
       });
-  }, [inicio, fim, filtroTipo]);
+  }, [inicio, fim]);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -84,40 +80,14 @@ export default function PlantoesPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4 sm:mb-6">
         <h1 className="text-xl font-bold text-gray-800">Plantões</h1>
 
-        {/* No celular o filtro e o botão ocupam a linha toda, abaixo do título */}
-        <div className="flex w-full sm:w-auto items-center gap-3">
-          <div className="flex flex-1 sm:flex-none items-center bg-gray-100 rounded-lg p-0.5">
-            {(
-              [
-                { valor: "todos", rotulo: "Todos" },
-                { valor: "plantonista", rotulo: "Plantonista" },
-                { valor: "socio", rotulo: "Sócio" },
-              ] as const
-            ).map((opcao) => (
-              <button
-                key={opcao.valor}
-                type="button"
-                onClick={() => setFiltroTipo(opcao.valor)}
-                className={`flex-1 sm:flex-none text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                  filtroTipo === opcao.valor
-                    ? "bg-white text-brand-700 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {opcao.rotulo}
-              </button>
-            ))}
-          </div>
-
-          {podeCriar && (
-            <button
-              onClick={() => setShowModal(true)}
-              className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-            >
-              + Novo plantão
-            </button>
-          )}
-        </div>
+        {podeCriar && (
+          <button
+            onClick={() => setShowModal(true)}
+            className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            + Novo plantão
+          </button>
+        )}
       </div>
 
       {error && (

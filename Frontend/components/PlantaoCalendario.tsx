@@ -3,7 +3,7 @@
 import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
 import { Afastamento, afastamentoPendente, rotuloAfastamento } from "./disponibilidade"
-import { rotuloPosicaoCurto } from "./posicoes"
+import { TURNOS, Turno, formatarTurno, rotuloPosicaoCurto, turnoDaPosicao } from "./posicoes"
 import { formatarIntervalo } from "./trocaPorHoras"
 
 export type TrocaPendente = {
@@ -36,27 +36,30 @@ export type Usuario = {
   cobertura?: Cobertura | null
 }
 
+// Um plantão por dia, com as vagas do diurno e do noturno (components/posicoes.ts).
+// Quem faz os dois turnos aparece duas vezes em usuarios, uma em cada vaga
 export type Plantao = {
   id: string
   titulo: string
   descricao: string | null
   data: string
-  hora_inicio: string
-  hora_fim: string
-  tipo: "plantonista" | "socio"
   usuarios: Usuario[]
 }
 
 export type Visualizacao = "semana" | "mes"
 
-// Cor de cada tipo de plantão: faixa à esquerda do card, etiqueta e legenda
-const ESTILO_TIPO = {
-  plantonista: { rotulo: "Plantonista", faixa: "border-l-sky-500", etiqueta: "bg-sky-100 text-sky-800", ponto: "bg-sky-500" },
-  socio: { rotulo: "Sócio", faixa: "border-l-teal-500", etiqueta: "bg-teal-100 text-teal-800", ponto: "bg-teal-500" },
+// Cor de cada turno: faixa à esquerda do card e legenda
+const ESTILO_TURNO: Record<Turno, { faixa: string; ponto: string }> = {
+  diurno: { faixa: "border-l-amber-400", ponto: "bg-amber-400" },
+  noturno: { faixa: "border-l-indigo-500", ponto: "bg-indigo-500" },
+}
+
+export function doTurno(plantao: Plantao, turno: Turno) {
+  return plantao.usuarios.filter((u) => u.posicao != null && turnoDaPosicao(u.posicao) === turno)
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila de sócios.
+// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila ou na equipe.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 export function BadgeComMarcador({
   usuario,
@@ -105,7 +108,8 @@ export function BadgeComMarcador({
           ½
         </span>
       )}
-      {mostrarPosicao && usuario.posicao != null && (
+      {/* O coordenador já tem o anel; os demais mostram a vaga */}
+      {mostrarPosicao && usuario.posicao != null && !usuario.coordenador && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
           {rotuloPosicaoCurto(usuario.posicao)}
         </span>
@@ -187,45 +191,55 @@ function gerarCelulasSemana(dataReferencia: Date) {
   })
 }
 
-// Turno pelo horário de início — organiza a semana em linhas (normalmente um matinal e um noturno por dia)
-export type Turno = "manha" | "tarde" | "noite"
-export const TURNOS: { valor: Turno; rotulo: string }[] = [
-  { valor: "manha", rotulo: "Manhã" },
-  { valor: "tarde", rotulo: "Tarde" },
-  { valor: "noite", rotulo: "Noite" },
-]
-
-export function turnoDe(horaInicio: string): Turno {
-  const hora = Number(horaInicio.slice(0, 2))
-  if (hora >= 5 && hora < 12) return "manha"
-  if (hora >= 12 && hora < 18) return "tarde"
-  return "noite"
+// As siglas de um turno do plantão; sem ninguém, o lugar de uma sigla vazia
+function SiglasDoTurno({ plantao, turno }: { plantao: Plantao; turno: Turno }) {
+  const usuarios = doTurno(plantao, turno)
+  return (
+    <div className="flex items-center gap-1.5 md:gap-1 flex-wrap">
+      {usuarios.length === 0 ? (
+        <SiglaBadge sigla={null} size="sm" />
+      ) : (
+        usuarios.map((u) => <BadgeComMarcador key={u.posicao} usuario={u} />)
+      )}
+    </div>
+  )
 }
 
+// Desktop: um card por turno, na linha do turno
+function CartaoTurno({ plantao: p, turno, onClick }: { plantao: Plantao; turno: Turno; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={p.titulo}
+      className={`w-full flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TURNO[turno].faixa} rounded-lg px-2.5 py-2.5 transition-colors`}
+    >
+      <div className="mb-1.5">
+        <SiglasDoTurno plantao={p} turno={turno} />
+      </div>
+      <p className="mt-auto text-xs text-gray-600 truncate">{p.titulo}</p>
+    </button>
+  )
+}
+
+// Celular: o plantão inteiro num card, com o diurno e o noturno um embaixo do outro
 function CartaoPlantao({ plantao: p, onClick }: { plantao: Plantao; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={p.titulo}
-      className={`w-full flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TIPO[p.tipo].faixa} rounded-lg px-3 py-3 md:px-2.5 md:py-2.5 transition-colors`}
+      className="w-full flex flex-col gap-2 text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 rounded-lg px-3 py-3 transition-colors"
     >
-      <div className="flex items-center justify-between gap-1 mb-1.5">
-        <p className="text-xs md:text-[11px] font-medium text-gray-400">
-          {p.hora_inicio.slice(0, 5)}–{p.hora_fim.slice(0, 5)}
-        </p>
-        <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${ESTILO_TIPO[p.tipo].etiqueta}`}>
-          {ESTILO_TIPO[p.tipo].rotulo}
-        </span>
-      </div>
-      <div className="flex items-center gap-1.5 md:gap-1 flex-wrap mb-2 md:mb-1.5">
-        {p.usuarios.length === 0 ? (
-          <SiglaBadge sigla={null} size="sm" />
-        ) : (
-          p.usuarios.map((u) => <BadgeComMarcador key={u.id} usuario={u} />)
-        )}
-      </div>
-      <p className="mt-auto text-sm md:text-xs text-gray-600 truncate">{p.titulo}</p>
+      {TURNOS.map((t) => (
+        <div key={t.valor} className={`border-l-4 ${ESTILO_TURNO[t.valor].faixa} pl-2`}>
+          <p className="text-xs font-medium text-gray-400 mb-1">
+            {t.rotulo} · {formatarTurno(t.valor)}
+          </p>
+          <SiglasDoTurno plantao={p} turno={t.valor} />
+        </div>
+      ))}
+      <p className="text-sm text-gray-600 truncate">{p.titulo}</p>
     </button>
   )
 }
@@ -256,24 +270,9 @@ export default function PlantaoCalendario({
 }: Props) {
   const hojeChave = formatarDataLocal(new Date())
 
-  const plantoesPorDia = new Map<string, Plantao[]>()
-  for (const p of plantoes) {
-    const lista = plantoesPorDia.get(p.data) ?? []
-    lista.push(p)
-    plantoesPorDia.set(p.data, lista)
-  }
-
-  function doDia(chave: string) {
-    return (plantoesPorDia.get(chave) ?? []).slice().sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))
-  }
-
+  // Um plantão por dia
+  const plantaoPorDia = new Map(plantoes.map((p) => [p.data, p]))
   const diasSemana = gerarCelulasSemana(dataReferencia)
-  // Manhã e noite sempre aparecem; a tarde só quando a semana tem plantão nesse turno
-  const turnosVisiveis = TURNOS.filter(
-    (t) =>
-      t.valor !== "tarde" ||
-      diasSemana.some((d) => doDia(formatarDataLocal(d)).some((p) => turnoDe(p.hora_inicio) === "tarde"))
-  )
 
   function anterior() {
     if (visualizacao === "semana") {
@@ -305,10 +304,10 @@ export default function PlantaoCalendario({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <h2 className="font-semibold text-gray-800 capitalize">{rotuloPeriodo(dataReferencia, visualizacao)}</h2>
           <div className="flex items-center gap-3">
-            {Object.values(ESTILO_TIPO).map((e) => (
-              <span key={e.rotulo} className="flex items-center gap-1.5 text-xs text-gray-500">
-                <span className={`w-2.5 h-2.5 rounded-full ${e.ponto}`} />
-                {e.rotulo}
+            {TURNOS.map((t) => (
+              <span key={t.valor} className="flex items-center gap-1.5 text-xs text-gray-500">
+                <span className={`w-2.5 h-2.5 rounded-full ${ESTILO_TURNO[t.valor].ponto}`} />
+                {t.rotulo} {formatarTurno(t.valor)}
               </span>
             ))}
           </div>
@@ -393,22 +392,25 @@ export default function PlantaoCalendario({
                 )
               })}
 
-              {turnosVisiveis.map((turno) => (
+              {TURNOS.map((turno) => (
                 <Fragment key={turno.valor}>
-                  <div className="pt-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{turno.rotulo}</div>
+                  <div className="pt-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                    {turno.rotulo}
+                    <span className="block normal-case font-medium tracking-normal">{formatarTurno(turno.valor)}</span>
+                  </div>
                   {diasSemana.map((data) => {
                     const chave = formatarDataLocal(data)
-                    const doTurno = doDia(chave).filter((p) => turnoDe(p.hora_inicio) === turno.valor)
+                    const plantao = plantaoPorDia.get(chave)
                     return (
                       <div
                         key={chave}
-                        className={`min-h-[120px] space-y-1.5 rounded-lg p-1.5 border ${
+                        className={`min-h-[120px] rounded-lg p-1.5 border ${
                           chave === hojeChave ? "bg-brand-50/60 border-brand-100" : "bg-gray-50 border-gray-100"
                         }`}
                       >
-                        {doTurno.map((p) => (
-                          <CartaoPlantao key={p.id} plantao={p} onClick={() => onSelectPlantao(p)} />
-                        ))}
+                        {plantao && (
+                          <CartaoTurno plantao={plantao} turno={turno.valor} onClick={() => onSelectPlantao(plantao)} />
+                        )}
                       </div>
                     )
                   })}
@@ -421,7 +423,7 @@ export default function PlantaoCalendario({
           <div className="md:hidden space-y-4">
             {diasSemana.map((data) => {
               const chave = formatarDataLocal(data)
-              const plantoesDoDia = doDia(chave)
+              const plantao = plantaoPorDia.get(chave)
               const ehHoje = chave === hojeChave
               return (
                 <div key={chave}>
@@ -435,11 +437,12 @@ export default function PlantaoCalendario({
                       {data.getDate()}
                     </span>
                   </div>
-                  <div className="space-y-2 bg-gray-50 rounded-lg p-2 border border-gray-100">
-                    {plantoesDoDia.length === 0 && <p className="text-xs text-gray-300 text-center py-2">Sem plantões</p>}
-                    {plantoesDoDia.map((p) => (
-                      <CartaoPlantao key={p.id} plantao={p} onClick={() => onSelectPlantao(p)} />
-                    ))}
+                  <div className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                    {plantao ? (
+                      <CartaoPlantao plantao={plantao} onClick={() => onSelectPlantao(plantao)} />
+                    ) : (
+                      <p className="text-xs text-gray-300 text-center py-2">Sem plantão</p>
+                    )}
                   </div>
                 </div>
               )
@@ -460,7 +463,7 @@ export default function PlantaoCalendario({
             <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden border border-gray-200">
               {gerarCelulasMes(dataReferencia).map(({ data, noMes }) => {
                 const chave = formatarDataLocal(data)
-                const plantoesDoDia = doDia(chave)
+                const plantao = plantaoPorDia.get(chave)
                 const ehHoje = chave === hojeChave
 
                 return (
@@ -476,30 +479,35 @@ export default function PlantaoCalendario({
                       {data.getDate()}
                     </span>
 
-                    <div className="flex-1 space-y-1 overflow-hidden">
-                      {plantoesDoDia.slice(0, 3).map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => onSelectPlantao(p)}
-                          title={`${p.titulo} · ${ESTILO_TIPO[p.tipo].rotulo}`}
-                          className={`w-full flex items-center gap-1 text-left bg-brand-50 hover:bg-brand-100 border-l-[3px] ${ESTILO_TIPO[p.tipo].faixa} px-0.5 sm:px-1 py-0.5 rounded transition-colors`}
-                        >
-                          <div className="hidden sm:flex -space-x-1 shrink-0">
-                            {p.usuarios.slice(0, 3).map((u) => (
-                              <BadgeComMarcador key={u.id} usuario={u} />
-                            ))}
-                          </div>
-                          {p.usuarios.length > 3 && (
-                            <span className="hidden sm:inline text-[9px] text-gray-400 shrink-0">+{p.usuarios.length - 3}</span>
-                          )}
-                          <span className="text-[9px] sm:text-[10px] tracking-tight text-gray-500 truncate">{p.hora_inicio.slice(0, 5)}</span>
-                        </button>
-                      ))}
-                      {plantoesDoDia.length > 3 && (
-                        <p className="text-[10px] text-gray-400 px-1.5">+{plantoesDoDia.length - 3} mais</p>
-                      )}
-                    </div>
+                    {/* Uma linha por turno: as três primeiras siglas e quantos mais */}
+                    {plantao && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectPlantao(plantao)}
+                        title={plantao.titulo}
+                        className="flex-1 space-y-1 overflow-hidden text-left rounded hover:bg-brand-50 transition-colors"
+                      >
+                        {TURNOS.map((t) => {
+                          const usuarios = doTurno(plantao, t.valor)
+                          return (
+                            <div
+                              key={t.valor}
+                              className={`flex items-center gap-1 bg-brand-50 border-l-[3px] ${ESTILO_TURNO[t.valor].faixa} px-0.5 sm:px-1 py-0.5 rounded`}
+                            >
+                              <div className="hidden sm:flex -space-x-1 shrink-0">
+                                {usuarios.slice(0, 3).map((u) => (
+                                  <BadgeComMarcador key={u.posicao} usuario={u} />
+                                ))}
+                              </div>
+                              {usuarios.length > 3 && (
+                                <span className="hidden sm:inline text-[9px] text-gray-400 shrink-0">+{usuarios.length - 3}</span>
+                              )}
+                              <span className="sm:hidden text-[9px] tracking-tight text-gray-500">{usuarios.length}</span>
+                            </div>
+                          )
+                        })}
+                      </button>
+                    )}
                   </div>
                 )
               })}

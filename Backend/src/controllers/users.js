@@ -3,7 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 const { usuariosAfastados } = require('../services/afastamentos')
-const { buscarCoberturas, dataDaCobertura, duracaoDaCobertura } = require('../services/coberturas')
+const { usuariosComConflito } = require('../services/conflitos')
 const { ehAdmin } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -50,8 +50,11 @@ exports.getUsers = async (req, res) => {
   try {
     let resultado = data
 
+    // A tela manda o horário da vaga (o turno dela) ou o intervalo da troca por horas
     if (dataAlvo && horaInicio && horaFim) {
-      const ocupados = await usuariosComConflito(resultado.map(p => p.id), dataAlvo, horaInicio, horaFim)
+      const ocupados = await usuariosComConflito(
+        resultado.map(p => p.id), { data: dataAlvo, hora_inicio: horaInicio, hora_fim: horaFim }
+      )
       resultado = resultado.filter(p => !ocupados.has(p.id))
     }
 
@@ -277,67 +280,4 @@ async function buscarIdsComAlgumaRole(rolesAceitas) {
     .filter(u => !estaDesativado(u))
     .filter(u => (u.app_metadata?.roles ?? []).some(r => rolesAceitas.includes(r)))
     .map(u => u.id)
-}
-
-async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim) {
-  const idsUnicos = [...new Set(usuarioIds)]
-  if (idsUnicos.length === 0) return new Set()
-
-  const alvo = calcularJanela(data, horaInicio, horaFim)
-  const dataAnterior = deslocarData(data, -1)
-  const dataSeguinte = deslocarData(data, 1)
-
-  const { data: plantoesProximos, error: plantoesError } = await supabase
-    .from('plantoes')
-    .select('id, data, hora_inicio, hora_fim')
-    .gte('data', dataAnterior)
-    .lte('data', dataSeguinte)
-
-  if (plantoesError) throw plantoesError
-
-  const plantoesConflitantes = plantoesProximos.filter(p => seSobrepoe(alvo, calcularJanela(p.data, p.hora_inicio, p.hora_fim)))
-  if (plantoesConflitantes.length === 0) return new Set()
-
-  const { data: membros, error: membrosError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .in('plantao_id', plantoesConflitantes.map(p => p.id))
-    .in('usuario_id', idsUnicos)
-
-  if (membrosError) throw membrosError
-
-  const ocupados = new Set(membros.map(m => m.usuario_id))
-
-  // Quem cobre parte de outro plantão (troca por horas) está ocupado só no intervalo coberto
-  const porId = new Map(plantoesConflitantes.map(p => [p.id, p]))
-  for (const c of await buscarCoberturas([...porId.keys()])) {
-    if (!idsUnicos.includes(c.usuario_entrada)) continue
-    const inicio = paraMinutosAbsolutos(dataDaCobertura(porId.get(c.plantao_id), c.hora_inicio), c.hora_inicio)
-    if (seSobrepoe(alvo, { inicio, fim: inicio + duracaoDaCobertura(c.hora_inicio, c.hora_fim) })) ocupados.add(c.usuario_entrada)
-  }
-
-  return ocupados
-}
-
-function calcularJanela(data, horaInicio, horaFim) {
-  const inicio = paraMinutosAbsolutos(data, horaInicio)
-  let fim = paraMinutosAbsolutos(data, horaFim)
-  if (fim <= inicio) fim += 24 * 60
-  return { inicio, fim }
-}
-
-function paraMinutosAbsolutos(data, hora) {
-  const diasEpoch = Math.floor(Date.parse(`${data}T00:00:00Z`) / 86400000)
-  const [h, m] = hora.split(':').map(Number)
-  return diasEpoch * 1440 + h * 60 + m
-}
-
-function seSobrepoe(a, b) {
-  return a.inicio < b.fim && b.inicio < a.fim
-}
-
-function deslocarData(data, dias) {
-  const d = new Date(`${data}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + dias)
-  return d.toISOString().slice(0, 10)
 }

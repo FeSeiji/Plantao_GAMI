@@ -254,7 +254,8 @@ export default function AfastamentosPerfil() {
             <p className="font-medium mb-1">Você já está escalado nesse período:</p>
             <ul className="list-disc pl-5">
               {afetados.map((p) => (
-                <li key={p.id}>
+                // Quem faz o diurno e o noturno do mesmo dia aparece duas vezes, uma por horário
+                <li key={`${p.id}-${p.hora_inicio}`}>
                   {formatarData(p.data)} · {p.hora_inicio.slice(0, 5)} · {p.titulo}
                 </li>
               ))}

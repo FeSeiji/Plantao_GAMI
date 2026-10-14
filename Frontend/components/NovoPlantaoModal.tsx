@@ -5,7 +5,18 @@ import SiglaBadge from "./SiglaBadge"
 import GradeParticipantes, { CelulaGrade } from "./GradeParticipantes"
 import { Afastamento, AvisoAfastamento, AvisoIndisponivel } from "./disponibilidade"
 import { useViewportVisivel } from "./useViewportVisivel"
-import { descreverPosicao, ehNoturno, posicoesDoPlantao, rotuloPosicao, rotuloPosicaoCurto } from "./posicoes"
+import {
+  TURNOS,
+  Turno,
+  VAGAS,
+  descreverPosicao,
+  ehVagaDeCoordenador,
+  formatarTurno,
+  horarioDaVaga,
+  rotuloPosicao,
+  turnoDaPosicao,
+  vagasDoTurno,
+} from "./posicoes"
 import { apiFetch } from "./sessao"
 
 type Usuario = {
@@ -17,15 +28,13 @@ type Usuario = {
   afastamento?: Afastamento | null
 }
 
-type Tipo = "plantonista" | "socio"
-
 type FilaItem = {
   usuario: Usuario
   posicao: number
 }
 
-// Qual célula "+" abriu a busca: uma posição da fila, a vaga de coordenador ou o fim da equipe
-type Adicionando = { posicao?: number; coordenador?: boolean }
+// Qual vaga abriu a busca
+type Adicionando = { posicao: number }
 
 type Props = {
   onClose: () => void
@@ -36,61 +45,40 @@ type Props = {
 export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const viewport = useViewportVisivel()
   const buscaRef = useRef<HTMLDivElement>(null)
-  const [tipo, setTipo] = useState<Tipo>("plantonista")
   const [titulo, setTitulo] = useState("")
   const [descricao, setDescricao] = useState("")
   const [data, setData] = useState("")
-  const [horaInicio, setHoraInicio] = useState("")
-  const [horaFim, setHoraFim] = useState("")
   const [busca, setBusca] = useState("")
   const [resultados, setResultados] = useState<Usuario[]>([])
   const [buscando, setBuscando] = useState(false)
 
-  const [equipe, setEquipe] = useState<Usuario[]>([])
-  const [coordenadorId, setCoordenadorId] = useState<string | null>(null)
-
+  // Cada médico numa vaga do dia: Coordenador, Coordenador e 2º a 7º no diurno; intermediário, 1º, 1º, 2º e 3º
+  // no noturno. O mesmo médico pode estar nos dois turnos, mas não duas vezes no mesmo
   const [fila, setFila] = useState<FilaItem[]>([])
-  // A fila depende do horário: diurno 1º a 7º + intermediário; noturno (19h em diante) 1º, 1º, 2º, 3º, 4º
-  const noturno = horaInicio !== "" && ehNoturno(horaInicio)
-  const posicoesDaFila = posicoesDoPlantao(horaInicio || "00:00")
-  const foraDaFila = fila.filter((f) => !posicoesDaFila.includes(f.posicao))
   const [adicionando, setAdicionando] = useState<Adicionando | null>(null)
 
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [podeCriarSocio, setPodeCriarSocio] = useState(true)
-
-  useEffect(() => {
-    try {
-      const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
-      setPodeCriarSocio(!(roles.includes("anestesita_plantonista") && !roles.includes("anestesita_socio")))
-    } catch {
-      setPodeCriarSocio(true)
-    }
-  }, [])
 
   useEffect(() => {
     const termo = busca.trim()
 
-    if (!termo) {
+    if (!termo || !adicionando) {
       setResultados([])
       setBuscando(false)
       return
     }
 
-    // Em plantão de plantonista, sócios só entram como coordenador (o primeiro adicionado vira coordenador)
-    const vagaDeMembro = tipo === "plantonista" && coordenadorId != null && !adicionando?.coordenador
-    const role = vagaDeMembro ? "anestesita_plantonista" : "anestesita_plantonista,anestesita_socio"
-
     setBuscando(true)
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      const params = new URLSearchParams({ search: termo, role })
-      // Só a data já basta para marcar quem está de férias/congresso; o conflito de horário precisa das horas
-      if (data) params.set("data", data)
-      if (data && horaInicio && horaFim) {
-        params.set("horaInicio", horaInicio)
-        params.set("horaFim", horaFim)
+      const params = new URLSearchParams({ search: termo, role: "anestesita_plantonista,anestesita_socio" })
+      // A data marca quem está de férias/congresso e, com o horário do turno da vaga, esconde quem já está ocupado
+      if (data) {
+        const horario = horarioDaVaga(data, adicionando.posicao)
+        params.set("data", data)
+        params.set("horaInicio", horario.hora_inicio)
+        params.set("horaFim", horario.hora_fim)
       }
       apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -104,7 +92,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }, 300)
 
     return () => clearTimeout(timeoutId)
-  }, [busca, tipo, data, horaInicio, horaFim, coordenadorId, adicionando])
+  }, [busca, data, adicionando])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -120,14 +108,6 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
   }, [onClose])
 
-  function trocarTipo(novoTipo: Tipo) {
-    setTipo(novoTipo)
-    setEquipe([])
-    setCoordenadorId(null)
-    setFila([])
-    abrirBusca(null)
-  }
-
   function abrirBusca(alvo: Adicionando | null) {
     setAdicionando(alvo)
     setBusca("")
@@ -140,52 +120,38 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     setTimeout(() => buscaRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 300)
   }
 
+  // O médico já está em outra vaga desse turno (no formulário)
+  function noTurno(usuarioId: string, turno: Turno, ignorarPosicao?: number) {
+    return fila.some((f) => f.usuario.id === usuarioId && f.posicao !== ignorarPosicao && turnoDaPosicao(f.posicao) === turno)
+  }
+
   function selecionarUsuario(usuario: Usuario) {
     const alvo = adicionando
     abrirBusca(null)
     if (!alvo) return
 
-    if (tipo === "plantonista") {
-      if (equipe.some((u) => u.id === usuario.id)) return
-      setEquipe((prev) => [...prev, usuario])
-      if (alvo.coordenador || !coordenadorId) setCoordenadorId(usuario.id)
-    } else {
-      const posicao = alvo.posicao
-      if (posicao == null) return
-      setFila((prev) => {
-        if (prev.some((f) => f.usuario.id === usuario.id || f.posicao === posicao)) return prev
-        return [...prev, { usuario, posicao }]
-      })
-    }
+    const posicao = alvo.posicao
+    setFila((prev) => {
+      if (prev.some((f) => f.posicao === posicao)) return prev
+      if (prev.some((f) => f.usuario.id === usuario.id && turnoDaPosicao(f.posicao) === turnoDaPosicao(posicao))) return prev
+      return [...prev, { usuario, posicao }]
+    })
   }
 
-  function removerDaEquipe(id: string) {
-    setEquipe((prev) => prev.filter((u) => u.id !== id))
-    if (coordenadorId === id) setCoordenadorId(null)
+  function removerDaFila(posicao: number) {
+    setFila((prev) => prev.filter((f) => f.posicao !== posicao))
   }
 
-  function removerDaFila(id: string) {
-    setFila((prev) => prev.filter((f) => f.usuario.id !== id))
-  }
-
-  function alterarPosicao(id: string, novaPosicao: number) {
-    setFila((prev) => prev.map((f) => (f.usuario.id === id ? { ...f, posicao: novaPosicao } : f)))
+  function alterarPosicao(posicao: number, novaPosicao: number) {
+    setFila((prev) => prev.map((f) => (f.posicao === posicao ? { ...f, posicao: novaPosicao } : f)))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
 
-    if (tipo === "plantonista" && !coordenadorId) {
-      setError("Selecione um médico coordenador para a equipe.")
-      return
-    }
-    if (tipo === "socio" && fila.length === 0) {
-      setError("Adicione ao menos um médico à fila.")
-      return
-    }
-    if (tipo === "socio" && foraDaFila.length > 0) {
-      setError("Há médicos em vagas que não existem nesse horário. Mude a posição deles ou remova-os.")
+    if (!fila.some((f) => ehVagaDeCoordenador(f.posicao))) {
+      setError("Coloque um médico numa das vagas de coordenador.")
       return
     }
 
@@ -193,27 +159,12 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
 
     try {
       const token = localStorage.getItem("token")
-      const body =
-        tipo === "plantonista"
-          ? {
-              titulo,
-              descricao: descricao || undefined,
-              data,
-              hora_inicio: horaInicio,
-              hora_fim: horaFim,
-              tipo,
-              usuarios: equipe.map((u) => u.id),
-              coordenador_id: coordenadorId,
-            }
-          : {
-              titulo,
-              descricao: descricao || undefined,
-              data,
-              hora_inicio: horaInicio,
-              hora_fim: horaFim,
-              tipo,
-              fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
-            }
+      const body = {
+        titulo,
+        descricao: descricao || undefined,
+        data,
+        fila: fila.map((f) => ({ usuario_id: f.usuario.id, posicao: f.posicao })),
+      }
 
       const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes`, {
         method: "POST",
@@ -240,106 +191,64 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
   }
 
-  const jaSelecionados = tipo === "plantonista" ? equipe.map((u) => u.id) : fila.map((f) => f.usuario.id)
+  // Quem já está no turno da vaga que abriu a busca não aparece nos resultados
+  const turnoBusca = adicionando ? turnoDaPosicao(adicionando.posicao) : null
+  const resultadosLivres = resultados.filter((u) => !turnoBusca || !noTurno(u.id, turnoBusca))
 
-  const coordenador = equipe.find((u) => u.id === coordenadorId)
-  const celulas: CelulaGrade[] =
-    tipo === "plantonista"
-      ? [
-          coordenador
-            ? {
-                tipo: "medico",
-                chave: coordenador.id,
-                pessoa: coordenador,
-                rotulo: "Coordenador",
-                destaque: "coordenador",
-                larga: true,
-                acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(coordenador.id) }],
-              }
-            : {
-                tipo: "vazia",
-                chave: "coordenador",
-                rotulo: "Coordenador",
-                texto: "Definir coordenador",
-                larga: true,
-                ativa: adicionando?.coordenador,
-                onClick: () => abrirBusca({ coordenador: true }),
-              },
-          ...equipe
-            .filter((u) => u.id !== coordenadorId)
-            .map(
-              (u): CelulaGrade => ({
-                tipo: "medico",
-                chave: u.id,
-                pessoa: u,
-                acoes: [
-                  { rotulo: "Tornar coordenador", onClick: () => setCoordenadorId(u.id) },
-                  { rotulo: "Remover", perigo: true, onClick: () => removerDaEquipe(u.id) },
-                ],
-              })
-            ),
-          {
-            tipo: "vazia",
-            chave: "adicionar",
-            texto: "Adicionar",
-            ativa: adicionando != null && !adicionando.coordenador,
-            onClick: () => abrirBusca({}),
-          },
-        ]
-      : [
-          ...posicoesDaFila.map((p): CelulaGrade => {
-            const f = fila.find((item) => item.posicao === p)
-            if (!f) {
-              return {
-                tipo: "vazia",
-                chave: `posicao-${p}`,
-                rotulo: rotuloPosicao(p),
-                texto: "Vaga",
-                ativa: adicionando?.posicao === p,
-                onClick: () => abrirBusca({ posicao: p }),
-              }
-            }
-            return celulaFila(f)
-          }),
-          // Mudou o horário (diurno <-> noturno) e a vaga dele deixou de existir: aparece no fim para ser realocado
-          ...foraDaFila.map(celulaFila),
-        ]
+  function celulasDoTurno(turno: Turno): CelulaGrade[] {
+    return vagasDoTurno(turno).map((p): CelulaGrade => {
+      const f = fila.find((item) => item.posicao === p)
+      if (!f) {
+        return {
+          tipo: "vazia",
+          chave: `posicao-${p}`,
+          rotulo: rotuloPosicao(p),
+          texto: "Vaga",
+          ativa: adicionando?.posicao === p,
+          onClick: () => abrirBusca({ posicao: p }),
+        }
+      }
+      return celulaFila(f)
+    })
+  }
 
+  // O select lista todas as vagas do dia; fica desabilitada a ocupada e a de um turno em que ele já está
   function celulaFila(f: FilaItem): CelulaGrade {
-    const opcoes = posicoesDaFila.includes(f.posicao) ? posicoesDaFila : [f.posicao, ...posicoesDaFila]
     return {
       tipo: "medico",
-      chave: f.usuario.id,
+      chave: `posicao-${f.posicao}`,
       pessoa: f.usuario,
+      destaque: ehVagaDeCoordenador(f.posicao) ? "coordenador" : undefined,
       rotulo: (
         <select
-          aria-label="Posição na fila"
+          aria-label="Vaga"
           value={f.posicao}
-          onChange={(e) => alterarPosicao(f.usuario.id, Number(e.target.value))}
-          className="bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
+          onChange={(e) => alterarPosicao(f.posicao, Number(e.target.value))}
+          className="w-full max-w-full bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
-          {opcoes.map((op) => (
-            <option
-              key={op}
-              value={op}
-              disabled={!posicoesDaFila.includes(op) || (op !== f.posicao && fila.some((o) => o.posicao === op))}
-            >
-              {rotuloPosicaoCurto(op)}
-            </option>
+          {TURNOS.map((t) => (
+            <optgroup key={t.valor} label={t.rotulo}>
+              {VAGAS.filter((v) => v.turno === t.valor).map((v) => (
+                <option
+                  key={v.posicao}
+                  value={v.posicao}
+                  disabled={
+                    v.posicao !== f.posicao &&
+                    (fila.some((o) => o.posicao === v.posicao) || noTurno(f.usuario.id, t.valor, f.posicao))
+                  }
+                >
+                  {v.rotulo}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       ),
-      acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaFila(f.usuario.id) }],
+      acoes: [{ rotulo: "Remover", perigo: true, onClick: () => removerDaFila(f.posicao) }],
     }
   }
 
-  const rotuloBusca = !adicionando
-    ? ""
-    : adicionando.coordenador
-    ? "Adicionar coordenador"
-    : adicionando.posicao != null
-    ? `Adicionar: ${descreverPosicao(adicionando.posicao)}`
-    : "Adicionar à equipe"
+  const rotuloBusca = adicionando ? `Adicionar: ${descreverPosicao(adicionando.posicao)}` : ""
 
   return (
     <div
@@ -364,37 +273,11 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               </svg>
             </button>
           </div>
-          <p className="text-gray-400 text-sm mb-4 sm:mb-6">Defina o dia, o horário e quem participa.</p>
+          <p className="text-gray-400 text-sm mb-4 sm:mb-6">Defina o dia e quem fica em cada vaga do diurno e do noturno.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 sm:px-8 pb-4 space-y-4">
-            {podeCriarSocio && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de plantão</label>
-                <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => trocarTipo("plantonista")}
-                    className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                      tipo === "plantonista" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                    }`}
-                  >
-                    Plantonista
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => trocarTipo("socio")}
-                    className={`flex-1 text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                      tipo === "socio" ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                    }`}
-                  >
-                    Sócio
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div>
               <label htmlFor="titulo" className="block text-sm font-medium text-gray-700 mb-1">
                 Título
@@ -405,7 +288,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                 required
                 value={titulo}
                 onChange={(e) => setTitulo(e.target.value)}
-                placeholder="Plantão UTI - noturno"
+                placeholder="Plantão Centro Cirúrgico"
                 className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
               />
             </div>
@@ -437,111 +320,76 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="horaInicio" className="block text-sm font-medium text-gray-700 mb-1">
-                  Início
-                </label>
-                <input
-                  id="horaInicio"
-                  type="time"
-                  required
-                  value={horaInicio}
-                  onChange={(e) => setHoraInicio(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                />
-              </div>
-              <div>
-                <label htmlFor="horaFim" className="block text-sm font-medium text-gray-700 mb-1">
-                  Fim
-                </label>
-                <input
-                  id="horaFim"
-                  type="time"
-                  required
-                  value={horaFim}
-                  onChange={(e) => setHoraFim(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                />
-              </div>
-            </div>
+            <div className="space-y-4">
+              {TURNOS.map((t) => (
+                <div key={t.valor}>
+                  <p className="block text-sm font-medium text-gray-700 mb-1">
+                    {t.rotulo} <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                  </p>
+                  <GradeParticipantes celulas={celulasDoTurno(t.valor)} />
+                  {/* A busca aparece logo abaixo da grade do turno da vaga que a abriu */}
+                  {adicionando && turnoBusca === t.valor && (
+                    <div ref={buscaRef} className="scroll-mt-2 mt-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <label htmlFor="buscaMedico" className="text-xs font-semibold text-brand-700">
+                          {rotuloBusca}
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => abrirBusca(null)}
+                          className="text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                      <input
+                        id="buscaMedico"
+                        autoFocus
+                        onFocus={rolarBuscaParaTopo}
+                        type="text"
+                        value={busca}
+                        onChange={(e) => setBusca(e.target.value)}
+                        placeholder="Buscar por nome ou e-mail"
+                        autoComplete="off"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
+                      />
 
-            <div>
-              <p className="block text-sm font-medium text-gray-700 mb-1">
-                {tipo === "plantonista" ? "Equipe" : noturno ? "Fila de sócios · noturno" : "Fila de sócios"}
-              </p>
-
-              <GradeParticipantes celulas={celulas} />
-
-              {tipo === "socio" && foraDaFila.length > 0 && (
-                <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  {noturno ? "No plantão noturno a fila é 1º, 1º, 2º, 3º e 4º." : "No plantão diurno a fila vai do 1º ao 7º, mais o intermediário."}{" "}
-                  Mude a posição de {foraDaFila.map((f) => f.usuario.nome ?? f.usuario.email).join(", ")} ou remova.
-                </p>
-              )}
-
-              {adicionando && (
-                <div ref={buscaRef} className="scroll-mt-2 mt-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <label htmlFor="buscaMedico" className="text-xs font-semibold text-brand-700">
-                      {rotuloBusca}
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => abrirBusca(null)}
-                      className="text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                  <input
-                    id="buscaMedico"
-                    autoFocus
-                    onFocus={rolarBuscaParaTopo}
-                    type="text"
-                    value={busca}
-                    onChange={(e) => setBusca(e.target.value)}
-                    placeholder="Buscar por nome ou e-mail"
-                    autoComplete="off"
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-                  />
-
-                  {busca.trim() && (
-                    <div className="mt-1 w-full bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
-                      {buscando ? (
-                        <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
-                      ) : resultados.filter((u) => !jaSelecionados.includes(u.id)).length === 0 ? (
-                        <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
-                      ) : (
-                        resultados
-                          .filter((u) => !jaSelecionados.includes(u.id))
-                          .map((u) => (
-                            <button
-                              key={u.id}
-                              type="button"
-                              onClick={() => selecionarUsuario(u)}
-                              disabled={!!u.afastamento}
-                              className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
-                            >
-                              <SiglaBadge sigla={u.sigla} size="sm" />
-                              <span className="min-w-0 truncate">{u.nome ?? u.email ?? u.id}</span>
-                              {u.afastamento ? (
-                                <AvisoAfastamento afastamento={u.afastamento} />
-                              ) : (
-                                <AvisoIndisponivel dias={u.dias_disponiveis} data={data} />
-                              )}
-                            </button>
-                          ))
+                      {busca.trim() && (
+                        <div className="mt-1 w-full bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+                          {buscando ? (
+                            <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
+                          ) : resultadosLivres.length === 0 ? (
+                            <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum médico encontrado.</p>
+                          ) : (
+                            resultadosLivres
+                              .map((u) => (
+                                <button
+                                  key={u.id}
+                                  type="button"
+                                  onClick={() => selecionarUsuario(u)}
+                                  disabled={!!u.afastamento}
+                                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+                                >
+                                  <SiglaBadge sigla={u.sigla} size="sm" />
+                                  <span className="min-w-0 truncate">{u.nome ?? u.email ?? u.id}</span>
+                                  {u.afastamento ? (
+                                    <AvisoAfastamento afastamento={u.afastamento} />
+                                  ) : (
+                                    <AvisoIndisponivel dias={u.dias_disponiveis} data={data} />
+                                  )}
+                                </button>
+                              ))
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
-              )}
+              ))}
 
               <p className="text-xs text-gray-400 mt-1">
-                {tipo === "plantonista"
-                  ? "Clique em + para adicionar médicos e em um médico para ver as opções. O coordenador é obrigatório e sócios só entram como coordenador."
-                  : "Clique em uma vaga para preenchê-la e em um médico para ver as opções."}
+                Clique em uma vaga para preenchê-la e em um médico para ver as opções. Pelo menos um coordenador é
+                obrigatório, e o mesmo médico pode estar no diurno e no noturno.
               </p>
             </div>
 

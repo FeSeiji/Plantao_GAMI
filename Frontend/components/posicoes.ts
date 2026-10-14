@@ -1,43 +1,78 @@
-// Fila do plantão de sócio — mesma regra de Backend/src/services/posicoes.js.
-// Diurno: posições 1 a 7 e, no fim, o intermediário (gravado como posição 8).
-// Noturno (começa às 19h ou depois): 1º, 1º, 2º, 3º, 4º — o segundo 1º é gravado como 9.
-export const POSICAO_INTERMEDIARIO = 8
-export const POSICAO_SEGUNDO_PRIMEIRO = 9
-export const POSICOES = [1, 2, 3, 4, 5, 6, 7, POSICAO_INTERMEDIARIO]
-export const POSICOES_NOTURNO = [1, POSICAO_SEGUNDO_PRIMEIRO, 2, 3, 4]
+// Vagas do plantão — mesma tabela de Backend/src/services/posicoes.js, no formato da escala anual do cliente.
+// Um plantão por dia, com o diurno (07h–19h) e o noturno (19h–07h do dia seguinte). A posição identifica a vaga
+// e segue a ordem das linhas da escala, de 1 a 13 — por isso o mesmo médico pode estar no diurno e no noturno.
+export type Turno = "diurno" | "noturno"
 
-const HORA_INICIO_NOTURNO = 19
+export const TURNOS: { valor: Turno; rotulo: string; hora_inicio: string; hora_fim: string }[] = [
+  { valor: "diurno", rotulo: "Diurno", hora_inicio: "07:00", hora_fim: "19:00" },
+  { valor: "noturno", rotulo: "Noturno", hora_inicio: "19:00", hora_fim: "07:00" },
+]
 
-export function ehNoturno(horaInicio: string) {
-  return Number(horaInicio.slice(0, 2)) >= HORA_INICIO_NOTURNO
+type Vaga = { posicao: number; turno: Turno; rotulo: string; curto: string; coordenador?: boolean }
+
+export const VAGAS: Vaga[] = [
+  { posicao: 1, turno: "diurno", rotulo: "Coordenador", curto: "C", coordenador: true },
+  { posicao: 2, turno: "diurno", rotulo: "Coordenador", curto: "C", coordenador: true },
+  { posicao: 3, turno: "diurno", rotulo: "2º", curto: "2" },
+  { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3" },
+  { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4" },
+  { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5" },
+  { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6" },
+  { posicao: 8, turno: "diurno", rotulo: "7º", curto: "7" },
+  { posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int" },
+  { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1" },
+  { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1" },
+  { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2" },
+  { posicao: 13, turno: "noturno", rotulo: "3º", curto: "3" },
+]
+
+function vagaDa(posicao: number) {
+  return VAGAS.find((v) => v.posicao === posicao)
 }
 
-export function posicoesDoPlantao(horaInicio: string) {
-  return ehNoturno(horaInicio) ? POSICOES_NOTURNO : POSICOES
+export function vagasDoTurno(turno: Turno) {
+  return VAGAS.filter((v) => v.turno === turno).map((v) => v.posicao)
 }
 
-// Para ordenar a fila: o segundo 1º vem logo depois do primeiro
-export function ordemDaPosicao(posicao: number) {
-  return posicao === POSICAO_SEGUNDO_PRIMEIRO ? 1.5 : posicao
+export function turnoDaPosicao(posicao: number): Turno {
+  return vagaDa(posicao)?.turno ?? "diurno"
 }
 
-// "3º" / "Intermediário" — cabeçalhos e células
+export function rotuloTurno(turno: Turno) {
+  return TURNOS.find((t) => t.valor === turno)!.rotulo
+}
+
+// { data, hora_inicio, hora_fim } da vaga nesse dia — o horário do turno dela
+export function horarioDaVaga(data: string, posicao: number) {
+  const { hora_inicio, hora_fim } = TURNOS.find((t) => t.valor === turnoDaPosicao(posicao))!
+  return { data, hora_inicio, hora_fim }
+}
+
+export function ehVagaDeCoordenador(posicao: number | null | undefined) {
+  return posicao != null && vagaDa(posicao)?.coordenador === true
+}
+
+// "Coordenador" / "3º" / "Intermediário" — cabeçalhos e células (o turno aparece no título do bloco)
 export function rotuloPosicao(posicao: number) {
-  if (posicao === POSICAO_INTERMEDIARIO) return "Intermediário"
-  if (posicao === POSICAO_SEGUNDO_PRIMEIRO) return "1º"
-  return `${posicao}º`
+  return vagaDa(posicao)?.rotulo ?? `${posicao}`
 }
 
-// "3" / "Int" — espaços apertados (select, marcador do calendário)
+// "C" / "3" / "Int" — espaços apertados (marcador do calendário)
 export function rotuloPosicaoCurto(posicao: number) {
-  if (posicao === POSICAO_INTERMEDIARIO) return "Int"
-  if (posicao === POSICAO_SEGUNDO_PRIMEIRO) return "1"
-  return String(posicao)
+  return vagaDa(posicao)?.curto ?? String(posicao)
 }
 
-// "posição 3" / "intermediário" — no meio de frases
+// "coordenador" / "3º do diurno" / "intermediário" — no meio de frases
 export function descreverPosicao(posicao: number) {
-  if (posicao === POSICAO_INTERMEDIARIO) return "intermediário"
-  if (posicao === POSICAO_SEGUNDO_PRIMEIRO) return "posição 1"
-  return `posição ${posicao}`
+  const vaga = vagaDa(posicao)
+  if (!vaga) return `vaga ${posicao}`
+  if (vaga.coordenador) return "coordenador"
+  if (vaga.curto === "Int") return "intermediário"
+  return `${vaga.rotulo} do ${vaga.turno}`
+}
+
+// "7h–19h"
+export function formatarTurno(turno: Turno) {
+  const { hora_inicio, hora_fim } = TURNOS.find((t) => t.valor === turno)!
+  return `${Number(hora_inicio.slice(0, 2))}h–${Number(hora_fim.slice(0, 2))}h`
 }

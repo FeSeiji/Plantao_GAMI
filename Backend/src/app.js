@@ -37,5 +37,7 @@ app.use('/bm-financeiro', require('./routes/bmFinanceiro'))
 app.use('/dashboard', require('./routes/dashboard'))
 app.use('/afastamentos', require('./routes/afastamentos'))
 app.use('/fichas', require('./routes/fichas'))
+app.use('/casos-fora', require('./routes/casosFora'))
+app.use('/hospitais', require('./routes/hospitais'))
 
 module.exports = app

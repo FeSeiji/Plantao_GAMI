@@ -104,6 +104,19 @@ async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf, 
   return { user: data.user }
 }
 
+// Map usuario_id -> roles de todos os usuários (o BM e o dashboard separam sócio e plantonista pelo cargo)
+async function buscarRolesDosUsuarios() {
+  const { data, error } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+  if (error) throw error
+  return new Map(data.users.map(u => [u.id, u.app_metadata?.roles ?? []]))
+}
+
+// No BM, quem tem o cargo de sócio conta pontos pela vaga; quem é só plantonista conta horas
+function contaComoSocio(roles) {
+  return (roles ?? []).includes('anestesita_socio')
+}
+
 module.exports = {
   ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, UFS, validarDadosUsuario, criarUsuario,
+  buscarRolesDosUsuarios, contaComoSocio,
 }

@@ -146,8 +146,8 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 
 | Role | Descrição |
 |------|-----------|
-| `anestesita_socio` | Anestesista sócio — trabalha em plantões de sócio (fila por posição) e pode coordenar plantões de plantonista |
-| `anestesita_plantonista` | Anestesista plantonista — trabalha em plantões de plantonista (equipe) e de sócio |
+| `anestesita_socio` | Anestesista sócio — entra em qualquer vaga do plantão; no BM conta **pontos** pela vaga |
+| `anestesita_plantonista` | Anestesista plantonista — entra em qualquer vaga do plantão; no BM conta **horas** (se também for sócio, conta pontos) |
 | `tecnico` | Técnico — gestão de usuários (inclusive de administradores, exceto a role admin) |
 | `admin` | Administrador |
 
@@ -160,22 +160,26 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 ## 📅 Funcionalidades
 
 ### Plantões
-Existem dois tipos de plantão:
-- **Plantonista** — uma equipe de médicos, sem limite de tamanho, com **um coordenador obrigatório**.
-- **Sócio** — uma fila de até 8 médicos: **posições de 1 a 7** e, no fim, o **intermediário** (gravado como posição 8).
+Segue a escala anual do cliente: **um plantão por dia**, sem tipo, com as vagas do diurno e do noturno. A vaga (posição de 1 a 13, na ordem das linhas da escala) é o que identifica cada lugar:
+
+| Turno | Horário | Vagas (posição) |
+|-------|---------|-----------------|
+| Diurno | 7h–19h | Coordenador (1), Coordenador (2), 2º a 7º (3 a 8) |
+| Noturno | 19h–7h do dia seguinte | Intermediário (9), 1º (10), 1º (11), 2º (12), 3º (13) |
 
 Regras de escala:
-- Em plantão de **plantonista**, quem é só sócio entra **apenas como coordenador**. Quem tem as duas roles pode ser membro.
-- Médico que é só plantonista **não cria** plantão de sócio.
-- Um médico não pode estar em dois plantões com horários sobrepostos.
+- Qualquer médico (sócio ou plantonista) entra em qualquer vaga. Pelo menos **um coordenador é obrigatório**.
+- O mesmo médico pode estar no **diurno e no noturno** do mesmo dia (os turnos só se encostam às 19h), mas não em duas vagas do mesmo turno.
+- Um médico não pode estar em duas vagas com horários sobrepostos (inclusive a troca por horas).
 - Médico de **férias ou em congresso** não pode ser escalado nesses dias (veja abaixo).
+- O horário é fixo por turno; quem cobre só parte de uma vaga usa a troca por horas.
 
-Os participantes aparecem num **grid**: no sócio, 7 células fixas (clique numa vaga para preenchê-la); no plantonista, o coordenador em destaque, a equipe e uma célula **+** para crescer. As ações de cada médico (tornar coordenador, trocar, remover) ficam num menu ao clicar na célula.
+Os participantes aparecem em dois **grids**, um por turno, com uma célula por vaga (clique numa vaga vazia para preenchê-la). As vagas de coordenador ficam em destaque, e quem vira coordenador é definido mudando o médico de vaga — inclusive entre o diurno e o noturno. As ações de cada médico (trocar, remover) ficam num menu ao clicar na célula. Mudar posições: a gestão e os médicos escalados no plantão.
 
-O calendário tem visões de **semana** e **mês**, filtro por tipo e uma **cor por tipo** (azul-claro = plantonista, verde-água = sócio). No celular, a semana mostra os dias empilhados.
+O calendário tem visões de **semana** (uma linha por turno) e **mês**, com uma **cor por turno** (âmbar = diurno, índigo = noturno). No celular, a semana mostra os dias empilhados. A tela **Meu plantão** mostra a semana no formato da escala: as vagas nas linhas e os dias nas colunas.
 
 ### Trocas de plantão
-Substituir um médico num slot já ocupado cria uma **solicitação de troca**. A troca só vale depois que o médico que entra **aceita**, e enquanto isso o médico que sai continua no plantão. Adicionar alguém num slot vazio não precisa de aceite. O sino de notificações mostra as trocas pendentes para o usuário logado.
+Substituir o médico de uma vaga já ocupada cria uma **solicitação de troca** (a troca é da vaga). A troca só vale depois que o médico que entra **aceita**, e enquanto isso o médico que sai continua no plantão. Adicionar alguém num slot vazio não precisa de aceite. O sino de notificações mostra as trocas pendentes para o usuário logado.
 
 ### Meu perfil
 Acessado pelo menu da sigla (canto superior). Cada usuário vê seus dados e edita nome, sigla, telefone, data de nascimento e CRM. E-mail e funções só a gestão altera. Anestesistas também têm:
@@ -192,14 +196,14 @@ Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-m
 ### Dashboard
 Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e papel na equipe/fila), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos. Os dados vêm de um único endpoint e mostram só o que é do próprio usuário.
 
-Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias (plantão sem médico ou sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
+Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias por turno (turno sem médico ou diurno sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
 
 ### BM Financeiro
-Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado):
-- **Plantonista** — soma das **horas trabalhadas**. Plantões que viram a noite contam inteiros no mês em que começam.
-- **Sócio** — soma de **pontos por posição**: posição 1 = 7 pts, 2 = 6 pts … 7 = 1 pt; intermediário = 7 pts.
+Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado). O plantão não tem tipo: a separação é pelo **cargo** do médico.
+- **Plantonista** (só o cargo de plantonista) — soma das **horas trabalhadas**. O noturno conta inteiro no mês em que o plantão começa.
+- **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**: diurno Coordenador 7, Coordenador 7, 2º 6 … 7º 1; noturno 1º 7, 1º 7, 2º 6, 3º 5, intermediário 7.
 
-Tem seletor de mês, busca por médico e **exportação para Excel** (uma aba por tipo). Acesso: `admin`, `anestesita_socio` e `tecnico`.
+Tem seletor de mês, busca por médico e **exportação para Excel** (uma aba para plantonistas e outra para sócios). Acesso: `admin`, `anestesita_socio` e `tecnico`.
 
 ---
 
@@ -228,6 +232,7 @@ Authorization: Bearer <access_token>
 |--------|------|-----------|
 | `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`, CRM, telefone, data de nascimento, dias disponíveis) |
 | `PATCH` | `/auth/me` | Edita o próprio cadastro (nome, sigla, telefone, data de nascimento, CRM, dias disponíveis) |
+| `POST` | `/auth/me/senha` | Troca a própria senha (`senha_atual` + `nova_senha`, mínimo 8). Encerra as sessões da conta e devolve uma nova (`token`, `refresh_token`, `expires_at`) |
 
 **Usuários**
 
@@ -244,16 +249,16 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/plantoes` | Lista plantões (`?inicio=`, `?fim=`, `?tipo=`) |
+| `GET` | `/plantoes` | Lista plantões (`?inicio=`, `?fim=`) |
 | `GET` | `/plantoes/:id` | Detalhe de um plantão |
-| `POST` | `/plantoes` | Cria plantão |
-| `PATCH` | `/plantoes/:id` | Edita plantão |
-| `POST` | `/plantoes/:id/usuarios` | Adiciona médicos à equipe/fila |
-| `DELETE` | `/plantoes/:id/usuarios/:usuarioId` | Remove médico (registra no histórico e cancela a troca pendente do slot) |
+| `POST` | `/plantoes` | Cria o plantão do dia (`titulo`, `data`, `fila: [{ usuario_id, posicao }]`); 409 se o dia já tem plantão |
+| `PATCH` | `/plantoes/:id` | Edita título, descrição e dia |
+| `POST` | `/plantoes/:id/usuarios` | Preenche vagas vazias (`fila: [{ usuario_id, posicao }]`) |
+| `DELETE` | `/plantoes/:id/vagas/:posicao` | Esvazia a vaga (registra no histórico e cancela a troca pendente dela) |
 | `GET` | `/plantoes/:id/remocoes` | Histórico de remoções do plantão |
-| `PATCH` | `/plantoes/:id/coordenador` | Define o coordenador |
+| `PATCH` | `/plantoes/:id/posicao` | Move o médico da vaga `posicao` para `nova_posicao` (troca com quem estiver nela); define o coordenador |
 | `GET` | `/plantoes/:id/trocas` | Histórico de trocas do plantão |
-| `POST` | `/plantoes/:id/trocas` | Solicita troca de médico |
+| `POST` | `/plantoes/:id/trocas` | Solicita troca da vaga (`posicao`, `usuario_entrada` e, na troca por horas, `hora_inicio`/`hora_fim`) |
 | `GET` | `/plantoes/trocas/pendentes` | Trocas aguardando o aceite do usuário logado |
 | `PATCH` | `/plantoes/trocas/:trocaId/aceitar` | Aceita a troca |
 | `PATCH` | `/plantoes/trocas/:trocaId/recusar` | Recusa a troca |
@@ -278,7 +283,7 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista e pontos por sócio no mês |
+| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista e pontos por sócio no mês (pelo cargo do médico) |
 
 ---
 

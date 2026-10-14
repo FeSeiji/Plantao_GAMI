@@ -2,16 +2,17 @@ const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
 const {
-  createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removeUsuario, definirCoordenador,
+  createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removerDaVaga,
   criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
-  alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarCobertura,
+  alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarTroca,
 } = require('../controllers/plantoes')
 
-// Criar e editar o plantão e mexer na equipe (adicionar, remover, coordenador) é da gestão.
+// Criar e editar o plantão e preencher ou esvaziar vagas é da gestão.
 // Os médicos usam a troca, que pede aceite; sócios com a flag admin entram por 'admin'
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
-// Mudar a ordem da fila de sócios: gestão e os próprios sócios
-const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
+// Mudar médicos de vaga: gestão e os médicos escalados no plantão (conferido no controller).
+// Mudar de vaga é também como se define o coordenador
+const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'anestesita_plantonista', 'tecnico')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)
@@ -21,13 +22,13 @@ router.get('/:id', getPlantao)
 router.post('/', gestao, createPlantao)
 router.patch('/:id', gestao, updatePlantao)
 router.post('/:id/usuarios', gestao, addUsuarios)
-router.patch('/:id/coordenador', gestao, definirCoordenador)
 router.patch('/:id/posicao', mudarPosicao, alterarPosicao)
-router.delete('/:id/usuarios/:usuarioId', gestao, removeUsuario)
+router.delete('/:id/vagas/:posicao', gestao, removerDaVaga)
 router.get('/:id/trocas', listarTrocasDoPlantao)
 router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.get('/:id/mudancas-posicao', listarMudancasPosicaoDoPlantao)
 router.post('/:id/trocas', criarTroca)
-router.patch('/:id/trocas/:trocaId/cancelar', gestao, cancelarCobertura)
+// Pedido pendente: quem pediu ou a gestão. Troca por horas já aceita: só a gestão (conferido no controller)
+router.patch('/:id/trocas/:trocaId/cancelar', cancelarTroca)
 
 module.exports = router

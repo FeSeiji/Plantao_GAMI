@@ -2,6 +2,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
 const { TIPOS_AFASTAMENTO, hojeLocal } = require('../services/afastamentos')
+const { horarioDaVaga } = require('../services/posicoes')
 const { ehGestao } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -88,10 +89,11 @@ exports.criar = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
-  // Plantões em que ele já está escalado nesse período: continuam como estão, só ganham o indicador
+  // Vagas em que ele já está escalado nesse período: continuam como estão, só ganham o indicador.
+  // O horário de cada uma é o do turno da vaga
   const { data: escalas, error: escalasError } = await supabase
     .from('plantao_usuarios')
-    .select('plantoes!inner(id, titulo, data, hora_inicio)')
+    .select('posicao, plantoes!inner(id, titulo, data)')
     .eq('usuario_id', req.user.id)
     .gte('plantoes.data', data_inicio)
     .lte('plantoes.data', data_fim)
@@ -99,7 +101,7 @@ exports.criar = async (req, res) => {
   if (escalasError) console.error(escalasError)
 
   const plantoesAfetados = (escalas ?? [])
-    .map(e => e.plantoes)
+    .map(e => ({ ...e.plantoes, ...horarioDaVaga(e.plantoes, e.posicao) }))
     .sort((a, b) => (a.data + a.hora_inicio).localeCompare(b.data + b.hora_inicio))
 
   return res.status(201).json({ ...criado, plantoesAfetados })

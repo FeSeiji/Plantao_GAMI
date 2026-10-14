@@ -2,26 +2,29 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const { horarioDaVaga, ehVagaDeCoordenador } = require('./posicoes')
+
 // Troca por horas ("cobertura"): uma troca de plantao_trocas com hora_inicio/hora_fim.
 // Depois de aceita, a vaga continua do titular (usuario_saida) e o convidado (usuario_entrada)
 // cobre só esse intervalo. Troca sem horário é a troca da vaga inteira.
+// "vaga" abaixo é o horário da vaga: { data, hora_inicio, hora_fim } do turno dela (horarioDaVaga).
 
 function paraMinutos(hora) {
   const [h, m] = String(hora).split(':').map(Number)
   return h * 60 + m
 }
 
-// Minutos desde o início do plantão; o que passa da meia-noite soma 24h
-function minutosDesdeInicio(plantao, hora) {
-  const inicio = paraMinutos(plantao.hora_inicio)
+// Minutos desde o início da vaga; o que passa da meia-noite soma 24h
+function minutosDesdeInicio(vaga, hora) {
+  const inicio = paraMinutos(vaga.hora_inicio)
   let m = paraMinutos(hora)
   if (m < inicio) m += 24 * 60
   return m - inicio
 }
 
-function duracaoDoPlantao(plantao) {
-  const inicio = paraMinutos(plantao.hora_inicio)
-  let fim = paraMinutos(plantao.hora_fim)
+function duracaoDaVaga(vaga) {
+  const inicio = paraMinutos(vaga.hora_inicio)
+  let fim = paraMinutos(vaga.hora_fim)
   if (fim <= inicio) fim += 24 * 60
   return fim - inicio
 }
@@ -35,27 +38,27 @@ function duracaoDaCobertura(horaInicio, horaFim) {
 }
 
 // Dia em que a cobertura começa: o do plantão, ou o seguinte se ela começa depois da meia-noite
-function dataDaCobertura(plantao, horaInicio) {
-  if (paraMinutos(horaInicio) >= paraMinutos(plantao.hora_inicio)) return plantao.data
-  const d = new Date(`${plantao.data}T00:00:00Z`)
+function dataDaCobertura(vaga, horaInicio) {
+  if (paraMinutos(horaInicio) >= paraMinutos(vaga.hora_inicio)) return vaga.data
+  const d = new Date(`${vaga.data}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + 1)
   return d.toISOString().slice(0, 10)
 }
 
-// Horas cheias, dentro do plantão, encostadas no início ou no fim, e menores que o plantão inteiro.
+// Horas cheias, dentro do turno da vaga, encostadas no início ou no fim, e menores que o turno inteiro.
 // Retorna a mensagem de erro ou null.
-function validarIntervalo(plantao, horaInicio, horaFim) {
+function validarIntervalo(vaga, horaInicio, horaFim) {
   const formato = /^\d{2}:00(:00)?$/
   if (!formato.test(horaInicio ?? '') || !formato.test(horaFim ?? '')) {
     return 'hora_inicio e hora_fim precisam ser horas cheias (ex.: 19:00)'
   }
-  const total = duracaoDoPlantao(plantao)
-  const ini = minutosDesdeInicio(plantao, horaInicio)
-  let fim = minutosDesdeInicio(plantao, horaFim)
-  if (fim === 0) fim = 24 * 60 // fim igual ao início do plantão só faz sentido num plantão de 24h
-  if (ini >= total || fim > total || fim <= ini) return 'O intervalo precisa estar dentro do horário do plantão'
-  if (ini !== 0 && fim !== total) return 'O intervalo precisa começar no início ou terminar no fim do plantão'
-  if (ini === 0 && fim === total) return 'Para o plantão inteiro, use a troca normal'
+  const total = duracaoDaVaga(vaga)
+  const ini = minutosDesdeInicio(vaga, horaInicio)
+  let fim = minutosDesdeInicio(vaga, horaFim)
+  if (fim === 0) fim = 24 * 60 // fim igual ao início da vaga só faz sentido num turno de 24h
+  if (ini >= total || fim > total || fim <= ini) return 'O intervalo precisa estar dentro do horário da vaga'
+  if (ini !== 0 && fim !== total) return 'O intervalo precisa começar no início ou terminar no fim da vaga'
+  if (ini === 0 && fim === total) return 'Para a vaga inteira, use a troca normal'
   return null
 }
 
@@ -65,7 +68,7 @@ async function buscarCoberturas(plantaoIds) {
   if (ids.length === 0) return []
   const { data, error } = await supabase
     .from('plantao_trocas')
-    .select('id, plantao_id, usuario_saida, usuario_entrada, hora_inicio, hora_fim')
+    .select('id, plantao_id, posicao, usuario_saida, usuario_entrada, hora_inicio, hora_fim')
     .in('plantao_id', ids)
     .eq('status', 'aceita')
     .not('hora_inicio', 'is', null)
@@ -74,14 +77,14 @@ async function buscarCoberturas(plantaoIds) {
 }
 
 // Quem fez quanto de cada vaga do plantão: o titular fica com o que sobra e quem cobre com o intervalo.
-// Retorna [{ usuario_id, posicao, coordenador, fracao, minutos }] — fracao de 0 a 1 do plantão inteiro,
+// Retorna [{ usuario_id, posicao, coordenador, fracao, minutos }] — fracao de 0 a 1 da vaga inteira,
 // usada para ratear horas (plantonista) e pontos da posição (sócio).
 function repartirPlantao(plantao, membros, coberturas) {
-  const total = duracaoDoPlantao(plantao)
   const partes = []
   for (const m of membros) {
-    const c = coberturas.find(x => x.plantao_id === plantao.id && x.usuario_saida === m.usuario_id)
-    const base = { posicao: m.posicao ?? null, coordenador: m.is_coordenador ?? false }
+    const total = duracaoDaVaga(horarioDaVaga(plantao, m.posicao))
+    const c = coberturas.find(x => x.plantao_id === plantao.id && x.posicao === m.posicao && x.usuario_saida === m.usuario_id)
+    const base = { posicao: m.posicao, coordenador: ehVagaDeCoordenador(m.posicao) }
     if (!c) {
       partes.push({ ...base, usuario_id: m.usuario_id, fracao: 1, minutos: total })
       continue
@@ -95,7 +98,7 @@ function repartirPlantao(plantao, membros, coberturas) {
 
 module.exports = {
   repartirPlantao,
-  duracaoDoPlantao,
+  duracaoDaVaga,
   duracaoDaCobertura,
   dataDaCobertura,
   validarIntervalo,

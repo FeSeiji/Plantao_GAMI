@@ -4,10 +4,14 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { pontosDaPosicao } = require('../services/posicoes')
 const { buscarCoberturas, repartirPlantao } = require('../services/coberturas')
+const { buscarRolesDosUsuarios, contaComoSocio } = require('../services/usuarios')
+const { listarCasosFora } = require('../services/casosFora')
 
 // Calculado na hora a partir dos plantões do mês — nada é gravado.
-// Plantões que viram a noite contam no mês em que começam.
+// O plantão não tem tipo: quem tem o cargo de sócio conta pontos pela vaga e quem é só plantonista conta horas.
+// O noturno conta no mês em que o plantão começa.
 // Troca por horas: horas e pontos da vaga são divididos na proporção das horas de cada um.
+// Os casos fora do mês vêm listados um a um, do mais antigo para o mais recente.
 exports.resumoMensal = async (req, res) => {
   const { mes } = req.query
 
@@ -21,15 +25,19 @@ exports.resumoMensal = async (req, res) => {
 
   const { data: plantoes, error } = await supabase
     .from('plantoes')
-    .select('id, data, hora_inicio, hora_fim, tipo, plantao_usuarios(usuario_id, posicao)')
+    .select('id, data, plantao_usuarios(usuario_id, posicao)')
     .gte('data', inicio)
     .lte('data', fim)
 
   if (error) return res.status(400).json({ error: error.message })
 
-  let coberturas
+  let coberturas, roles, casosFora
   try {
-    coberturas = await buscarCoberturas(plantoes.map(p => p.id))
+    [coberturas, roles, casosFora] = await Promise.all([
+      buscarCoberturas(plantoes.map(p => p.id)),
+      buscarRolesDosUsuarios(),
+      listarCasosFora({ inicio, fim }),
+    ])
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -37,21 +45,19 @@ exports.resumoMensal = async (req, res) => {
   const plantonistas = new Map()
   const socios = new Map()
 
+  // Cada vaga ocupada (ou o pedaço dela, na troca por horas) conta como um plantão de quem a fez
   for (const plantao of plantoes) {
-    const partes = repartirPlantao(plantao, plantao.plantao_usuarios, coberturas)
-    if (plantao.tipo === 'plantonista') {
-      for (const { usuario_id, minutos } of partes) {
-        const acc = plantonistas.get(usuario_id) ?? { plantoes: 0, minutos: 0 }
-        acc.plantoes += 1
-        acc.minutos += minutos
-        plantonistas.set(usuario_id, acc)
-      }
-    } else {
-      for (const { usuario_id, posicao, fracao } of partes) {
+    for (const { usuario_id, posicao, fracao, minutos } of repartirPlantao(plantao, plantao.plantao_usuarios, coberturas)) {
+      if (contaComoSocio(roles.get(usuario_id))) {
         const acc = socios.get(usuario_id) ?? { plantoes: 0, pontos: 0 }
         acc.plantoes += 1
         acc.pontos += pontosDaPosicao(posicao) * fracao
         socios.set(usuario_id, acc)
+      } else {
+        const acc = plantonistas.get(usuario_id) ?? { plantoes: 0, minutos: 0 }
+        acc.plantoes += 1
+        acc.minutos += minutos
+        plantonistas.set(usuario_id, acc)
       }
     }
   }
@@ -64,6 +70,7 @@ exports.resumoMensal = async (req, res) => {
       mes,
       plantonistas: montarLinhas(plantonistas, perfis, 'minutos'),
       socios: montarLinhas(socios, perfis, 'pontos'),
+      casosFora: casosFora.reverse(),
     })
   } catch (err) {
     return res.status(500).json({ error: err.message })

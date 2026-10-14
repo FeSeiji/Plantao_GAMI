@@ -21,14 +21,13 @@ export type CelulaGrade =
       tipo: "medico"
       chave: string
       pessoa: Pessoa
-      // Cabeçalho da célula: número da posição, "Coordenador" ou o select de posição
+      // Cabeçalho da célula: a vaga ("3º", "Coordenador") ou o select de posição
       rotulo?: React.ReactNode
       destaque?: "coordenador" | "pendente" | "indisponivel"
       status?: React.ReactNode
       acoes?: AcaoMenu[]
       // Conteúdo sempre visível abaixo do nome (ex.: Aceitar/Recusar troca)
       extra?: React.ReactNode
-      larga?: boolean
     }
   | {
       tipo: "vazia"
@@ -37,7 +36,6 @@ export type CelulaGrade =
       texto: string
       onClick?: () => void
       ativa?: boolean
-      larga?: boolean
     }
 
 const CORES = {
@@ -69,8 +67,6 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
   return (
     <div ref={ref} className="grid grid-cols-2 sm:grid-cols-4 gap-2">
       {celulas.map((c) => {
-        const span = c.larga ? "col-span-full" : ""
-
         if (c.tipo === "vazia") {
           const conteudo = (
             <>
@@ -79,7 +75,7 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
               <span className="text-xs">{c.texto}</span>
             </>
           )
-          const base = `${span} min-h-[88px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1 p-2 text-center`
+          const base = `min-h-[88px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1 p-2 text-center`
 
           return c.onClick ? (
             <button
@@ -119,11 +115,11 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
         return (
           <div
             key={c.chave}
-            className={`${span} relative min-h-[88px] rounded-xl border p-2 flex flex-col items-center gap-1 text-center ${
+            className={`relative min-h-[88px] rounded-xl border p-2 flex flex-col items-center gap-1 text-center ${
               CORES[c.destaque ?? "normal"]
             }`}
           >
-            {c.rotulo && <div className="text-[10px] font-bold uppercase tracking-wide">{c.rotulo}</div>}
+            {c.rotulo && <div className="w-full min-w-0 text-[10px] font-bold uppercase tracking-wide">{c.rotulo}</div>}
 
             {temMenu ? (
               <button

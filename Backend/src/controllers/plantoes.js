@@ -5,37 +5,27 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
 
 const { ehGestao } = require('../middleware/auth')
-const { ehNoturno, posicoesDoPlantao, rotuloPosicao, ordemDaPosicao } = require('../services/posicoes')
 const {
-  duracaoDaCobertura, dataDaCobertura, validarIntervalo, buscarCoberturas,
-} = require('../services/coberturas')
+  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga,
+} = require('../services/posicoes')
+const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
+const { usuariosComConflito } = require('../services/conflitos')
+const { respondenteDaTroca } = require('../services/trocas')
 
-const TIPOS_VALIDOS = ['plantonista', 'socio']
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
+// Um plantão por dia, com as vagas do diurno e do noturno (services/posicoes.js)
+const SELECT_PLANTAO = '*, plantao_usuarios(usuario_id, posicao)'
 
 exports.createPlantao = async (req, res) => {
-  const { titulo, descricao, data, hora_inicio, hora_fim, tipo, usuarios, coordenador_id, fila } = req.body
+  const { titulo, descricao, data, fila } = req.body
 
-  if (!titulo || !data || !hora_inicio || !hora_fim) {
-    return res.status(400).json({ error: 'titulo, data, hora_inicio e hora_fim são obrigatórios' })
+  if (!titulo || !data) {
+    return res.status(400).json({ error: 'titulo e data são obrigatórios' })
   }
-
-  if (!TIPOS_VALIDOS.includes(tipo)) {
-    return res.status(400).json({ error: "tipo é obrigatório e deve ser 'plantonista' ou 'socio'" })
-  }
-
-  const rolesCriador = req.user.app_metadata?.roles ?? []
-  if (tipo === 'socio' && rolesCriador.includes('anestesita_plantonista') && !rolesCriador.includes('anestesita_socio')) {
-    return res.status(403).json({ error: 'Médicos plantonistas não podem criar plantões de sócio' })
-  }
-
-  const janela = { data, horaInicio: hora_inicio, horaFim: hora_fim }
 
   let membros
   try {
-    membros = tipo === 'plantonista'
-      ? await validarEquipePlantonista(usuarios, coordenador_id, { janela })
-      : await validarFilaSocio(fila, { janela })
+    membros = await validarFila(fila, { data, exigirCoordenador: true })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -46,26 +36,24 @@ exports.createPlantao = async (req, res) => {
       titulo,
       descricao: descricao ?? null,
       data,
-      hora_inicio,
-      hora_fim,
-      tipo,
       criado_por: req.user.id,
     })
     .select()
     .single()
 
-  if (error) return res.status(400).json({ error: error.message })
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Já existe um plantão nesse dia' })
+    return res.status(400).json({ error: error.message })
+  }
 
-  if (membros.length > 0) {
-    const { error: membrosError } = await supabase
-      .from('plantao_usuarios')
-      .insert(membros.map(m => ({ plantao_id: plantao.id, ...m })))
+  const { error: membrosError } = await supabase
+    .from('plantao_usuarios')
+    .insert(membros.map(m => ({ plantao_id: plantao.id, ...m })))
 
-    if (membrosError) {
-      // Sem os membros o plantão ficaria vazio no calendário: desfaz a criação
-      await supabase.from('plantoes').delete().eq('id', plantao.id)
-      return res.status(400).json({ error: membrosError.message })
-    }
+  if (membrosError) {
+    // Sem os médicos o plantão ficaria vazio no calendário: desfaz a criação
+    await supabase.from('plantoes').delete().eq('id', plantao.id)
+    return res.status(400).json({ error: membrosError.message })
   }
 
   try {
@@ -78,21 +66,15 @@ exports.createPlantao = async (req, res) => {
 }
 
 exports.listPlantoes = async (req, res) => {
-  const { inicio, fim, tipo } = req.query
-
-  if (tipo !== undefined && !TIPOS_VALIDOS.includes(tipo)) {
-    return res.status(400).json({ error: "tipo deve ser 'plantonista' ou 'socio'" })
-  }
+  const { inicio, fim } = req.query
 
   let query = supabase
     .from('plantoes')
-    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
+    .select(SELECT_PLANTAO)
     .order('data', { ascending: true })
-    .order('hora_inicio', { ascending: true })
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
-  if (tipo) query = query.eq('tipo', tipo)
 
   const { data, error } = await query
 
@@ -112,7 +94,7 @@ exports.listPlantoes = async (req, res) => {
 exports.getPlantao = async (req, res) => {
   const { data, error } = await supabase
     .from('plantoes')
-    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
+    .select(SELECT_PLANTAO)
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -130,62 +112,40 @@ exports.getPlantao = async (req, res) => {
 }
 
 exports.updatePlantao = async (req, res) => {
-  const { titulo, descricao, data, hora_inicio, hora_fim } = req.body
+  const { titulo, descricao, data } = req.body
 
   const updates = {}
   if (titulo !== undefined) updates.titulo = titulo
   if (descricao !== undefined) updates.descricao = descricao || null
   if (data !== undefined) updates.data = data
-  if (hora_inicio !== undefined) updates.hora_inicio = hora_inicio
-  if (hora_fim !== undefined) updates.hora_fim = hora_fim
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'Nenhum campo para atualizar' })
   }
 
-  // Mudou dia ou horário: a equipe atual precisa estar livre e sem afastamento na nova janela
-  if (data !== undefined || hora_inicio !== undefined || hora_fim !== undefined) {
-    const { data: atual, error: atualError } = await supabase
-      .from('plantoes')
-      .select('id, tipo, data, hora_inicio, hora_fim, plantao_usuarios(usuario_id, posicao)')
-      .eq('id', req.params.id)
-      .maybeSingle()
+  // A tela manda o dia mesmo quando só o título mudou: compara com o que está gravado
+  // para só validar o que mudou de fato
+  const { data: atual, error: atualError } = await supabase
+    .from('plantoes')
+    .select('id, data, plantao_usuarios(usuario_id, posicao)')
+    .eq('id', req.params.id)
+    .maybeSingle()
 
-    if (atualError) return res.status(500).json({ error: atualError.message })
-    if (!atual) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (atualError) return res.status(500).json({ error: atualError.message })
+  if (!atual) return res.status(404).json({ error: 'Plantão não encontrado' })
 
-    const ids = atual.plantao_usuarios.map(u => u.usuario_id)
-    const novaData = data ?? atual.data
-
-    // O intervalo de uma troca por horas é relativo ao horário do plantão
-    if ((await buscarCoberturas([atual.id])).length > 0) {
-      return res.status(400).json({ error: 'Esse plantão tem troca por horas valendo. Cancele-a antes de mudar o dia ou o horário.' })
-    }
-
-    // Passar de diurno para noturno (ou o contrário) muda as vagas da fila: quem está numa vaga
-    // que não existe no novo tipo precisa sair antes
-    if (atual.tipo === 'socio' && hora_inicio !== undefined) {
-      const permitidas = posicoesDoPlantao(hora_inicio)
-      const foraDaFila = atual.plantao_usuarios.filter(u => u.posicao != null && !permitidas.includes(u.posicao))
-      if (foraDaFila.length > 0) {
-        const vagas = [...new Set(foraDaFila.map(u => rotuloPosicao(u.posicao)))].join(', ')
-        const novoTipo = ehNoturno(hora_inicio) ? 'noturno' : 'diurno'
-        return res.status(400).json({
-          error: `Com esse horário o plantão vira ${novoTipo}, e as vagas ${vagas} deixam de existir. Remova quem está nelas antes de mudar o horário.`
-        })
-      }
-    }
-
+  // Mudou o dia: cada médico precisa estar livre no horário da sua vaga no novo dia, e sem afastamento
+  if (data !== undefined && data !== atual.data) {
     try {
-      const ocupados = await usuariosComConflito(
-        ids, novaData, hora_inicio ?? atual.hora_inicio, hora_fim ?? atual.hora_fim, atual.id
-      )
-      if (ocupados.size > 0) {
-        const perfis = await buscarPerfis([...ocupados])
-        const nomes = [...ocupados].map(id => perfis.get(id)?.nome ?? perfis.get(id)?.email ?? id)
-        return res.status(400).json({ error: `Médico(s) já escalado(s) em outro plantão nesse horário: ${nomes.join(', ')}` })
+      // O intervalo de uma troca por horas valendo foi combinado para aquele dia
+      if ((await buscarCoberturas([atual.id])).length > 0) {
+        return res.status(400).json({ error: 'Esse plantão tem troca por horas valendo. Cancele-a antes de mudar o dia.' })
       }
-      await validarSemAfastamento(ids, novaData)
+
+      // As vagas atuais ainda estão no dia antigo e não contam como conflito
+      const ignorar = atual.plantao_usuarios.map(u => ({ plantao_id: atual.id, posicao: u.posicao }))
+      await validarHorariosLivres(atual.plantao_usuarios, data, { ignorar })
+      await validarSemAfastamento(atual.plantao_usuarios.map(u => u.usuario_id), data)
     } catch (err) {
       return res.status(400).json({ error: err.message })
     }
@@ -195,10 +155,13 @@ exports.updatePlantao = async (req, res) => {
     .from('plantoes')
     .update(updates)
     .eq('id', req.params.id)
-    .select('*, plantao_usuarios(usuario_id, is_coordenador, posicao)')
+    .select(SELECT_PLANTAO)
     .maybeSingle()
 
-  if (error) return res.status(400).json({ error: error.message })
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Já existe um plantão nesse dia' })
+    return res.status(400).json({ error: error.message })
+  }
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
   try {
@@ -211,35 +174,44 @@ exports.updatePlantao = async (req, res) => {
   }
 }
 
-exports.removeUsuario = async (req, res) => {
-  const { data: membro, error: membroError } = await supabase
-    .from('plantao_usuarios')
-    .select('is_coordenador, posicao')
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', req.params.usuarioId)
+// Esvazia uma vaga. É pela vaga, e não pelo médico, porque o mesmo médico pode estar no diurno e no noturno
+exports.removerDaVaga = async (req, res) => {
+  const posicao = Number(req.params.posicao)
+
+  const { data: plantao, error: plantaoError } = await supabase
+    .from('plantoes')
+    .select('id, plantao_usuarios(id, usuario_id, posicao)')
+    .eq('id', req.params.id)
     .maybeSingle()
 
-  if (membroError) return res.status(500).json({ error: membroError.message })
-  if (!membro) return res.status(404).json({ error: 'Médico não está neste plantão' })
+  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
-  if (membro.is_coordenador) {
-    return res.status(400).json({ error: 'Defina outro coordenador antes de remover o atual' })
+  const membro = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+  if (!membro) return res.status(404).json({ error: 'Essa vaga já está vazia' })
+
+  // São duas vagas de coordenador: só sai quem não é o único coordenador
+  const outroCoordenador = plantao.plantao_usuarios.some(u => u !== membro && ehVagaDeCoordenador(u.posicao))
+  if (ehVagaDeCoordenador(posicao) && !outroCoordenador) {
+    return res.status(400).json({
+      error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de remover este.'
+    })
   }
 
   const { error } = await supabase
     .from('plantao_usuarios')
     .delete()
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', req.params.usuarioId)
+    .eq('id', membro.id)
 
   if (error) return res.status(400).json({ error: error.message })
 
-  // A troca pendente do slot (e a troca por horas valendo) perde o sentido, mas continua no histórico como cancelada
+  // A troca pendente da vaga (e a troca por horas valendo) perde o sentido, mas continua no histórico como cancelada
   const { error: trocaError } = await supabase
     .from('plantao_trocas')
     .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_saida', req.params.usuarioId)
+    .eq('plantao_id', plantao.id)
+    .eq('posicao', posicao)
+    .eq('usuario_saida', membro.usuario_id)
     .or('status.eq.pendente,and(status.eq.aceita,hora_inicio.not.is.null)')
 
   if (trocaError) return res.status(500).json({ error: trocaError.message })
@@ -248,11 +220,11 @@ exports.removeUsuario = async (req, res) => {
   const { error: logError } = await supabase
     .from('plantao_remocoes')
     .insert({
-      plantao_id: req.params.id,
-      usuario_id: req.params.usuarioId,
+      plantao_id: plantao.id,
+      usuario_id: membro.usuario_id,
       removido_por: req.user.id,
-      era_coordenador: membro.is_coordenador ?? false,
-      posicao: membro.posicao ?? null,
+      era_coordenador: ehVagaDeCoordenador(posicao),
+      posicao,
     })
 
   if (logError) return res.status(500).json({ error: `Médico removido, mas o histórico não foi gravado: ${logError.message}` })
@@ -284,67 +256,99 @@ exports.listarRemocoesDoPlantao = async (req, res) => {
   }
 }
 
-// Move um sócio para outra posição da fila. Se a posição estiver ocupada, os dois trocam de lugar.
-// Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
+// Move o médico de uma vaga para outra do mesmo plantão, inclusive entre o diurno e o noturno. Se a vaga nova
+// estiver ocupada, os dois trocam de lugar. Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
 exports.alterarPosicao = async (req, res) => {
-  const { usuario_id, posicao } = req.body
+  const { posicao, nova_posicao } = req.body
 
-  if (!usuario_id || !Number.isInteger(posicao)) {
-    return res.status(400).json({ error: 'usuario_id e posicao (número inteiro) são obrigatórios' })
+  if (!POSICOES.includes(posicao) || !POSICOES.includes(nova_posicao)) {
+    return res.status(400).json({ error: `posicao e nova_posicao são obrigatórias (vagas de 1 a ${POSICOES.length})` })
   }
+  if (posicao === nova_posicao) return res.json({ message: 'Posição mantida' })
 
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, tipo, hora_inicio, plantao_usuarios(usuario_id, posicao)')
+    .select('id, data, plantao_usuarios(id, usuario_id, posicao)')
     .eq('id', req.params.id)
     .maybeSingle()
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
-  if (plantao.tipo !== 'socio') {
-    return res.status(400).json({ error: 'Somente plantões de sócio têm posições' })
-  }
-  if (!posicoesDoPlantao(plantao.hora_inicio).includes(posicao)) {
-    return res.status(400).json({ error: 'Essa posição não existe na fila desse plantão' })
-  }
 
-  // Sócio fora da gestão só reordena a fila dos plantões em que está escalado
+  // Fora da gestão, só quem está escalado nesse plantão mexe nas posições dele
   if (!ehGestao(req.user) && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
     return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
   }
 
-  const membro = plantao.plantao_usuarios.find(u => u.usuario_id === usuario_id)
-  if (!membro) return res.status(404).json({ error: 'Médico não está neste plantão' })
-  if (membro.posicao === posicao) return res.json({ message: 'Posição mantida' })
+  const membro = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+  if (!membro) return res.status(404).json({ error: 'Essa vaga está vazia' })
 
-  const ocupante = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+  const ocupante = plantao.plantao_usuarios.find(u => u.posicao === nova_posicao)
+  // O mesmo médico nas duas vagas (uma no diurno e outra no noturno): trocar não muda nada
+  if (ocupante?.usuario_id === membro.usuario_id) return res.json({ message: 'Posição mantida' })
 
-  const moverPara = (id, novaPosicao) => supabase
+  const posicoesDepois = plantao.plantao_usuarios.map(u =>
+    u === membro ? nova_posicao : u === ocupante ? posicao : u.posicao
+  )
+  if (!posicoesDepois.some(ehVagaDeCoordenador)) {
+    return res.status(400).json({
+      error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de mover este.'
+    })
+  }
+
+  // Troca pendente e troca por horas são da vaga: mudar quem está nela no meio do caminho embaralharia o pedido
+  const { data: trocasDasVagas, error: trocasError } = await supabase
+    .from('plantao_trocas')
+    .select('id')
+    .eq('plantao_id', plantao.id)
+    .in('posicao', [posicao, nova_posicao])
+    .or('status.eq.pendente,and(status.eq.aceita,hora_inicio.not.is.null)')
+    .limit(1)
+
+  if (trocasError) return res.status(500).json({ error: trocasError.message })
+  if (trocasDasVagas.length > 0) {
+    return res.status(400).json({
+      error: 'Essa vaga tem pedido de troca pendente ou troca por horas valendo. Cancele antes de mudar a posição.'
+    })
+  }
+
+  // Entre o diurno e o noturno, cada um precisa estar livre no turno para onde vai
+  if (turnoDaPosicao(posicao) !== turnoDaPosicao(nova_posicao)) {
+    const indo = [{ usuario_id: membro.usuario_id, posicao: nova_posicao }]
+    if (ocupante) indo.push({ usuario_id: ocupante.usuario_id, posicao })
+    const ignorar = [{ plantao_id: plantao.id, posicao }, { plantao_id: plantao.id, posicao: nova_posicao }]
+    try {
+      await validarHorariosLivres(indo, plantao.data, { ignorar })
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
+    }
+  }
+
+  const moverPara = (linhaId, novaPosicao) => supabase
     .from('plantao_usuarios')
     .update({ posicao: novaPosicao })
-    .eq('plantao_id', plantao.id)
-    .eq('usuario_id', id)
+    .eq('id', linhaId)
 
   if (ocupante) {
-    // A posição é única por plantão: libera a do médico antes de mover o ocupante para ela
+    // A vaga é única por plantão: libera a do médico antes de mover o ocupante para ela
     const passos = [
-      () => moverPara(usuario_id, null),
-      () => moverPara(ocupante.usuario_id, membro.posicao),
-      () => moverPara(usuario_id, posicao),
+      () => moverPara(membro.id, null),
+      () => moverPara(ocupante.id, posicao),
+      () => moverPara(membro.id, nova_posicao),
     ]
     for (const [i, passo] of passos.entries()) {
       const { error } = await passo()
       if (error) {
-        // Desfaz o que já foi feito para não deixar a fila pela metade
-        if (i >= 2) await moverPara(ocupante.usuario_id, posicao)
-        if (i >= 1) await moverPara(usuario_id, membro.posicao)
+        // Desfaz o que já foi feito para não deixar o plantão pela metade
+        if (i >= 2) await moverPara(ocupante.id, nova_posicao)
+        if (i >= 1) await moverPara(membro.id, posicao)
         return res.status(400).json({ error: error.message })
       }
     }
   } else {
-    const { error } = await moverPara(usuario_id, posicao)
+    const { error } = await moverPara(membro.id, nova_posicao)
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Posição já ocupada nesse plantão' })
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa vaga acabou de ser ocupada. Recarregue o plantão.' })
       return res.status(400).json({ error: error.message })
     }
   }
@@ -353,9 +357,9 @@ exports.alterarPosicao = async (req, res) => {
     .from('plantao_mudancas_posicao')
     .insert({
       plantao_id: plantao.id,
-      usuario_id,
-      posicao_anterior: membro.posicao,
-      posicao_nova: posicao,
+      usuario_id: membro.usuario_id,
+      posicao_anterior: posicao,
+      posicao_nova: nova_posicao,
       usuario_trocado_id: ocupante?.usuario_id ?? null,
       alterado_por: req.user.id,
     })
@@ -390,187 +394,93 @@ exports.listarMudancasPosicaoDoPlantao = async (req, res) => {
   }
 }
 
+// Preenche vagas vazias. Quem já está no mesmo turno desse plantão aparece como ocupado
 exports.addUsuarios = async (req, res) => {
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, tipo, data, hora_inicio, hora_fim')
+    .select('id, data')
     .eq('id', req.params.id)
     .maybeSingle()
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
-  const janela = { data: plantao.data, horaInicio: plantao.hora_inicio, horaFim: plantao.hora_fim, excluirPlantaoId: plantao.id }
-
   let membros
   try {
-    membros = plantao.tipo === 'plantonista'
-      ? (await validarEquipePlantonista(req.body.usuarios, null, { exigirCoordenador: false, janela }))
-      : await validarFilaSocio(req.body.fila, { janela })
+    membros = await validarFila(req.body.fila, { data: plantao.data })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
 
   const { error } = await supabase
     .from('plantao_usuarios')
-    .upsert(
-      membros.map(m => ({ plantao_id: req.params.id, ...m })),
-      { onConflict: 'plantao_id,usuario_id', ignoreDuplicates: plantao.tipo === 'plantonista' }
-    )
+    .insert(membros.map(m => ({ plantao_id: plantao.id, ...m })))
 
   if (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'Posição já ocupada nesse plantão' })
+    if (error.code === '23505') return res.status(409).json({ error: 'Essa vaga já está ocupada' })
     return res.status(400).json({ error: error.message })
   }
 
   return res.status(201).json({ message: 'Médicos adicionados ao plantão' })
 }
 
-exports.definirCoordenador = async (req, res) => {
-  const { usuario_id } = req.body
-  if (!usuario_id) return res.status(400).json({ error: 'usuario_id é obrigatório' })
-
-  const { data: plantao, error: plantaoError } = await supabase
-    .from('plantoes')
-    .select('id, tipo')
-    .eq('id', req.params.id)
-    .maybeSingle()
-
-  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
-  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
-  if (plantao.tipo !== 'plantonista') {
-    return res.status(400).json({ error: 'Somente plantões de plantonista têm coordenador' })
-  }
-
-  const { data: membro, error: membroError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_id)
-    .maybeSingle()
-
-  if (membroError) return res.status(500).json({ error: membroError.message })
-  if (!membro) return res.status(400).json({ error: 'O médico precisa estar na equipe do plantão para ser coordenador' })
-
-  const { data: atual, error: atualError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .eq('plantao_id', req.params.id)
-    .eq('is_coordenador', true)
-    .maybeSingle()
-
-  if (atualError) return res.status(500).json({ error: atualError.message })
-  if (atual && atual.usuario_id !== usuario_id && (await usuariosSoSocio([atual.usuario_id])).length > 0) {
-    return res.status(400).json({
-      error: 'O coordenador atual é sócio e não pode continuar na equipe como membro. Use "Trocar" para substituí-lo.'
-    })
-  }
-
-  const { error: limparError } = await supabase
-    .from('plantao_usuarios')
-    .update({ is_coordenador: false })
-    .eq('plantao_id', req.params.id)
-
-  if (limparError) return res.status(400).json({ error: limparError.message })
-
-  const { error: definirError } = await supabase
-    .from('plantao_usuarios')
-    .update({ is_coordenador: true })
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_id)
-
-  if (definirError) {
-    // Devolve o coordenador anterior para o plantão não ficar sem nenhum
-    if (atual) {
-      await supabase
-        .from('plantao_usuarios')
-        .update({ is_coordenador: true })
-        .eq('plantao_id', req.params.id)
-        .eq('usuario_id', atual.usuario_id)
-    }
-    // Índice único: outra pessoa definiu um coordenador ao mesmo tempo
-    if (definirError.code === '23505') {
-      return res.status(409).json({ error: 'O coordenador acabou de ser alterado por outra pessoa. Recarregue o plantão.' })
-    }
-    return res.status(400).json({ error: definirError.message })
-  }
-
-  return res.json({ message: 'Coordenador definido' })
-}
-
+// A troca é de uma vaga (posicao): quem está nela sai e usuario_entrada entra.
 // Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo)
 exports.criarTroca = async (req, res) => {
-  const { usuario_saida, usuario_entrada, hora_inicio = null, hora_fim = null } = req.body
+  const { posicao, usuario_entrada, hora_inicio = null, hora_fim = null } = req.body
   const parcial = hora_inicio != null || hora_fim != null
 
-  if (!usuario_saida || !usuario_entrada) {
-    return res.status(400).json({ error: 'usuario_saida e usuario_entrada são obrigatórios' })
-  }
-  if (usuario_saida === usuario_entrada) {
-    return res.status(400).json({ error: 'usuario_saida e usuario_entrada devem ser diferentes' })
+  if (!POSICOES.includes(posicao) || !usuario_entrada) {
+    return res.status(400).json({ error: 'posicao (a vaga) e usuario_entrada são obrigatórios' })
   }
 
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, tipo, data, hora_inicio, hora_fim')
+    .select('id, data, plantao_usuarios(usuario_id, posicao)')
     .eq('id', req.params.id)
     .maybeSingle()
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
+  const titular = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+  if (!titular) return res.status(400).json({ error: 'Essa vaga está vazia' })
+  const usuario_saida = titular.usuario_id
+
+  if (usuario_saida === usuario_entrada) {
+    return res.status(400).json({ error: 'Esse médico já está nessa vaga' })
+  }
+  // Médico fora da gestão pede a troca da própria vaga ou a vaga de alguém para si
+  if (!ehGestao(req.user) && req.user.id !== usuario_saida && req.user.id !== usuario_entrada) {
+    return res.status(403).json({ error: 'Você só pode pedir a troca da sua vaga ou pedir a vaga de alguém para você' })
+  }
+
+  const horario = horarioDaVaga(plantao, posicao)
   if (parcial) {
-    const erroIntervalo = validarIntervalo(plantao, hora_inicio, hora_fim)
+    const erroIntervalo = validarIntervalo(horario, hora_inicio, hora_fim)
     if (erroIntervalo) return res.status(400).json({ error: erroIntervalo })
   }
 
-  const { data: slotSaida, error: slotError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id, is_coordenador')
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_saida)
-    .maybeSingle()
-
-  if (slotError) return res.status(500).json({ error: slotError.message })
-  if (!slotSaida) return res.status(400).json({ error: 'usuario_saida não está nesse plantão' })
-
-  const { data: slotEntrada, error: slotEntradaError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .eq('plantao_id', req.params.id)
-    .eq('usuario_id', usuario_entrada)
-    .maybeSingle()
-
-  if (slotEntradaError) return res.status(500).json({ error: slotEntradaError.message })
-  if (slotEntrada) return res.status(400).json({ error: 'usuario_entrada já está nesse plantão' })
-
-  const invalidos = await usuariosSemRoleMedico([usuario_entrada])
-  if (invalidos.length > 0) {
-    return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
-  }
-
-  if (plantao.tipo === 'plantonista' && !slotSaida.is_coordenador && (await usuariosSoSocio([usuario_entrada])).length > 0) {
-    return res.status(400).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
-  }
-
-  // Uma vaga tem no máximo uma troca por horas valendo; com ela ativa, nem a troca inteira é aceita
-  const coberturaAtiva = (await buscarCoberturas([plantao.id])).find(c => c.usuario_saida === usuario_saida)
-  if (coberturaAtiva) {
-    return res.status(400).json({ error: 'Essa vaga já tem uma troca por horas valendo. A gestão precisa cancelá-la antes.' })
-  }
-
-  // Na troca por horas, o convidado só precisa estar livre no intervalo que vai cobrir
-  const janelaEntrada = parcial
-    ? { data: dataDaCobertura(plantao, hora_inicio), horaInicio: hora_inicio, horaFim: hora_fim }
-    : { data: plantao.data, horaInicio: plantao.hora_inicio, horaFim: plantao.hora_fim }
-  const ocupados = await usuariosComConflito(
-    [usuario_entrada], janelaEntrada.data, janelaEntrada.horaInicio, janelaEntrada.horaFim, plantao.id
-  )
-  if (ocupados.size > 0) {
-    return res.status(400).json({ error: 'usuario_entrada já está escalado em outro plantão nesse horário' })
-  }
-
   try {
+    const invalidos = await usuariosSemRoleMedico([usuario_entrada])
+    if (invalidos.length > 0) {
+      return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
+    }
+
+    // Uma vaga tem no máximo uma troca por horas valendo; com ela ativa, nem a troca inteira é aceita
+    if ((await buscarCoberturas([plantao.id])).some(c => c.posicao === posicao)) {
+      return res.status(400).json({ error: 'Essa vaga já tem uma troca por horas valendo. A gestão precisa cancelá-la antes.' })
+    }
+
+    // O convidado precisa estar livre no horário da vaga (na troca por horas, só no intervalo que vai cobrir).
+    // Quem já está no mesmo turno desse plantão conta como ocupado
+    const janela = parcial
+      ? { data: dataDaCobertura(horario, hora_inicio), hora_inicio, hora_fim }
+      : horario
+    if ((await usuariosComConflito([usuario_entrada], janela)).size > 0) {
+      return res.status(400).json({ error: 'usuario_entrada já está escalado nesse horário' })
+    }
+
     await validarSemAfastamento([usuario_entrada], plantao.data)
   } catch (err) {
     return res.status(400).json({ error: err.message })
@@ -579,7 +489,8 @@ exports.criarTroca = async (req, res) => {
   const { data: troca, error } = await supabase
     .from('plantao_trocas')
     .insert({
-      plantao_id: req.params.id,
+      plantao_id: plantao.id,
+      posicao,
       usuario_saida,
       usuario_entrada,
       solicitado_por: req.user.id,
@@ -590,7 +501,7 @@ exports.criarTroca = async (req, res) => {
     .single()
 
   if (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma troca pendente para esse médico' })
+    if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma troca pendente para essa vaga' })
     return res.status(400).json({ error: error.message })
   }
 
@@ -602,19 +513,42 @@ exports.criarTroca = async (req, res) => {
   }
 }
 
-// Gestão desfaz uma troca por horas já aceita: a vaga volta inteira para o titular
-exports.cancelarCobertura = async (req, res) => {
+// Cancela um pedido de troca pendente (quem pediu ou a gestão) ou desfaz uma troca por horas já aceita
+// (só a gestão: a vaga volta inteira para o titular). Troca da vaga inteira já aceita não se desfaz.
+exports.cancelarTroca = async (req, res) => {
+  const { data: troca, error: trocaError } = await supabase
+    .from('plantao_trocas')
+    .select('id, status, solicitado_por, hora_inicio')
+    .eq('id', req.params.trocaId)
+    .eq('plantao_id', req.params.id)
+    .maybeSingle()
+
+  if (trocaError) return res.status(500).json({ error: trocaError.message })
+  if (!troca) return res.status(404).json({ error: 'Troca não encontrada' })
+
+  const gestao = ehGestao(req.user)
+  if (troca.status === 'pendente') {
+    if (!gestao && troca.solicitado_por !== req.user.id) {
+      return res.status(403).json({ error: 'Só quem pediu a troca ou a gestão pode cancelar o pedido' })
+    }
+  } else if (troca.status === 'aceita' && troca.hora_inicio) {
+    if (!gestao) return res.status(403).json({ error: 'Só a gestão pode desfazer uma troca por horas' })
+  } else {
+    return res.status(400).json({ error: 'Essa troca não pode mais ser cancelada' })
+  }
+
+  // Só passa se ninguém respondeu ou cancelou nesse meio-tempo
   const { data, error } = await supabase
     .from('plantao_trocas')
     .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
-    .eq('id', req.params.trocaId)
-    .eq('plantao_id', req.params.id)
-    .eq('status', 'aceita')
-    .not('hora_inicio', 'is', null)
+    .eq('id', troca.id)
+    .eq('status', troca.status)
     .select('id')
 
   if (error) return res.status(400).json({ error: error.message })
-  if (!data || data.length === 0) return res.status(404).json({ error: 'Troca por horas não encontrada' })
+  if (!data || data.length === 0) {
+    return res.status(409).json({ error: 'Essa troca acabou de ser respondida ou cancelada. Recarregue o plantão.' })
+  }
 
   return res.status(204).send()
 }
@@ -638,19 +572,25 @@ exports.listarTrocasDoPlantao = async (req, res) => {
 }
 
 exports.listarTrocasPendentes = async (req, res) => {
-  const { data, error } = await supabase
+  const { data: envolvido, error } = await supabase
     .from('plantao_trocas')
-    .select('*, plantoes(id, titulo, data, hora_inicio, hora_fim)')
-    .eq('usuario_entrada', req.user.id)
+    .select('*, plantoes(id, titulo, data)')
+    .or(`usuario_entrada.eq.${req.user.id},usuario_saida.eq.${req.user.id}`)
     .eq('status', 'pendente')
     .order('solicitado_em', { ascending: false })
 
   if (error) return res.status(500).json({ error: error.message })
 
+  const data = envolvido.filter(t => respondenteDaTroca(t) === req.user.id)
+
   try {
-    const ids = data.flatMap(t => [t.usuario_saida, t.solicitado_por])
+    const ids = data.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por])
     const perfis = await buscarPerfis(ids)
-    return res.json(data.map(({ plantoes: plantao, ...t }) => ({ ...formatTroca(t, perfis), plantao })))
+    // O horário mostrado é o da vaga trocada (o turno dela)
+    return res.json(data.map(({ plantoes: plantao, ...t }) => ({
+      ...formatTroca(t, perfis),
+      plantao: plantao && { ...plantao, ...horarioDaVaga(plantao, t.posicao) },
+    })))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -665,51 +605,51 @@ exports.responderTroca = (aceitar) => async (req, res) => {
 
   if (trocaError) return res.status(500).json({ error: trocaError.message })
   if (!troca) return res.status(404).json({ error: 'Solicitação não encontrada' })
-  if (troca.usuario_entrada !== req.user.id) {
-    return res.status(403).json({ error: 'Só o médico convidado pode responder essa solicitação' })
+  if (respondenteDaTroca(troca) !== req.user.id) {
+    return res.status(403).json({ error: 'Essa solicitação não está esperando a sua resposta' })
   }
+  // Quem responde pode ser quem entra ou, quando ele mesmo pediu a vaga, o titular
+  const quemEntra = troca.usuario_entrada === req.user.id ? 'Você' : 'O médico que entra'
   if (troca.status !== 'pendente') {
-    return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+    return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
   }
 
   if (aceitar) {
-    const { data: slot, error: slotError } = await supabase
-      .from('plantao_usuarios')
-      .select('is_coordenador, plantoes(id, tipo, data, hora_inicio, hora_fim)')
-      .eq('plantao_id', troca.plantao_id)
-      .eq('usuario_id', troca.usuario_saida)
+    const { data: plantao, error: plantaoError } = await supabase
+      .from('plantoes')
+      .select('id, data, plantao_usuarios(usuario_id, posicao)')
+      .eq('id', troca.plantao_id)
       .maybeSingle()
 
-    if (slotError) return res.status(500).json({ error: slotError.message })
-    if (slot?.plantoes?.tipo === 'plantonista' && !slot.is_coordenador && (await usuariosSoSocio([troca.usuario_entrada])).length > 0) {
-      return res.status(409).json({ error: 'Sócios só podem entrar em plantão de plantonista como coordenador' })
-    }
+    if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+    // A vaga pode ter mudado de mãos enquanto o pedido esperava
+    const titularContinua = plantao?.plantao_usuarios.some(u => u.posicao === troca.posicao && u.usuario_id === troca.usuario_saida)
+    if (!titularContinua) return res.status(409).json({ error: 'O médico que está saindo não está mais nessa vaga' })
 
-    if (slot?.plantoes?.data && (await usuariosAfastados([troca.usuario_entrada], slot.plantoes.data)).size > 0) {
-      return res.status(409).json({ error: 'Você está de férias ou em congresso no dia desse plantão' })
-    }
-
-    // A troca pode ter ficado dias pendente: confere de novo se o convidado continua livre nesse horário
-    // (na troca por horas, só no intervalo que ele vai cobrir)
-    if (slot?.plantoes) {
-      const p = slot.plantoes
-      const janela = troca.hora_inicio
-        ? [dataDaCobertura(p, troca.hora_inicio), troca.hora_inicio, troca.hora_fim]
-        : [p.data, p.hora_inicio, p.hora_fim]
-      const ocupados = await usuariosComConflito([troca.usuario_entrada], ...janela, troca.plantao_id)
-      if (ocupados.size > 0) {
-        return res.status(409).json({ error: 'Você já está escalado em outro plantão nesse horário' })
+    try {
+      if ((await usuariosAfastados([troca.usuario_entrada], plantao.data)).size > 0) {
+        return res.status(409).json({ error: `${quemEntra} está de férias ou em congresso no dia desse plantão` })
       }
-    }
 
-    if (troca.hora_inicio) {
-      if (!slot) return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
-      const outra = (await buscarCoberturas([troca.plantao_id])).find(c => c.usuario_saida === troca.usuario_saida)
-      if (outra) return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas valendo' })
+      // A troca pode ter ficado dias pendente: confere de novo se o convidado continua livre nesse horário
+      // (na troca por horas, só no intervalo que ele vai cobrir)
+      const horario = horarioDaVaga(plantao, troca.posicao)
+      const janela = troca.hora_inicio
+        ? { data: dataDaCobertura(horario, troca.hora_inicio), hora_inicio: troca.hora_inicio, hora_fim: troca.hora_fim }
+        : horario
+      if ((await usuariosComConflito([troca.usuario_entrada], janela)).size > 0) {
+        return res.status(409).json({ error: `${quemEntra} já está escalado nesse horário` })
+      }
+
+      if (troca.hora_inicio && (await buscarCoberturas([troca.plantao_id])).some(c => c.posicao === troca.posicao)) {
+        return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas valendo' })
+      }
+    } catch (err) {
+      return res.status(500).json({ error: err.message })
     }
   }
 
-  // Reserva a troca antes de mexer na equipe: só uma resposta passa, mesmo com dois cliques ao mesmo tempo
+  // Reserva a troca antes de mexer na vaga: só uma resposta passa, mesmo com dois cliques ao mesmo tempo
   const { data: atualizada, error } = await supabase
     .from('plantao_trocas')
     .update({ status: aceitar ? 'aceita' : 'recusada', respondido_em: new Date().toISOString() })
@@ -719,27 +659,27 @@ exports.responderTroca = (aceitar) => async (req, res) => {
     .maybeSingle()
 
   if (error) return res.status(400).json({ error: error.message })
-  if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida' })
+  if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
 
-  // Troca por horas não mexe na equipe: a vaga continua do titular e a troca aceita é a cobertura
+  // Troca por horas não mexe na vaga: ela continua do titular e a troca aceita é a cobertura
   if (aceitar && !troca.hora_inicio) {
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
       .update({ usuario_id: troca.usuario_entrada })
       .eq('plantao_id', troca.plantao_id)
+      .eq('posicao', troca.posicao)
       .eq('usuario_id', troca.usuario_saida)
       .select()
 
     if (swapError || !linhasAtualizadas || linhasAtualizadas.length === 0) {
-      // A equipe não mudou: a troca volta a ficar pendente
+      // A vaga não mudou: a troca volta a ficar pendente
       await supabase
         .from('plantao_trocas')
         .update({ status: 'pendente', respondido_em: null })
         .eq('id', req.params.trocaId)
 
-      if (swapError?.code === '23505') return res.status(409).json({ error: 'Você já está nesse plantão' })
       if (swapError) return res.status(400).json({ error: swapError.message })
-      return res.status(409).json({ error: 'O médico que está saindo não está mais nesse plantão' })
+      return res.status(409).json({ error: 'O médico que está saindo não está mais nessa vaga' })
     }
   }
 
@@ -751,82 +691,56 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   }
 }
 
-async function validarEquipePlantonista(usuarios, coordenadorId, { exigirCoordenador = true, janela } = {}) {
-  if (!Array.isArray(usuarios) || usuarios.length === 0) {
-    throw new Error('usuarios deve ser um array não vazio de ids')
-  }
-
-  if (exigirCoordenador && (!coordenadorId || !usuarios.includes(coordenadorId))) {
-    throw new Error('coordenador_id é obrigatório e deve estar entre os usuarios')
-  }
-
-  const invalidos = await usuariosSemRoleMedico(usuarios)
-  if (invalidos.length > 0) {
-    throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
-  }
-
-  const socios = await usuariosSoSocio(usuarios.filter(id => id !== coordenadorId))
-  if (socios.length > 0) {
-    throw new Error('Sócios só podem entrar em plantão de plantonista como coordenador')
-  }
-
-  if (janela) {
-    const ocupados = await usuariosComConflito(usuarios, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
-    if (ocupados.size > 0) {
-      throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
-    }
-    await validarSemAfastamento(usuarios, janela.data)
-  }
-
-  return usuarios.map(usuario_id => ({
-    usuario_id,
-    is_coordenador: usuario_id === coordenadorId,
-    posicao: null,
-  }))
-}
-
-async function validarFilaSocio(fila, { janela } = {}) {
+// Cada médico numa vaga do plantão (services/posicoes.js). O mesmo médico pode estar no diurno e no noturno,
+// mas não em duas vagas do mesmo turno
+async function validarFila(fila, { data, exigirCoordenador = false }) {
   if (!Array.isArray(fila) || fila.length === 0) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
   }
 
-  // Diurno: 1 a 7 e 8 = intermediário. Noturno (19h em diante): 1, 9 (segundo 1º), 2, 3 e 4
-  const permitidas = posicoesDoPlantao(janela.horaInicio)
-  const posicaoInvalida = fila.some(
-    f => !f?.usuario_id || !Number.isInteger(f.posicao) || !permitidas.includes(f.posicao)
-  )
-  if (posicaoInvalida) {
-    throw new Error(
-      ehNoturno(janela.horaInicio)
-        ? 'cada item da fila precisa de usuario_id e posicao (plantão noturno: 1, 9 = segundo 1º, 2, 3 ou 4)'
-        : 'cada item da fila precisa de usuario_id e posicao (número inteiro entre 1 e 8; 8 = intermediário)'
-    )
+  if (fila.some(f => !f?.usuario_id || !POSICOES.includes(f.posicao))) {
+    throw new Error(`cada item da fila precisa de usuario_id e posicao (vaga de 1 a ${POSICOES.length})`)
   }
 
   const posicoes = fila.map(f => f.posicao)
   if (new Set(posicoes).size !== posicoes.length) {
-    throw new Error('posições da fila não podem se repetir')
+    throw new Error('as vagas da fila não podem se repetir')
   }
 
-  const usuarioIds = fila.map(f => f.usuario_id)
-  if (new Set(usuarioIds).size !== usuarioIds.length) {
-    throw new Error('um médico não pode ocupar duas posições na mesma fila')
+  const porTurno = fila.map(f => `${turnoDaPosicao(f.posicao)}:${f.usuario_id}`)
+  if (new Set(porTurno).size !== porTurno.length) {
+    throw new Error('um médico não pode ocupar duas vagas do mesmo turno')
   }
 
+  if (exigirCoordenador && !fila.some(f => ehVagaDeCoordenador(f.posicao))) {
+    throw new Error('O plantão precisa de um coordenador')
+  }
+
+  const usuarioIds = [...new Set(fila.map(f => f.usuario_id))]
   const invalidos = await usuariosSemRoleMedico(usuarioIds)
   if (invalidos.length > 0) {
     throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
   }
 
-  if (janela) {
-    const ocupados = await usuariosComConflito(usuarioIds, janela.data, janela.horaInicio, janela.horaFim, janela.excluirPlantaoId)
-    if (ocupados.size > 0) {
-      throw new Error(`Médico(s) já escalado(s) em outro plantão nesse horário: ${[...ocupados].join(', ')}`)
-    }
-    await validarSemAfastamento(usuarioIds, janela.data)
-  }
+  await validarHorariosLivres(fila, data)
+  await validarSemAfastamento(usuarioIds, data)
 
-  return fila.map(({ usuario_id, posicao }) => ({ usuario_id, is_coordenador: false, posicao }))
+  return fila.map(({ usuario_id, posicao }) => ({ usuario_id, posicao }))
+}
+
+// Erro se algum médico já estiver ocupado no horário da vaga que vai ocupar nesse dia
+async function validarHorariosLivres(membros, data, { ignorar = [] } = {}) {
+  const ocupados = new Set()
+  for (const [turno, horario] of Object.entries(TURNOS)) {
+    const ids = membros.filter(m => turnoDaPosicao(m.posicao) === turno).map(m => m.usuario_id)
+    if (ids.length === 0) continue
+    for (const id of await usuariosComConflito(ids, { data, ...horario }, { ignorar })) ocupados.add(id)
+  }
+  if (ocupados.size === 0) return
+
+  const perfis = await buscarPerfis([...ocupados])
+  const nomes = [...ocupados].map(id => perfis.get(id)?.nome ?? perfis.get(id)?.email ?? id)
+  throw new Error(`Médico(s) já escalado(s) nesse horário: ${nomes.join(', ')}`)
 }
 
 async function usuariosSemRoleMedico(usuarioIds) {
@@ -842,87 +756,6 @@ async function usuariosSemRoleMedico(usuarioIds) {
   )
 
   return resultados.filter(r => !r.valido).map(r => r.id)
-}
-
-// Quem é só sócio (sem a role de plantonista) — em plantão de plantonista, só entra como coordenador
-async function usuariosSoSocio(usuarioIds) {
-  const idsUnicos = [...new Set(usuarioIds)]
-
-  const resultados = await Promise.all(
-    idsUnicos.map(async id => {
-      const { data } = await supabase.auth.admin.getUserById(id)
-      const roles = data?.user?.app_metadata?.roles ?? []
-      return { id, soSocio: roles.includes('anestesita_socio') && !roles.includes('anestesita_plantonista') }
-    })
-  )
-
-  return resultados.filter(r => r.soSocio).map(r => r.id)
-}
-
-async function usuariosComConflito(usuarioIds, data, horaInicio, horaFim, excluirPlantaoId) {
-  const idsUnicos = [...new Set(usuarioIds)]
-  if (idsUnicos.length === 0) return new Set()
-
-  const alvo = calcularJanela(data, horaInicio, horaFim)
-  const dataAnterior = deslocarData(data, -1)
-  const dataSeguinte = deslocarData(data, 1)
-
-  const { data: plantoesProximos, error: plantoesError } = await supabase
-    .from('plantoes')
-    .select('id, data, hora_inicio, hora_fim')
-    .gte('data', dataAnterior)
-    .lte('data', dataSeguinte)
-
-  if (plantoesError) throw plantoesError
-
-  const outros = plantoesProximos.filter(p => p.id !== excluirPlantaoId)
-  const plantoesConflitantes = outros.filter(p => seSobrepoe(alvo, calcularJanela(p.data, p.hora_inicio, p.hora_fim)))
-  if (plantoesConflitantes.length === 0) return new Set()
-
-  const { data: membros, error: membrosError } = await supabase
-    .from('plantao_usuarios')
-    .select('usuario_id')
-    .in('plantao_id', plantoesConflitantes.map(p => p.id))
-    .in('usuario_id', idsUnicos)
-
-  if (membrosError) throw membrosError
-
-  const ocupados = new Set(membros.map(m => m.usuario_id))
-
-  // Quem cobre parte de outro plantão (troca por horas) está ocupado só no intervalo coberto
-  const porId = new Map(plantoesConflitantes.map(p => [p.id, p]))
-  const coberturas = await buscarCoberturas([...porId.keys()])
-  for (const c of coberturas) {
-    if (!idsUnicos.includes(c.usuario_entrada)) continue
-    const inicio = paraMinutosAbsolutos(dataDaCobertura(porId.get(c.plantao_id), c.hora_inicio), c.hora_inicio)
-    const janela = { inicio, fim: inicio + duracaoDaCobertura(c.hora_inicio, c.hora_fim) }
-    if (seSobrepoe(alvo, janela)) ocupados.add(c.usuario_entrada)
-  }
-
-  return ocupados
-}
-
-function calcularJanela(data, horaInicio, horaFim) {
-  const inicio = paraMinutosAbsolutos(data, horaInicio)
-  let fim = paraMinutosAbsolutos(data, horaFim)
-  if (fim <= inicio) fim += 24 * 60
-  return { inicio, fim }
-}
-
-function paraMinutosAbsolutos(data, hora) {
-  const diasEpoch = Math.floor(Date.parse(`${data}T00:00:00Z`) / 86400000)
-  const [h, m] = hora.split(':').map(Number)
-  return diasEpoch * 1440 + h * 60 + m
-}
-
-function seSobrepoe(a, b) {
-  return a.inicio < b.fim && b.inicio < a.fim
-}
-
-function deslocarData(data, dias) {
-  const d = new Date(`${data}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + dias)
-  return d.toISOString().slice(0, 10)
 }
 
 // Afastamentos (férias/congresso) dos médicos escalados, no intervalo de datas desses plantões.
@@ -976,25 +809,26 @@ async function buscarTrocasPendentesPorSlot(plantaoIds) {
   const perfis = await buscarPerfis(data.flatMap(t => [t.usuario_entrada, t.solicitado_por]))
 
   return new Map(data.map(t => [
-    `${t.plantao_id}:${t.usuario_saida}`,
+    `${t.plantao_id}:${t.posicao}`,
     {
       id: t.id,
       solicitadoEm: t.solicitado_em,
       usuarioEntrada: perfis.get(t.usuario_entrada) ?? { id: t.usuario_entrada },
       solicitadoPor: perfis.get(t.solicitado_por) ?? { id: t.solicitado_por },
+      respondenteId: respondenteDaTroca(t),
       horaInicio: t.hora_inicio,
       horaFim: t.hora_fim,
     },
   ]))
 }
 
-// Troca por horas valendo de cada vaga, pela chave "plantao:titular"
+// Troca por horas valendo de cada vaga, pela chave "plantao:posicao"
 async function buscarCoberturasPorSlot(plantaoIds) {
   const coberturas = await buscarCoberturas(plantaoIds)
   if (coberturas.length === 0) return new Map()
   const perfis = await buscarPerfis(coberturas.map(c => c.usuario_entrada))
   return new Map(coberturas.map(c => [
-    `${c.plantao_id}:${c.usuario_saida}`,
+    `${c.plantao_id}:${c.posicao}`,
     {
       id: c.id,
       usuario: perfis.get(c.usuario_entrada) ?? { id: c.usuario_entrada },
@@ -1008,36 +842,34 @@ function formatTroca(row, perfis) {
   return {
     id: row.id,
     plantaoId: row.plantao_id,
+    posicao: row.posicao,
     status: row.status,
     solicitadoEm: row.solicitado_em,
     respondidoEm: row.respondido_em,
     usuarioSaida: perfis.get(row.usuario_saida) ?? { id: row.usuario_saida },
     usuarioEntrada: perfis.get(row.usuario_entrada) ?? { id: row.usuario_entrada },
     solicitadoPor: perfis.get(row.solicitado_por) ?? { id: row.solicitado_por },
+    respondenteId: respondenteDaTroca(row),
     horaInicio: row.hora_inicio ?? null,
     horaFim: row.hora_fim ?? null,
   }
 }
 
+// Cada médico com a vaga que ocupa, na ordem da escala. Quem está no diurno e no noturno aparece duas vezes
 function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = [], coberturas = new Map()) {
   const { plantao_usuarios, ...plantao } = row
   const usuarios = plantao_usuarios
+    // Sem posição só no meio de uma troca de lugar entre duas vagas
+    .filter(u => u.posicao != null)
     .map(u => ({
       ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
-      coordenador: u.is_coordenador ?? false,
-      posicao: u.posicao ?? null,
-      trocaPendente: trocasPendentes.get(`${plantao.id}:${u.usuario_id}`) ?? null,
+      posicao: u.posicao,
+      coordenador: ehVagaDeCoordenador(u.posicao),
+      trocaPendente: trocasPendentes.get(`${plantao.id}:${u.posicao}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
-      cobertura: coberturas.get(`${plantao.id}:${u.usuario_id}`) ?? null,
+      cobertura: coberturas.get(`${plantao.id}:${u.posicao}`) ?? null,
     }))
-    // Sócio: pela posição na fila. Plantonista (sem posição): coordenador primeiro e depois pelo nome,
-    // para o "Membro N" não mudar de lugar entre uma carga e outra
-    .sort((a, b) =>
-      ordemDaPosicao(a.posicao) - ordemDaPosicao(b.posicao) ||
-      Number(b.coordenador) - Number(a.coordenador) ||
-      (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR') ||
-      a.id.localeCompare(b.id)
-    )
+    .sort((a, b) => a.posicao - b.posicao)
 
   return { ...plantao, usuarios }
 }

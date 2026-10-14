@@ -173,6 +173,67 @@ exports.atualizarMe = async (req, res) => {
   return exports.me(req, res)
 }
 
+// Mesmo mínimo da tela de cadastro
+const TAMANHO_MINIMO_SENHA = 8
+
+// Troca de senha de quem está logado (sem depender do e-mail de redefinição).
+// Trocar a senha pela service role encerra todas as sessões da conta, inclusive a de quem pediu,
+// então a resposta traz uma sessão nova para o front guardar — os outros aparelhos precisam entrar de novo.
+exports.trocarSenha = async (req, res) => {
+  const { senha_atual, nova_senha } = req.body
+
+  if (!senha_atual || !nova_senha) {
+    return res.status(400).json({ error: 'senha_atual e nova_senha são obrigatórias' })
+  }
+  if (String(nova_senha).length < TAMANHO_MINIMO_SENHA) {
+    return res.status(400).json({ error: `A nova senha precisa ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres` })
+  }
+  if (nova_senha === senha_atual) {
+    return res.status(400).json({ error: 'A nova senha precisa ser diferente da atual' })
+  }
+
+  const { error: senhaError } = await supabaseLogin.auth.signInWithPassword({
+    email: req.user.email,
+    password: String(senha_atual)
+  })
+
+  // 400 e não 401: o front trata 401 como sessão vencida
+  if (senhaError?.code === 'invalid_credentials') {
+    return res.status(400).json({ error: 'Senha atual incorreta' })
+  }
+  if (senhaError) {
+    console.error(senhaError)
+    return res.status(500).json({ error: 'Não foi possível conferir a senha atual. Tente de novo.' })
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(req.user.id, { password: String(nova_senha) })
+
+  if (error?.code === 'weak_password') {
+    return res.status(400).json({ error: 'Senha fraca demais. Use uma senha mais longa, misturando letras, números e símbolos.' })
+  }
+  if (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Não foi possível trocar a senha.' })
+  }
+
+  const { data: nova, error: loginError } = await supabaseLogin.auth.signInWithPassword({
+    email: req.user.email,
+    password: String(nova_senha)
+  })
+
+  // A senha já foi trocada; sem sessão nova, o front manda entrar de novo
+  if (loginError) {
+    console.error(loginError)
+    return res.json({ message: 'Senha alterada. Entre de novo com a nova senha.' })
+  }
+
+  // Garante que só a sessão nova sobrevive, mesmo se o Supabase deixar alguma das antigas
+  const { error: signOutError } = await supabase.auth.admin.signOut(nova.session.access_token, 'others')
+  if (signOutError) console.error(signOutError)
+
+  return res.json({ message: 'Senha alterada.', ...respostaSessao(nova.session) })
+}
+
 exports.register = async (req, res) => {
   const { email, password, nome, sigla, roles, crm, crm_uf } = req.body
 

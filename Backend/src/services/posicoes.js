@@ -1,41 +1,57 @@
-// Fila do plantão de sócio.
-// Diurno: posições 1 a 7 e o intermediário (gravado como 8).
-// Noturno (começa às 19h ou depois): 1º, 1º, 2º, 3º, 4º — o segundo 1º é gravado como 9,
-// para cada vaga continuar única no banco e a troca de posição não ficar ambígua.
-const POSICAO_INTERMEDIARIO = 8
-const POSICAO_SEGUNDO_PRIMEIRO = 9
-
-const POSICOES_DIURNO = [1, 2, 3, 4, 5, 6, 7, POSICAO_INTERMEDIARIO]
-const POSICOES_NOTURNO = [1, POSICAO_SEGUNDO_PRIMEIRO, 2, 3, 4]
-
-const HORA_INICIO_NOTURNO = 19
-
-function ehNoturno(horaInicio) {
-  return Number(String(horaInicio).slice(0, 2)) >= HORA_INICIO_NOTURNO
+// Vagas do plantão, no formato da escala anual do cliente: um plantão por dia, com o diurno (07h–19h)
+// e o noturno (19h–07h do dia seguinte). A posição gravada em plantao_usuarios identifica a vaga e segue
+// a ordem das linhas da escala, de 1 a 13 — por isso o mesmo médico pode estar no diurno e no noturno.
+// Mesma tabela em Frontend/components/posicoes.ts.
+const TURNOS = {
+  diurno: { hora_inicio: '07:00', hora_fim: '19:00' },
+  noturno: { hora_inicio: '19:00', hora_fim: '07:00' },
 }
 
-function posicoesDoPlantao(horaInicio) {
-  return ehNoturno(horaInicio) ? POSICOES_NOTURNO : POSICOES_DIURNO
+// pontos: o que a vaga vale para o sócio no BM
+const VAGAS = [
+  { posicao: 1, turno: 'diurno', coordenador: true, pontos: 7 }, // Coordenador
+  { posicao: 2, turno: 'diurno', coordenador: true, pontos: 7 }, // Coordenador
+  { posicao: 3, turno: 'diurno', pontos: 6 }, // 2º
+  { posicao: 4, turno: 'diurno', pontos: 5 }, // 3º
+  { posicao: 5, turno: 'diurno', pontos: 4 }, // 4º
+  { posicao: 6, turno: 'diurno', pontos: 3 }, // 5º
+  { posicao: 7, turno: 'diurno', pontos: 2 }, // 6º
+  { posicao: 8, turno: 'diurno', pontos: 1 }, // 7º
+  { posicao: 9, turno: 'noturno', pontos: 7 }, // Intermediário
+  { posicao: 10, turno: 'noturno', pontos: 7 }, // 1º
+  { posicao: 11, turno: 'noturno', pontos: 7 }, // 1º
+  { posicao: 12, turno: 'noturno', pontos: 6 }, // 2º
+  { posicao: 13, turno: 'noturno', pontos: 5 }, // 3º
+]
+
+const POSICOES = VAGAS.map(v => v.posicao)
+
+function vagaDa(posicao) {
+  return VAGAS.find(v => v.posicao === posicao) ?? null
 }
 
-// "3º" / "intermediário" — mensagens de erro
-function rotuloPosicao(posicao) {
-  if (posicao === POSICAO_INTERMEDIARIO) return 'intermediário'
-  if (posicao === POSICAO_SEGUNDO_PRIMEIRO) return 'segundo 1º'
-  return `${posicao}º`
+function ehVagaDeCoordenador(posicao) {
+  return vagaDa(posicao)?.coordenador === true
 }
 
-// Posição 1 vale 7 pontos, posição 7 vale 1; intermediário e segundo 1º do noturno valem 7
+function turnoDaPosicao(posicao) {
+  return vagaDa(posicao)?.turno ?? null
+}
+
+// Horário da vaga nesse plantão: { data, hora_inicio, hora_fim } do turno dela
+function horarioDaVaga(plantao, posicao) {
+  return { data: plantao.data, ...TURNOS[turnoDaPosicao(posicao)] }
+}
+
 function pontosDaPosicao(posicao) {
-  if (posicao == null) return 0
-  if (posicao === POSICAO_INTERMEDIARIO || posicao === POSICAO_SEGUNDO_PRIMEIRO) return 7
-  return 8 - posicao
+  return vagaDa(posicao)?.pontos ?? 0
 }
 
-// Para ordenar a fila: o segundo 1º (9) vem logo depois do primeiro
-function ordemDaPosicao(posicao) {
-  if (posicao == null) return 0
-  return posicao === POSICAO_SEGUNDO_PRIMEIRO ? 1.5 : posicao
+module.exports = {
+  TURNOS,
+  POSICOES,
+  ehVagaDeCoordenador,
+  turnoDaPosicao,
+  horarioDaVaga,
+  pontosDaPosicao,
 }
-
-module.exports = { ehNoturno, posicoesDoPlantao, rotuloPosicao, pontosDaPosicao, ordemDaPosicao }

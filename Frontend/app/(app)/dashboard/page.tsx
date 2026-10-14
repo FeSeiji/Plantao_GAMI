@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import PlantaoModal from "../../../components/PlantaoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
-import { POSICAO_INTERMEDIARIO, rotuloPosicaoCurto } from "../../../components/posicoes"
+import { Turno, descreverPosicao, rotuloTurno } from "../../../components/posicoes"
 import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
@@ -22,13 +22,14 @@ const ROLE_LABELS: Record<string, string> = {
 
 type Pessoa = { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
 
+// Uma vaga (ou um turno, na visão da gestão) do plantão do dia: o horário é o do turno
 type PlantaoResumo = {
   id: string
   titulo: string
   data: string
+  turno: Turno
   hora_inicio: string
   hora_fim: string
-  tipo: "plantonista" | "socio"
   emAndamento: boolean
   meuPapel: {
     coordenador: boolean
@@ -43,10 +44,13 @@ type PlantaoResumo = {
 type Troca = {
   id: string
   solicitadoEm: string
-  plantao: { id: string; titulo: string; data: string; hora_inicio: string; hora_fim: string; tipo: string } | null
+  // O horário é o do turno da vaga trocada
+  plantao: { id: string; titulo: string; data: string; hora_inicio: string; hora_fim: string } | null
   usuarioSaida: Pessoa
   usuarioEntrada: Pessoa
   solicitadoPor: Pessoa
+  // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
+  respondenteId: string
   horaInicio?: string | null
   horaFim?: string | null
 }
@@ -121,11 +125,10 @@ function descreverPapel(p: PlantaoResumo) {
   const { cobrindo, coberto } = p.meuPapel
   if (cobrindo) return `Você cobre ${nomeDe(cobrindo.titular)} das ${formatarIntervalo(cobrindo.horaInicio, cobrindo.horaFim).replace("–", " às ")}`
   if (coberto) return `${nomeDe(coberto.por)} cobre ${formatarIntervalo(coberto.horaInicio, coberto.horaFim)} da sua vaga`
-  if (p.tipo === "socio") {
-    if (p.meuPapel.posicao === POSICAO_INTERMEDIARIO) return "Intermediário na fila"
-    return p.meuPapel.posicao != null ? `Posição ${rotuloPosicaoCurto(p.meuPapel.posicao)} na fila` : "Fila de sócios"
-  }
-  return p.meuPapel.coordenador ? "Você é o coordenador" : "Equipe de plantonistas"
+  if (p.meuPapel.coordenador) return "Você é o coordenador"
+  if (p.meuPapel.posicao == null) return rotuloTurno(p.turno)
+  const vaga = descreverPosicao(p.meuPapel.posicao)
+  return `Você é o ${vaga === "intermediário" ? "intermediário do noturno" : vaga}`
 }
 
 function tempoDesde(iso: string) {
@@ -177,7 +180,11 @@ function DescricaoTroca({ troca, perspectiva }: { troca: Troca; perspectiva: "pa
   return (
     <div className="min-w-0">
       <p className="text-sm text-gray-800">
-        {perspectiva === "paraMim" ? (
+        {perspectiva === "paraMim" && troca.respondenteId === troca.usuarioSaida.id ? (
+          <>
+            <span className="font-semibold">{nomeDe(troca.usuarioEntrada)}</span> pediu a sua vaga
+          </>
+        ) : perspectiva === "paraMim" ? (
           <>
             Substituir <span className="font-semibold">{nomeDe(troca.usuarioSaida)}</span>
           </>
@@ -287,6 +294,27 @@ export default function DashboardPage() {
     }
   }
 
+  async function cancelarTroca(t: Troca) {
+    if (!t.plantao) return
+    const token = localStorage.getItem("token")
+    setRespondendo(t.id)
+    try {
+      const res = await apiFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${t.plantao.id}/trocas/${t.id}/cancelar`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${token}` } }
+      )
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? "Não foi possível cancelar o pedido.")
+      }
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível cancelar o pedido.")
+    } finally {
+      setRespondendo(null)
+    }
+  }
+
   // O resumo não traz tudo que o modal precisa (descrição, trocas por slot), então busca o plantão completo
   async function abrirPlantao(id: string) {
     const token = localStorage.getItem("token")
@@ -351,8 +379,7 @@ export default function DashboardPage() {
                 </p>
                 <p className="text-lg font-bold text-gray-800 group-hover:text-brand-700">{proximo.titulo}</p>
                 <p className="text-sm text-gray-500 capitalize mb-3">
-                  {formatarData(proximo.data)} · {formatarHorario(proximo)} ·{" "}
-                  {proximo.tipo === "socio" ? "Sócio" : "Plantonista"}
+                  {formatarData(proximo.data)} · {formatarHorario(proximo)} · {rotuloTurno(proximo.turno)}
                 </p>
                 <p className="text-sm font-medium text-gray-700 mb-2">{descreverPapel(proximo)}</p>
                 <Equipe usuarios={proximo.usuarios} />
@@ -429,7 +456,7 @@ export default function DashboardPage() {
             ) : (
               <ul className="space-y-1">
                 {resumo.agenda.map((p) => (
-                  <li key={p.id}>
+                  <li key={`${p.id}-${p.turno}`}>
                     <button
                       type="button"
                       onClick={() => abrirPlantao(p.id)}
@@ -448,7 +475,8 @@ export default function DashboardPage() {
                             : p.meuPapel.coberto
                               ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
                               : ""}
-                          {p.tipo === "socio" ? `Sócio${p.meuPapel.posicao === POSICAO_INTERMEDIARIO ? " · Intermediário" : p.meuPapel.posicao ? ` · P${rotuloPosicaoCurto(p.meuPapel.posicao)}` : ""}` : p.meuPapel.coordenador ? "Coordenador" : "Plantonista"}
+                          {rotuloTurno(p.turno)}
+                          {p.meuPapel.posicao != null && ` · ${descreverPosicao(p.meuPapel.posicao).replace(/ do (diurno|noturno)$/, "")}`}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}
@@ -471,7 +499,17 @@ export default function DashboardPage() {
                 {resumo.trocasSolicitadas.map((t) => (
                   <li key={t.id} className="flex items-start gap-2 border-b border-gray-100 last:border-0 pb-3 last:pb-0">
                     <span className="mt-1.5 w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Aguardando aceite" />
-                    <DescricaoTroca troca={t} perspectiva="solicitada" />
+                    <div className="min-w-0 flex-1">
+                      <DescricaoTroca troca={t} perspectiva="solicitada" />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={respondendo === t.id}
+                      onClick={() => cancelarTroca(t)}
+                      className="shrink-0 text-xs font-bold px-3 py-1.5 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -491,14 +529,14 @@ export default function DashboardPage() {
               ) : (
                 <ul className="space-y-3">
                   {gestao.emAndamento.map((p) => (
-                    <li key={p.id}>
+                    <li key={`${p.id}-${p.turno}`}>
                       <button type="button" onClick={() => abrirPlantao(p.id)} className="w-full text-left group">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                           <p className="text-sm font-medium text-gray-800 truncate group-hover:text-brand-700">{p.titulo}</p>
                         </div>
                         <p className="text-xs text-gray-500 mb-2">
-                          {formatarHorario(p)} · {p.tipo === "socio" ? "Sócio" : "Plantonista"}
+                          {formatarHorario(p)} · {rotuloTurno(p.turno)}
                         </p>
                         <Equipe usuarios={p.usuarios} />
                       </button>
@@ -515,7 +553,7 @@ export default function DashboardPage() {
               ) : (
                 <ul className="space-y-1">
                   {gestao.alertas.map(({ plantao: p, problema }) => (
-                    <li key={p.id}>
+                    <li key={`${p.id}-${p.turno}`}>
                       <button
                         type="button"
                         onClick={() => abrirPlantao(p.id)}
@@ -525,7 +563,7 @@ export default function DashboardPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                           <p className="text-xs text-gray-500 capitalize">
-                            {formatarData(p.data)} · {formatarHorario(p)}
+                            {formatarData(p.data)} · {rotuloTurno(p.turno)} {formatarHorario(p)}
                           </p>
                           <p className="text-xs font-semibold text-red-700">{problema}</p>
                         </div>
