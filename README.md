@@ -168,7 +168,7 @@ Segue a escala anual do cliente: **um plantão por dia**, sem tipo, com as vagas
 | Noturno | 19h–7h do dia seguinte | Intermediário (9), 1º (10), 1º (11), 2º (12), 3º (13) |
 
 Regras de escala:
-- Qualquer médico (sócio ou plantonista) entra em qualquer vaga. Pelo menos **um coordenador é obrigatório**.
+- Qualquer médico (sócio ou plantonista) entra em qualquer vaga. O coordenador **não é obrigatório** (o plantão precisa de pelo menos um médico); o dashboard da gestão avisa quando o diurno está sem coordenador.
 - O mesmo médico pode estar no **diurno e no noturno** do mesmo dia (os turnos só se encostam às 19h), mas não em duas vagas do mesmo turno.
 - Um médico não pode estar em duas vagas com horários sobrepostos (inclusive a troca por horas).
 - Médico de **férias ou em congresso** não pode ser escalado nesses dias (veja abaixo).

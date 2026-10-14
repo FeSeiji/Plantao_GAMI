@@ -25,7 +25,7 @@ exports.createPlantao = async (req, res) => {
 
   let membros
   try {
-    membros = await validarFila(fila, { data, exigirCoordenador: true })
+    membros = await validarFila(fila, { data })
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -190,14 +190,6 @@ exports.removerDaVaga = async (req, res) => {
   const membro = plantao.plantao_usuarios.find(u => u.posicao === posicao)
   if (!membro) return res.status(404).json({ error: 'Essa vaga já está vazia' })
 
-  // São duas vagas de coordenador: só sai quem não é o único coordenador
-  const outroCoordenador = plantao.plantao_usuarios.some(u => u !== membro && ehVagaDeCoordenador(u.posicao))
-  if (ehVagaDeCoordenador(posicao) && !outroCoordenador) {
-    return res.status(400).json({
-      error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de remover este.'
-    })
-  }
-
   const { error } = await supabase
     .from('plantao_usuarios')
     .delete()
@@ -286,15 +278,6 @@ exports.alterarPosicao = async (req, res) => {
   const ocupante = plantao.plantao_usuarios.find(u => u.posicao === nova_posicao)
   // O mesmo médico nas duas vagas (uma no diurno e outra no noturno): trocar não muda nada
   if (ocupante?.usuario_id === membro.usuario_id) return res.json({ message: 'Posição mantida' })
-
-  const posicoesDepois = plantao.plantao_usuarios.map(u =>
-    u === membro ? nova_posicao : u === ocupante ? posicao : u.posicao
-  )
-  if (!posicoesDepois.some(ehVagaDeCoordenador)) {
-    return res.status(400).json({
-      error: 'O plantão precisa de um coordenador. Coloque alguém na outra vaga de coordenador antes de mover este.'
-    })
-  }
 
   // Troca pendente e troca por horas são da vaga: mudar quem está nela no meio do caminho embaralharia o pedido
   const { data: trocasDasVagas, error: trocasError } = await supabase
@@ -693,7 +676,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
 
 // Cada médico numa vaga do plantão (services/posicoes.js). O mesmo médico pode estar no diurno e no noturno,
 // mas não em duas vagas do mesmo turno
-async function validarFila(fila, { data, exigirCoordenador = false }) {
+async function validarFila(fila, { data }) {
   if (!Array.isArray(fila) || fila.length === 0) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
   }
@@ -710,10 +693,6 @@ async function validarFila(fila, { data, exigirCoordenador = false }) {
   const porTurno = fila.map(f => `${turnoDaPosicao(f.posicao)}:${f.usuario_id}`)
   if (new Set(porTurno).size !== porTurno.length) {
     throw new Error('um médico não pode ocupar duas vagas do mesmo turno')
-  }
-
-  if (exigirCoordenador && !fila.some(f => ehVagaDeCoordenador(f.posicao))) {
-    throw new Error('O plantão precisa de um coordenador')
   }
 
   const usuarioIds = [...new Set(fila.map(f => f.usuario_id))]
