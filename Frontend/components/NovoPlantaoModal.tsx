@@ -150,8 +150,8 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     e.preventDefault()
     setError("")
 
-    if (!fila.some((f) => ehVagaDeCoordenador(f.posicao))) {
-      setError("Coloque um médico numa das vagas de coordenador.")
+    if (fila.length === 0) {
+      setError("Coloque pelo menos um médico no plantão.")
       return
     }
 
