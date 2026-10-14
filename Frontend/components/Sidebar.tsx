@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { label: "Meu plantão", href: "/meu-plantao", roles: ROLES_MEU_PLANTAO },
   { label: "Calendário", href: "/plantoes" },
   { label: "Fichas anestésicas", href: "/fichas" },
+  { label: "Casos fora", href: "/casos-fora" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
   { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]

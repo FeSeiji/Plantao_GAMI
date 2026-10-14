@@ -5,11 +5,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { pontosDaPosicao } = require('../services/posicoes')
 const { buscarCoberturas, repartirPlantao } = require('../services/coberturas')
 const { buscarRolesDosUsuarios, contaComoSocio } = require('../services/usuarios')
+const { listarCasosFora } = require('../services/casosFora')
 
 // Calculado na hora a partir dos plantões do mês — nada é gravado.
 // O plantão não tem tipo: quem tem o cargo de sócio conta pontos pela vaga e quem é só plantonista conta horas.
 // O noturno conta no mês em que o plantão começa.
 // Troca por horas: horas e pontos da vaga são divididos na proporção das horas de cada um.
+// Os casos fora do mês vêm listados um a um, do mais antigo para o mais recente.
 exports.resumoMensal = async (req, res) => {
   const { mes } = req.query
 
@@ -29,9 +31,13 @@ exports.resumoMensal = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
-  let coberturas, roles
+  let coberturas, roles, casosFora
   try {
-    [coberturas, roles] = await Promise.all([buscarCoberturas(plantoes.map(p => p.id)), buscarRolesDosUsuarios()])
+    [coberturas, roles, casosFora] = await Promise.all([
+      buscarCoberturas(plantoes.map(p => p.id)),
+      buscarRolesDosUsuarios(),
+      listarCasosFora({ inicio, fim }),
+    ])
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -64,6 +70,7 @@ exports.resumoMensal = async (req, res) => {
       mes,
       plantonistas: montarLinhas(plantonistas, perfis, 'minutos'),
       socios: montarLinhas(socios, perfis, 'pontos'),
+      casosFora: casosFora.reverse(),
     })
   } catch (err) {
     return res.status(500).json({ error: err.message })
