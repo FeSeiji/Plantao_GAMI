@@ -119,7 +119,7 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
               CORES[c.destaque ?? "normal"]
             }`}
           >
-            {c.rotulo && <div className="text-[10px] font-bold uppercase tracking-wide">{c.rotulo}</div>}
+            {c.rotulo && <div className="w-full min-w-0 text-[10px] font-bold uppercase tracking-wide">{c.rotulo}</div>}
 
             {temMenu ? (
               <button

@@ -224,7 +224,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
           aria-label="Vaga"
           value={f.posicao}
           onChange={(e) => alterarPosicao(f.posicao, Number(e.target.value))}
-          className="bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
+          className="w-full max-w-full bg-white border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
           {TURNOS.map((t) => (
             <optgroup key={t.valor} label={t.rotulo}>

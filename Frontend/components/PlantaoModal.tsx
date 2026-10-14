@@ -816,7 +816,7 @@ export default function PlantaoModal({
           aria-label="Vaga"
           value={posicao}
           onChange={(e) => alterarPosicao(posicao, Number(e.target.value))}
-          className="bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
+          className="w-full max-w-full bg-white text-brand-800 border border-brand-200 rounded-md text-xs px-1 py-0.5"
         >
           {TURNOS.map((t) => (
             <optgroup key={t.valor} label={t.rotulo}>
