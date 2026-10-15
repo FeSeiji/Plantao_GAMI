@@ -213,7 +213,7 @@ function CartaoTurno({ plantao: p, turno, onClick }: { plantao: Plantao; turno: 
       type="button"
       onClick={onClick}
       title={p.titulo}
-      className={`w-full flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TURNO[turno].faixa} rounded-lg px-2.5 py-2.5 transition-colors`}
+      className={`w-full flex-1 flex flex-col text-left bg-white hover:bg-brand-50 border border-gray-200 hover:border-brand-200 border-l-4 ${ESTILO_TURNO[turno].faixa} rounded-lg px-2.5 py-2.5 transition-colors`}
     >
       <div className="mb-1.5">
         <SiglasDoTurno plantao={p} turno={turno} />
@@ -405,7 +405,7 @@ export default function PlantaoCalendario({
                     return (
                       <div
                         key={chave}
-                        className={`min-h-[120px] rounded-lg p-1.5 border ${
+                        className={`min-h-[160px] flex flex-col rounded-lg p-1.5 border ${
                           chave === hojeChave ? "bg-brand-50/60 border-brand-100" : "bg-gray-50 border-gray-100"
                         }`}
                       >
@@ -470,7 +470,7 @@ export default function PlantaoCalendario({
                 return (
                   <div
                     key={chave + (noMes ? "" : "-fora")}
-                    className={`min-h-[72px] sm:min-h-[124px] p-1 sm:p-1.5 flex flex-col gap-1 ${noMes ? "bg-white" : "bg-gray-50"}`}
+                    className={`min-h-[88px] sm:min-h-[156px] p-1 sm:p-1.5 flex flex-col gap-1 ${noMes ? "bg-white" : "bg-gray-50"}`}
                   >
                     <span
                       className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-medium ${
