@@ -203,11 +203,18 @@ export default function MeuPlantaoPage() {
                       const plantao = plantaoPorDia.get(chave)
                       const usuario = plantao?.usuarios.find((u) => u.posicao === posicao)
                       return (
-                        <td key={chave} className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
+                        // A célula inteira abre o plantão, inclusive o espaço em volta da sigla e as vagas vazias
+                        <td
+                          key={chave}
+                          onClick={plantao ? () => setPlantaoSelecionado(plantao) : undefined}
+                          className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""} ${
+                            plantao ? `cursor-pointer ${chave === hoje ? "hover:bg-brand-100" : "hover:bg-gray-50"}` : ""
+                          }`}
+                        >
                           {usuario ? (
+                            // Sem onClick próprio: o clique (ou Enter pelo teclado) sobe para a célula
                             <button
                               type="button"
-                              onClick={() => setPlantaoSelecionado(plantao!)}
                               className={`inline-flex rounded-full cursor-pointer hover:opacity-80 ${
                                 usuario.id === meuId || usuario.cobertura?.usuario.id === meuId
                                   ? "ring-2 ring-offset-1 ring-amber-400"
