@@ -59,7 +59,8 @@ export function doTurno(plantao: Plantao, turno: Turno) {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, "½" de troca por horas e a posição na fila ou na equipe.
+// "!" de afastamento aprovado ou "?" de pedido pendente, a sigla de quem cobre a troca por horas
+// e a posição na fila ou na equipe.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 export function BadgeComMarcador({
   usuario,
@@ -104,8 +105,8 @@ export function BadgeComMarcador({
         </span>
       )}
       {usuario.cobertura && (
-        <span className="absolute -bottom-1 -left-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-sky-500 border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          ½
+        <span className="absolute -bottom-1 -left-1 min-w-4 h-4 px-0.5 rounded-full bg-sky-500 border border-white text-white text-[9px] font-bold flex items-center justify-center leading-none">
+          {usuario.cobertura.usuario.sigla ?? "?"}
         </span>
       )}
       {/* O coordenador já tem o anel; os demais mostram a vaga */}
