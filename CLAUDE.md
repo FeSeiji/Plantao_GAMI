@@ -30,6 +30,14 @@ cp Backend/.env.example Backend/.env
 
 `SUPABASE_SERVICE_ROLE_KEY` is an admin key — it bypasses row-level security and must never be exposed to clients.
 
+### Local Supabase
+
+Local testing uses the Supabase CLI stack (`supabase start` at the repo root; config in `supabase/config.toml`). `Backend/.env` points at it via `http://host.docker.internal:54321`; production credentials live in `Backend/.env.producao` (gitignored), selectable with `ENV_FILE=.env.producao docker-compose up`.
+
+- `cd Backend && npm run db:reset` — `supabase db reset` (applies `supabase/migrations/`) + `scripts/seed-local.js` (test users with password `senha123`, ~3 months of plantões, trocas, afastamentos, casos fora, fichas). The seed refuses to run against a non-local URL.
+- Schema changes: add a new file to `supabase/migrations/` **and** run the same SQL manually in the production SQL Editor (production has no migration tooling).
+- `20261015000000_schema_inicial.sql` is a `supabase db dump` of production (public schema only). Triggers on `auth.users` aren't in such dumps, so `on_auth_user_created` is recreated in its own migration.
+
 ## Architecture
 
 ### Request Flow

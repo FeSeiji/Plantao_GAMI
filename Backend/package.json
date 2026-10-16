@@ -5,7 +5,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "db:reset": "supabase db reset --workdir .. && node scripts/seed-local.js",
+    "seed:local": "node scripts/seed-local.js"
   },
   "keywords": [],
   "author": "",

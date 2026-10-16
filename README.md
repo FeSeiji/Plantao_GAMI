@@ -102,7 +102,20 @@ NEXT_PUBLIC_API_URL=http://localhost:3000
 
 ### Banco de dados
 
-O projeto **não tem migrations**. Mudanças de schema (tabelas `profiles`, `plantoes`, `plantao_usuarios`, `plantao_trocas`, `afastamentos`) são aplicadas manualmente pelo **SQL Editor** do Supabase.
+Para testar localmente, use o **Supabase local** (Postgres, Auth e Storage no Docker), com dados de teste. Precisa da [Supabase CLI](https://supabase.com/docs/guides/local-development) (`brew install supabase/tap/supabase`).
+
+```bash
+supabase start              # na raiz do repositório; sobe o Supabase local
+cd Backend && npm run db:reset   # zera o banco local, aplica as migrations e cria os dados de teste
+```
+
+- `Backend/.env` aponta para o Supabase local (`http://host.docker.internal:54321`, porque o backend roda no Docker). A chave `service_role` local aparece no `supabase status`.
+- A produção fica em `Backend/.env.producao` (fora do git). Para subir o backend contra ela: `ENV_FILE=.env.producao docker-compose up`.
+- Os usuários de teste têm a senha `senha123`: `escritorio@example.com` (escritório + admin), `paula@example.com` (técnico), `ana@example.com` (sócia), `igor@example.com` (plantonista) etc. A lista completa sai no fim do `npm run db:reset`.
+- Studio (painel do banco): `http://127.0.0.1:54323`. E-mails (redefinição de senha): `http://127.0.0.1:54324`.
+- Para as fotos das fichas abrirem no navegador, o Mac precisa conhecer o nome `host.docker.internal`: `echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts`.
+
+O schema fica em `supabase/migrations/`. A **produção não aplica migrations sozinha**: cada mudança de schema vira um arquivo novo em `supabase/migrations/` e também é rodada manualmente no **SQL Editor** do Supabase de produção.
 
 - `profiles.dias_disponiveis` (`smallint[]`, 0 = domingo … 6 = sábado): dias da semana em que o médico prefere trabalhar. `null` = todos os dias.
 - `afastamentos`: períodos de férias ou congresso de cada médico (`tipo`, `data_inicio`, `data_fim`, `observacao`).
