@@ -24,7 +24,7 @@ import {
   ehVagaDeCoordenador,
   formatarTurno,
   horarioDaVaga,
-  rotuloPosicao,
+  rotuloPosicaoAbreviado,
   turnoDaPosicao,
   vagasDoTurno,
 } from "./posicoes";
@@ -809,7 +809,7 @@ export default function PlantaoModal({
       ? editavel
       : podeMudarPosicao && estouEscalado;
 
-    let rotulo: React.ReactNode = rotuloPosicao(posicao);
+    let rotulo: React.ReactNode = rotuloPosicaoAbreviado(posicao);
     if (!pendente && !u.cobertura && mostraSeletorPosicao) {
       rotulo = (
         <select
@@ -822,7 +822,7 @@ export default function PlantaoModal({
             <optgroup key={t.valor} label={t.rotulo}>
               {VAGAS.filter((v) => v.turno === t.valor).map((v) => (
                 <option key={v.posicao} value={v.posicao}>
-                  {v.rotulo}
+                  {rotuloPosicaoAbreviado(v.posicao)}
                   {v.posicao !== posicao && selecionados.some((o) => o.posicao === v.posicao)
                     ? " (trocar)"
                     : ""}
@@ -906,8 +906,8 @@ export default function PlantaoModal({
       return {
         tipo: "vazia",
         chave: `vaga-${p}`,
-        rotulo: rotuloPosicao(p),
-        texto: "Vaga",
+        rotulo: rotuloPosicaoAbreviado(p),
+        texto: "Vaga livre",
         ativa: adicionando?.posicao === p,
         onClick:
           editavel && podeGerirEquipe
@@ -927,7 +927,7 @@ export default function PlantaoModal({
     (r) => !adicionando || !noTurno(r.id, turnoDaPosicao(adicionando.posicao)),
   );
 
-  // Busca do substituto: aparece abaixo da grade do turno da vaga, na visualização e no modo edição
+  // Busca do substituto: aparece abaixo da lista do turno da vaga, na visualização e no modo edição
   const painelTroca = usuarioTrocando && horarioTrocando && (
     <div className="relative mt-3">
       <div className="flex items-center justify-between mb-1">
