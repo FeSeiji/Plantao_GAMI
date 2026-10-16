@@ -4,8 +4,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'escritorio']
 const ROLES_ANESTESISTA = ['anestesita_socio', 'anestesita_plantonista']
-// Papéis que alguém pode escolher no cadastro público (escritório só é dado pela gestão)
-const ROLES_CADASTRO_PUBLICO = [...ROLES_ANESTESISTA, 'tecnico']
+// Papéis que alguém pode escolher no cadastro público: todos, porque a conta só entra depois da aprovação
+// da gestão. A flag admin não é papel e continua sendo dada só pela gestão.
+const ROLES_CADASTRO_PUBLICO = [...ROLES_ANESTESISTA, 'tecnico', 'escritorio']
 
 // ~100 anos: o Supabase não tem ban permanente, só por duração
 const DURACAO_DESATIVACAO = '876000h'
