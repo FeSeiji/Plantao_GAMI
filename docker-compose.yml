@@ -1,3 +1,5 @@
+# Nome fixo: sem ele o Compose deriva "planto" da pasta "Plantão" e não reconhece o container existente
+name: plantao
 version: '3.8'
 
 services:
@@ -8,8 +10,9 @@ services:
     container_name: plantao-backend
     ports:
       - "3000:3000"
+    # .env aponta para o Supabase local; ENV_FILE=.env.producao docker-compose up usa a produção
     env_file:
-      - ./Backend/.env
+      - ./Backend/${ENV_FILE:-.env}
     environment:
       - NODE_ENV=development
     volumes:
