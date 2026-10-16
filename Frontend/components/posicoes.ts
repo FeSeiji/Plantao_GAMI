@@ -8,18 +8,18 @@ export const TURNOS: { valor: Turno; rotulo: string; hora_inicio: string; hora_f
   { valor: "noturno", rotulo: "Noturno", hora_inicio: "19:00", hora_fim: "07:00" },
 ]
 
-type Vaga = { posicao: number; turno: Turno; rotulo: string; curto: string; coordenador?: boolean }
+type Vaga = { posicao: number; turno: Turno; rotulo: string; curto: string; abrev?: string; coordenador?: boolean }
 
 export const VAGAS: Vaga[] = [
-  { posicao: 1, turno: "diurno", rotulo: "Coordenador", curto: "C", coordenador: true },
-  { posicao: 2, turno: "diurno", rotulo: "Coordenador", curto: "C", coordenador: true },
+  { posicao: 1, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", coordenador: true },
+  { posicao: 2, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", coordenador: true },
   { posicao: 3, turno: "diurno", rotulo: "2º", curto: "2" },
   { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3" },
   { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4" },
   { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5" },
   { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6" },
   { posicao: 8, turno: "diurno", rotulo: "7º", curto: "7" },
-  { posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int" },
+  { posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int", abrev: "Interm." },
   { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1" },
   { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1" },
   { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2" },
@@ -55,6 +55,12 @@ export function ehVagaDeCoordenador(posicao: number | null | undefined) {
 // "Coordenador" / "3º" / "Intermediário" — cabeçalhos e células (o turno aparece no título do bloco)
 export function rotuloPosicao(posicao: number) {
   return vagaDa(posicao)?.rotulo ?? `${posicao}`
+}
+
+// "Coord." / "3º" / "Interm." — coluna da vaga na lista do plantão e no select de posição
+export function rotuloPosicaoAbreviado(posicao: number) {
+  const vaga = vagaDa(posicao)
+  return vaga?.abrev ?? vaga?.rotulo ?? `${posicao}`
 }
 
 // "C" / "3" / "Int" — espaços apertados (marcador do calendário)

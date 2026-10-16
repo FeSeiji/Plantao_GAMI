@@ -13,7 +13,7 @@ import {
   ehVagaDeCoordenador,
   formatarTurno,
   horarioDaVaga,
-  rotuloPosicao,
+  rotuloPosicaoAbreviado,
   turnoDaPosicao,
   vagasDoTurno,
 } from "./posicoes"
@@ -202,8 +202,8 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
         return {
           tipo: "vazia",
           chave: `posicao-${p}`,
-          rotulo: rotuloPosicao(p),
-          texto: "Vaga",
+          rotulo: rotuloPosicaoAbreviado(p),
+          texto: "Vaga livre",
           ativa: adicionando?.posicao === p,
           onClick: () => abrirBusca({ posicao: p }),
         }
@@ -237,7 +237,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                     (fila.some((o) => o.posicao === v.posicao) || noTurno(f.usuario.id, t.valor, f.posicao))
                   }
                 >
-                  {v.rotulo}
+                  {rotuloPosicaoAbreviado(v.posicao)}
                 </option>
               ))}
             </optgroup>
@@ -327,7 +327,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
                     {t.rotulo} <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
                   </p>
                   <GradeParticipantes celulas={celulasDoTurno(t.valor)} />
-                  {/* A busca aparece logo abaixo da grade do turno da vaga que a abriu */}
+                  {/* A busca aparece logo abaixo da lista do turno da vaga que a abriu */}
                   {adicionando && turnoBusca === t.valor && (
                     <div ref={buscaRef} className="scroll-mt-2 mt-3">
                       <div className="flex items-center justify-between mb-1">
