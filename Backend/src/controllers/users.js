@@ -35,7 +35,7 @@ exports.getUsers = async (req, res) => {
   let query = supabase.from('profiles').select('id, nome, email, sigla, dias_disponiveis')
 
   if (search) {
-    const termo = `%${search}%`
+    const termo = valorDoFiltro(`%${search}%`)
     query = query.or(`nome.ilike.${termo},email.ilike.${termo}`)
   }
 
@@ -79,7 +79,7 @@ exports.listarGestao = async (req, res) => {
   let query = supabase.from('profiles').select('id, nome, email, telefone, sigla, crm, crm_uf').order('nome')
 
   if (search) {
-    const termo = `%${search}%`
+    const termo = valorDoFiltro(`%${search}%`)
     query = query.or(`nome.ilike.${termo},email.ilike.${termo}`)
   }
 
@@ -278,6 +278,12 @@ exports.enviarResetSenha = async (req, res) => {
   }
 
   return res.json({ message: `E-mail de redefinição enviado para ${data.user.email}` })
+}
+
+// Valor de texto dentro de .or() do PostgREST: entre aspas, a vírgula e os parênteses que a pessoa digitou
+// não são lidos como separadores do filtro (aspas e barras do texto vão escapadas)
+function valorDoFiltro(texto) {
+  return `"${texto.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 async function buscarIdsComAlgumaRole(rolesAceitas) {
