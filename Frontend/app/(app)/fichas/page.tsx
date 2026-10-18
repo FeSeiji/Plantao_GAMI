@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import FichaModal from "../../../components/FichaModal"
-import CadastroModal from "../../../components/CadastroModal"
 import ExportarFichasModal from "../../../components/ExportarFichasModal"
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
 import { FichaResumo, rotuloTipo } from "../../../components/fichas"
@@ -12,9 +11,6 @@ import { apiFetch } from "../../../components/sessao"
 
 // Quem cria fichas — mesma lista do requireRole em Backend/src/routes/fichas.js
 const ROLES_CRIAR_FICHA = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
-
-const BOTAO_SECUNDARIO =
-  "shrink-0 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
 
 const FILTRO_CLASS =
   "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
@@ -37,9 +33,8 @@ export default function FichasPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [podeCriar, setPodeCriar] = useState(false)
-  // Gestão vê todas as fichas e cadastra convênios e hospitais; o médico vê só as dele
+  // Gestão vê e exporta todas as fichas; o médico, só as dele
   const [ehGestao, setEhGestao] = useState(false)
-  const [cadastroAberto, setCadastroAberto] = useState<"hospitais" | "convenios" | null>(null)
   const [exportarAberto, setExportarAberto] = useState(false)
   const [inicio, setInicio] = useState(() => diasAtras(30))
   const [fim, setFim] = useState("")
@@ -100,17 +95,10 @@ export default function FichasPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-xl font-bold text-gray-800">Fichas anestésicas</h1>
         <div className="flex flex-wrap items-center gap-2">
-          {ehGestao && (
-            <>
-              <button onClick={() => setCadastroAberto("convenios")} className={BOTAO_SECUNDARIO}>
-                Convênios
-              </button>
-              <button onClick={() => setCadastroAberto("hospitais")} className={BOTAO_SECUNDARIO}>
-                Hospitais
-              </button>
-            </>
-          )}
-          <button onClick={() => setExportarAberto(true)} className={BOTAO_SECUNDARIO}>
+          <button
+            onClick={() => setExportarAberto(true)}
+            className="shrink-0 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
             Exportar
           </button>
           {podeCriar && (
@@ -160,7 +148,6 @@ export default function FichasPage() {
             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
               <th className="px-4 py-3">Data</th>
               <th className="px-4 py-3">Anestesistas</th>
-              <th className="px-4 py-3 hidden lg:table-cell">Paciente</th>
               <th className="px-4 py-3 hidden sm:table-cell">Tipo</th>
               <th className="px-4 py-3 hidden md:table-cell">Registrada por</th>
               <th className="px-4 py-3 text-right">Foto</th>
@@ -197,10 +184,6 @@ export default function FichasPage() {
                     </div>
                   </div>
                 </td>
-                <td className="px-4 py-3 hidden lg:table-cell">
-                  <p className="text-gray-800">{f.paciente_nome ?? "—"}</p>
-                  {f.procedimento_nome && <p className="text-xs text-gray-500">{f.procedimento_nome}</p>}
-                </td>
                 <td className="px-4 py-3 hidden sm:table-cell text-gray-700">{rotuloTipo(f)}</td>
                 <td className="px-4 py-3 hidden md:table-cell text-xs text-gray-500">
                   {nomeDe(f.criadoPor)}
@@ -217,21 +200,6 @@ export default function FichasPage() {
       </div>
 
       {exportarAberto && <ExportarFichasModal ehGestao={ehGestao} onClose={() => setExportarAberto(false)} />}
-
-      {cadastroAberto && (
-        <CadastroModal
-          titulo={cadastroAberto === "convenios" ? "Convênios" : "Hospitais"}
-          caminho={`/${cadastroAberto}`}
-          item={cadastroAberto === "convenios" ? "convênio" : "hospital"}
-          descricao={
-            cadastroAberto === "convenios"
-              ? "Os convênios desativados saem da lista das novas fichas."
-              : "Os hospitais desativados saem da lista dos novos casos e fichas."
-          }
-          onClose={() => setCadastroAberto(null)}
-          onChanged={carregar}
-        />
-      )}
 
       {selecionada !== undefined && (
         <FichaModal fichaId={selecionada} onClose={() => setSelecionada(undefined)} onSaved={carregar} />

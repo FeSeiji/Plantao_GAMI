@@ -1,6 +1,6 @@
 // Ficha anestésica — mesmas regras de Backend/src/controllers/fichas.js
 
-export type Pessoa = { id: string; nome?: string | null; email?: string | null; sigla?: string | null; crm?: string | null }
+export type Pessoa = { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
 
 export type TipoAnestesia = "raquianestesia" | "duplo_bloqueio" | "geral" | "peridural" | "outros"
 
@@ -16,11 +16,6 @@ export const MAX_FOTOS = 1
 export const MAX_OBSERVACOES = 2000
 export const MAX_ANESTESISTAS = 10
 
-// Hospital ou convênio da ficha (cadastrados pela gestão)
-export type Referencia = { id: string; nome: string | null; cnpj: string | null }
-
-export type SexoPaciente = "M" | "F"
-
 export type FichaResumo = {
   id: string
   data: string
@@ -31,19 +26,6 @@ export type FichaResumo = {
   tipo_outro: string | null
   observacoes: string | null
   valor: number | null
-  // Modelo do faturamento (as fichas antigas não têm esses dados)
-  numero_atendimento: string | null
-  autorizacao: string | null
-  paciente_nome: string | null
-  paciente_cpf: string | null
-  paciente_sexo: SexoPaciente | null
-  paciente_nascimento: string | null
-  cirurgiao_nome: string | null
-  cirurgiao_crm: string | null
-  procedimento_codigo: string | null
-  procedimento_nome: string | null
-  hospital: Referencia | null
-  convenio: Referencia | null
   anestesistas: Pessoa[]
   qtdFotos: number
   criadoPor: Pessoa
@@ -56,29 +38,14 @@ export type FichaResumo = {
 // O detalhe traz os links temporários das fotos (o armazenamento é privado)
 export type FichaDetalhe = Omit<FichaResumo, "qtdFotos"> & { fotos: { caminho: string; url: string }[] }
 
-// Uma linha da planilha de exportação: uma por anestesista da ficha, na ordem das colunas
+// Uma linha da planilha de exportação, uma por anestesista da ficha. As outras colunas do modelo
+// do faturamento saem vazias (eles preenchem à mão)
 export type LinhaExportacao = {
   data: string
   hora: string
-  numero_atendimento: string | null
-  autorizacao: string | null
-  paciente: string | null
-  paciente_cpf: string | null
-  paciente_sexo: SexoPaciente | null
-  paciente_nascimento: string | null
   anestesista_crm: string | null
   anestesista: string | null
-  cirurgiao_crm: string | null
-  cirurgiao: string | null
-  convenio_cnpj: string | null
-  convenio: string | null
-  hospital_cnpj: string | null
-  hospital: string | null
-  procedimento_codigo: string | null
-  procedimento_nome: string | null
 }
-
-export const ROTULO_SEXO: Record<SexoPaciente, string> = { M: "Masculino", F: "Feminino" }
 
 export function rotuloTipo(f: { tipo_anestesia: TipoAnestesia; tipo_outro: string | null }) {
   if (f.tipo_anestesia === "outros") return f.tipo_outro || "Outros"

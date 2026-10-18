@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import CasoForaModal from "../../../components/CasoForaModal"
-import CadastroModal from "../../../components/CadastroModal"
+import HospitaisModal from "../../../components/HospitaisModal"
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
 import { CasoFora, formatarValor } from "../../../components/casosFora"
 import { apiFetch } from "../../../components/sessao"
@@ -191,16 +191,7 @@ export default function CasosForaPage() {
       {selecionado !== undefined && (
         <CasoForaModal caso={selecionado} onClose={() => setSelecionado(undefined)} onSaved={carregar} />
       )}
-      {hospitaisAberto && (
-        <CadastroModal
-          titulo="Hospitais"
-          caminho="/hospitais"
-          item="hospital"
-          descricao="Os hospitais desativados saem da lista dos novos casos e fichas."
-          onClose={() => setHospitaisAberto(false)}
-          onChanged={carregar}
-        />
-      )}
+      {hospitaisAberto && <HospitaisModal onClose={() => setHospitaisAberto(false)} onChanged={carregar} />}
     </main>
   )
 }

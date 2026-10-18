@@ -39,6 +39,5 @@ app.use('/afastamentos', require('./routes/afastamentos'))
 app.use('/fichas', require('./routes/fichas'))
 app.use('/casos-fora', require('./routes/casosFora'))
 app.use('/hospitais', require('./routes/hospitais'))
-app.use('/convenios', require('./routes/convenios'))
 
 module.exports = app

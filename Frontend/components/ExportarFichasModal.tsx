@@ -11,8 +11,9 @@ type Props = {
   onClose: () => void
 }
 
-// Colunas na ordem e com os nomes do modelo do faturamento
-const COLUNAS: { header: string; key: keyof LinhaExportacao; width: number }[] = [
+// Colunas na ordem e com os nomes do modelo do faturamento. A ficha só preenche data, hora e anestesista;
+// as outras ficam vazias para o faturamento completar à mão antes de importar no outro sistema
+const COLUNAS: { header: string; key: string; width: number }[] = [
   { header: "Data", key: "data", width: 10 },
   { header: "Hora", key: "hora", width: 10 },
   { header: "Número de Atendimento", key: "numero_atendimento", width: 22 },
@@ -51,9 +52,9 @@ async function baixarPlanilha(linhas: LinhaExportacao[], inicio: string, fim: st
   const workbook = new Workbook()
   const aba = workbook.addWorksheet("Fichas")
   aba.columns = COLUNAS
-  // Tudo como texto, no formato do modelo (datas dd/mm/aa, hora hh:mm:ss, documentos só com dígitos)
+  // Tudo como texto, no formato do modelo (data dd/mm/aa, hora hh:mm:ss)
   for (const l of linhas) {
-    aba.addRow({ ...l, data: dataCurta(l.data), paciente_nascimento: dataCurta(l.paciente_nascimento) })
+    aba.addRow({ ...l, data: dataCurta(l.data) })
   }
   aba.getRow(1).font = { bold: true }
 

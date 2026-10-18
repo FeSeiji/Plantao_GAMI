@@ -2,7 +2,6 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
 const { listarCasosFora } = require('../services/casosFora')
-const { cpfValido } = require('../services/documentos')
 const { ehGestao } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -161,4 +160,16 @@ function textoObrigatorio(valor, rotulo) {
   const texto = String(valor ?? '').trim().slice(0, MAX_TEXTO)
   if (!texto) throw new Error(`${rotulo} é obrigatório`)
   return texto
+}
+
+// 11 dígitos, não todos iguais, e os dois dígitos verificadores batendo
+function cpfValido(cpf) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false
+  const digito = tamanho => {
+    let soma = 0
+    for (let i = 0; i < tamanho; i++) soma += Number(cpf[i]) * (tamanho + 1 - i)
+    const resto = (soma * 10) % 11
+    return resto === 10 ? 0 : resto
+  }
+  return digito(9) === Number(cpf[9]) && digito(10) === Number(cpf[10])
 }

@@ -6,15 +6,13 @@ import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { INPUT_CLASS } from "./UsuarioModal"
 import { useViewportVisivel } from "./useViewportVisivel"
 import { apiFetch } from "./sessao"
-import { Cadastro, cpfValido, formatarCpf, formatarValor } from "./casosFora"
+import { formatarValor } from "./casosFora"
 import {
   FichaDetalhe,
   MAX_ANESTESISTAS,
   MAX_FOTOS,
   MAX_OBSERVACOES,
   Pessoa,
-  ROTULO_SEXO,
-  SexoPaciente,
   TIPOS_ANESTESIA,
   TipoAnestesia,
   comprimirImagem,
@@ -37,54 +35,6 @@ function hojeLocal() {
 
 function formatarData(data: string) {
   return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
-}
-
-// Campos do modelo do faturamento, como texto do formulário ("" = vazio)
-type Faturamento = {
-  numero_atendimento: string
-  autorizacao: string
-  paciente_nome: string
-  paciente_cpf: string
-  paciente_sexo: "" | SexoPaciente
-  paciente_nascimento: string
-  cirurgiao_nome: string
-  cirurgiao_crm: string
-  convenio_id: string
-  hospital_id: string
-  procedimento_codigo: string
-  procedimento_nome: string
-}
-
-const FATURAMENTO_VAZIO: Faturamento = {
-  numero_atendimento: "",
-  autorizacao: "",
-  paciente_nome: "",
-  paciente_cpf: "",
-  paciente_sexo: "",
-  paciente_nascimento: "",
-  cirurgiao_nome: "",
-  cirurgiao_crm: "",
-  convenio_id: "",
-  hospital_id: "",
-  procedimento_codigo: "",
-  procedimento_nome: "",
-}
-
-function faturamentoDa(f: FichaDetalhe): Faturamento {
-  return {
-    numero_atendimento: f.numero_atendimento ?? "",
-    autorizacao: f.autorizacao ?? "",
-    paciente_nome: f.paciente_nome ?? "",
-    paciente_cpf: f.paciente_cpf ? formatarCpf(f.paciente_cpf) : "",
-    paciente_sexo: f.paciente_sexo ?? "",
-    paciente_nascimento: f.paciente_nascimento ?? "",
-    cirurgiao_nome: f.cirurgiao_nome ?? "",
-    cirurgiao_crm: f.cirurgiao_crm ?? "",
-    convenio_id: f.convenio?.id ?? "",
-    hospital_id: f.hospital?.id ?? "",
-    procedimento_codigo: f.procedimento_codigo ?? "",
-    procedimento_nome: f.procedimento_nome ?? "",
-  }
 }
 
 function chamarApi(caminho: string, metodo = "GET", body?: unknown) {
@@ -118,10 +68,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
   const [valor, setValor] = useState("")
   const [fotosMantidas, setFotosMantidas] = useState<{ caminho: string; url: string }[]>([])
   const [fotosNovas, setFotosNovas] = useState<string[]>([])
-  const [faturamento, setFaturamento] = useState<Faturamento>(FATURAMENTO_VAZIO)
-  // Listas dos dropdowns (cadastradas pela gestão)
-  const [convenios, setConvenios] = useState<Cadastro[]>([])
-  const [hospitais, setHospitais] = useState<Cadastro[]>([])
 
   const [busca, setBusca] = useState("")
   const [resultados, setResultados] = useState<Pessoa[]>([])
@@ -145,11 +91,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
     setValor(f.valor == null ? "" : String(f.valor))
     setFotosMantidas(f.fotos)
     setFotosNovas([])
-    setFaturamento(faturamentoDa(f))
   }
-
-  const mudarFaturamento = <K extends keyof Faturamento>(campo: K, valor: Faturamento[K]) =>
-    setFaturamento((prev) => ({ ...prev, [campo]: valor }))
 
   useEffect(() => {
     if (criando) {
@@ -181,18 +123,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
       .catch((err) => setError(err.message))
       .finally(() => setCarregando(false))
   }, [criando, fichaId])
-
-  useEffect(() => {
-    if (!editando) return
-    const buscar = (caminho: string) =>
-      chamarApi(caminho).then(async (res) => (res.ok ? ((await res.json()) as Cadastro[]) : []))
-    Promise.all([buscar("/convenios"), buscar("/hospitais")])
-      .then(([listaConvenios, listaHospitais]) => {
-        setConvenios(listaConvenios)
-        setHospitais(listaHospitais)
-      })
-      .catch(() => {})
-  }, [editando])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -261,7 +191,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
     if (dataFim === data && horaFim <= horaInicio) {
       return setError("No mesmo dia, a hora de término precisa ser depois da de início. Se passou da meia-noite, ajuste a data final.")
     }
-    if (faturamento.paciente_cpf && !cpfValido(faturamento.paciente_cpf)) return setError("CPF do paciente inválido.")
 
     setSalvando(true)
     try {
@@ -275,11 +204,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
         tipo_outro: tipo === "outros" ? tipoOutro.trim() : null,
         observacoes: observacoes.trim() || null,
         valor: valor === "" ? null : Number(valor),
-        ...faturamento,
-        paciente_cpf: faturamento.paciente_cpf.replace(/\D/g, "") || null,
-        paciente_sexo: faturamento.paciente_sexo || null,
-        convenio_id: faturamento.convenio_id || null,
-        hospital_id: faturamento.hospital_id || null,
         fotos_novas: fotosNovas,
         ...(criando ? {} : { fotos_mantidas: fotosMantidas.map((f) => f.caminho) }),
       }
@@ -454,113 +378,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
                 <ValorLinha>{f?.hora_fim.slice(0, 5)}</ValorLinha>
               ) : (
                 <input id="fichaFim" type="time" required value={horaFim} onChange={(e) => setHoraFim(e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-          </CaixaCinza>
-        </div>
-
-        {/* Dados do faturamento: paciente, atendimento, cirurgião e procedimento */}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <CaixaCinza className="space-y-2">
-            <TituloCaixa>Paciente</TituloCaixa>
-            <CampoLinha rotulo="Nome" htmlFor="fichaPaciente">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.paciente_nome}</ValorLinha>
-              ) : (
-                <input id="fichaPaciente" type="text" required maxLength={100} value={faturamento.paciente_nome} onChange={(e) => mudarFaturamento("paciente_nome", e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="CPF" htmlFor="fichaCpf">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.paciente_cpf ? formatarCpf(f.paciente_cpf) : ""}</ValorLinha>
-              ) : (
-                <input id="fichaCpf" type="text" inputMode="numeric" value={faturamento.paciente_cpf} onChange={(e) => mudarFaturamento("paciente_cpf", formatarCpf(e.target.value))} placeholder="Opcional" className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Nascimento" htmlFor="fichaNascimento">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.paciente_nascimento ? formatarData(f.paciente_nascimento) : ""}</ValorLinha>
-              ) : (
-                <input id="fichaNascimento" type="date" required max={hojeLocal()} value={faturamento.paciente_nascimento} onChange={(e) => mudarFaturamento("paciente_nascimento", e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Sexo" htmlFor="fichaSexo">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.paciente_sexo ? ROTULO_SEXO[f.paciente_sexo] : ""}</ValorLinha>
-              ) : (
-                <select id="fichaSexo" value={faturamento.paciente_sexo} onChange={(e) => mudarFaturamento("paciente_sexo", e.target.value as Faturamento["paciente_sexo"])} className={INPUT_LINHA}>
-                  <option value="">—</option>
-                  <option value="M">Masculino</option>
-                  <option value="F">Feminino</option>
-                </select>
-              )}
-            </CampoLinha>
-          </CaixaCinza>
-
-          <CaixaCinza className="space-y-2">
-            <TituloCaixa>Atendimento</TituloCaixa>
-            <CampoLinha rotulo="Nº atend." htmlFor="fichaAtendimento">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.numero_atendimento}</ValorLinha>
-              ) : (
-                <input id="fichaAtendimento" type="text" maxLength={100} value={faturamento.numero_atendimento} onChange={(e) => mudarFaturamento("numero_atendimento", e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Autorização" htmlFor="fichaAutorizacao">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.autorizacao}</ValorLinha>
-              ) : (
-                <input id="fichaAutorizacao" type="text" maxLength={100} value={faturamento.autorizacao} onChange={(e) => mudarFaturamento("autorizacao", e.target.value)} placeholder="Ou senha" className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Convênio" htmlFor="fichaConvenio">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.convenio?.nome}</ValorLinha>
-              ) : (
-                <SelectCadastro id="fichaConvenio" lista={convenios} valor={faturamento.convenio_id} onChange={(v) => mudarFaturamento("convenio_id", v)} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Hospital" htmlFor="fichaHospital">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.hospital?.nome}</ValorLinha>
-              ) : (
-                <SelectCadastro id="fichaHospital" lista={hospitais} valor={faturamento.hospital_id} onChange={(v) => mudarFaturamento("hospital_id", v)} />
-              )}
-            </CampoLinha>
-          </CaixaCinza>
-
-          <CaixaCinza className="space-y-2">
-            <TituloCaixa>Cirurgião</TituloCaixa>
-            <CampoLinha rotulo="Nome" htmlFor="fichaCirurgiao">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.cirurgiao_nome}</ValorLinha>
-              ) : (
-                <input id="fichaCirurgiao" type="text" maxLength={100} value={faturamento.cirurgiao_nome} onChange={(e) => mudarFaturamento("cirurgiao_nome", e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="CRM" htmlFor="fichaCrmCirurgiao">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.cirurgiao_crm}</ValorLinha>
-              ) : (
-                <input id="fichaCrmCirurgiao" type="text" maxLength={100} value={faturamento.cirurgiao_crm} onChange={(e) => mudarFaturamento("cirurgiao_crm", e.target.value)} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-          </CaixaCinza>
-
-          <CaixaCinza className="space-y-2">
-            <TituloCaixa>Procedimento</TituloCaixa>
-            <CampoLinha rotulo="Código" htmlFor="fichaCodigo">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.procedimento_codigo}</ValorLinha>
-              ) : (
-                <input id="fichaCodigo" type="text" inputMode="numeric" maxLength={20} value={faturamento.procedimento_codigo} onChange={(e) => mudarFaturamento("procedimento_codigo", e.target.value.replace(/\D/g, ""))} className={INPUT_LINHA} />
-              )}
-            </CampoLinha>
-            <CampoLinha rotulo="Nome" htmlFor="fichaProcedimento">
-              {somenteLeitura ? (
-                <ValorLinha>{f?.procedimento_nome}</ValorLinha>
-              ) : (
-                <input id="fichaProcedimento" type="text" required maxLength={100} value={faturamento.procedimento_nome} onChange={(e) => mudarFaturamento("procedimento_nome", e.target.value)} className={INPUT_LINHA} />
               )}
             </CampoLinha>
           </CaixaCinza>
@@ -770,25 +587,6 @@ const INPUT_LINHA =
 
 function CaixaCinza({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <div className={`bg-gray-300 px-3 py-2.5 ${className}`}>{children}</div>
-}
-
-function TituloCaixa({ children }: { children: React.ReactNode }) {
-  return <p className="text-[11px] font-bold uppercase tracking-wide text-gray-800">{children}</p>
-}
-
-// Convênio ou hospital: os ativos, mais o que a ficha já tinha (pode ter sido desativado depois)
-function SelectCadastro({ id, lista, valor, onChange }: { id: string; lista: Cadastro[]; valor: string; onChange: (valor: string) => void }) {
-  const opcoes = lista.filter((c) => c.ativo || c.id === valor)
-  return (
-    <select id={id} value={valor} onChange={(e) => onChange(e.target.value)} className={INPUT_LINHA}>
-      <option value="">—</option>
-      {opcoes.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.nome}
-        </option>
-      ))}
-    </select>
-  )
 }
 
 function CampoLinha({ rotulo, htmlFor, children }: { rotulo: React.ReactNode; htmlFor?: string; children: React.ReactNode }) {
