@@ -201,8 +201,8 @@ async function main() {
 
   // Fichas anestésicas (sem foto): uma com um anestesista, outra virando a noite com dois
   await ok(supabase.from('fichas_anestesicas').insert([
-    { data: diaRelativo(-1), hora_inicio: '08:00', hora_fim: '10:30', anestesista_id: ana.id, anestesista_ids: [ana.id], tipo_anestesia: 'raquianestesia', criado_por: ana.id },
-    { data: diaRelativo(-3), data_fim: diaRelativo(-2), hora_inicio: '22:00', hora_fim: '02:00', anestesista_id: bruno.id, anestesista_ids: [bruno.id, igor.id], tipo_anestesia: 'outros', tipo_outro: 'Bloqueio de plexo', observacoes: 'Caso longo', valor: 2500, criado_por: escritorio },
+    { data: diaRelativo(-1), hora_inicio: '08:00', hora_fim: '10:30', anestesista_ids: [ana.id], tipo_anestesia: 'raquianestesia', criado_por: ana.id },
+    { data: diaRelativo(-3), data_fim: diaRelativo(-2), hora_inicio: '22:00', hora_fim: '02:00', anestesista_ids: [bruno.id, igor.id], tipo_anestesia: 'outros', tipo_outro: 'Bloqueio de plexo', observacoes: 'Caso longo', valor: 2500, criado_por: escritorio },
   ]), 'fichas')
 
   console.log(`Pronto: ${medicos.length + 3} usuários, ${plantoes.length} plantões (${dataLocal(inicio)} a ${dataLocal(fim)}).`)
