@@ -290,6 +290,19 @@ exports.forgotPassword = async (req, res) => {
   return res.json({ message: 'Se o e-mail estiver cadastrado, um link de redefinição de senha foi enviado.' })
 }
 
+// A sessão aberta pelo link do e-mail vem marcada no token (amr) com o método "otp" (ou "recovery", conforme a
+// versão do Supabase), com horário depois do envio do e-mail. O token já foi validado pelo getUser antes daqui
+function veioDoLinkDeRecuperacao(accessToken, user) {
+  let amr
+  try {
+    amr = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString()).amr
+  } catch {
+    return false
+  }
+  const enviadoEm = Math.floor(Date.parse(user.recovery_sent_at ?? '') / 1000)
+  return Array.isArray(amr) && amr.some(a => ['otp', 'recovery'].includes(a.method) && a.timestamp >= enviadoEm)
+}
+
 exports.resetPassword = async (req, res) => {
   const { access_token, password } = req.body
 
@@ -299,8 +312,13 @@ exports.resetPassword = async (req, res) => {
 
   const { data: { user }, error: userError } = await supabase.auth.getUser(access_token)
 
-  if (userError || !user) {
-    return res.status(401).json({ error: 'Token inválido ou expirado' })
+  if (supabaseIndisponivel(userError)) return res.status(503).json({ error: ERRO_INDISPONIVEL })
+  // O token de uma sessão comum não serve: sem isso, quem pegasse um token de login trocaria a senha sem saber a atual
+  if (userError || !user || !veioDoLinkDeRecuperacao(access_token, user)) {
+    return res.status(401).json({ error: 'Link de redefinição inválido ou expirado. Peça um novo em "Esqueci minha senha".' })
+  }
+  if (String(password).length < TAMANHO_MINIMO_SENHA) {
+    return res.status(400).json({ error: `A nova senha precisa ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres` })
   }
 
   const { error } = await supabase.auth.admin.updateUserById(user.id, { password })
