@@ -458,7 +458,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="text-gray-700">
                   {usuario.ativo
-                    ? "Desativar este usuário? Ele não conseguirá mais entrar."
+                    ? "Desativar este usuário? Ele não conseguirá mais entrar e sairá das vagas dos turnos que ainda não começaram (as vagas ficam vazias)."
                     : usuario.pendente
                       ? "Aprovar este cadastro? A pessoa poderá entrar no sistema com o papel escolhido."
                       : "Reativar este usuário?"}

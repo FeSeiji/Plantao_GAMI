@@ -112,6 +112,11 @@ async function buscarRolesDosUsuarios() {
   return new Map(data.users.map(u => [u.id, u.app_metadata?.roles ?? []]))
 }
 
+// Conta desativada pela gestão ou cadastro público ainda pendente de aprovação (os dois ficam banidos)
+function estaDesativado(authUser) {
+  return Boolean(authUser?.banned_until && new Date(authUser.banned_until) > new Date())
+}
+
 // No BM, quem tem o cargo de sócio conta pontos pela vaga; quem é só plantonista conta horas
 function contaComoSocio(roles) {
   return (roles ?? []).includes('anestesita_socio')
@@ -119,5 +124,5 @@ function contaComoSocio(roles) {
 
 module.exports = {
   ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, UFS, validarDadosUsuario, criarUsuario,
-  buscarRolesDosUsuarios, contaComoSocio,
+  buscarRolesDosUsuarios, contaComoSocio, estaDesativado,
 }
