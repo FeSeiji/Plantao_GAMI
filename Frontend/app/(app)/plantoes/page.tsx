@@ -12,6 +12,7 @@ import PlantaoCalendario, {
   calcularIntervaloVisivel,
 } from "../../../components/PlantaoCalendario";
 import { apiFetch } from "../../../components/sessao";
+import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino";
 
 export default function PlantoesPage() {
   const router = useRouter();
@@ -48,6 +49,7 @@ export default function PlantoesPage() {
             data.error ?? "Não foi possível carregar os plantões.",
           );
         setPlantoes(data);
+        setError("");
       })
       .catch((err) => setError(err.message))
       .finally(() => {
@@ -73,6 +75,12 @@ export default function PlantoesPage() {
 
   useEffect(() => {
     carregarPlantoes();
+  }, [carregarPlantoes]);
+
+  // Resposta pelo sino (troca, férias, pedido de vaga) muda a escala que está na tela
+  useEffect(() => {
+    window.addEventListener(EVENTO_TROCAS_ATUALIZADAS, carregarPlantoes);
+    return () => window.removeEventListener(EVENTO_TROCAS_ATUALIZADAS, carregarPlantoes);
   }, [carregarPlantoes]);
 
   return (

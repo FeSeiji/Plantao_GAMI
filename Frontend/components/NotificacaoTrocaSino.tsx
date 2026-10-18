@@ -149,6 +149,8 @@ export default function NotificacaoTrocaSino() {
       }
 
       setPendentes((prev) => prev.filter((t) => t.id !== id))
+      // Aceitar muda quem está na vaga: o calendário e o dashboard abertos recarregam
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível responder a essa solicitação.")
     } finally {
@@ -177,6 +179,8 @@ export default function NotificacaoTrocaSino() {
       }
 
       setAfastamentos((prev) => prev.filter((a) => a.id !== id))
+      // Os indicadores de férias/congresso do calendário mudam com a resposta
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível responder a esse pedido.")
     } finally {
