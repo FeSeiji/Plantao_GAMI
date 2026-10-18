@@ -6,11 +6,11 @@ const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastad
 
 const { ehGestao } = require('../middleware/auth')
 const {
-  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou,
+  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou,
 } = require('../services/posicoes')
 const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
 const { usuariosComConflito } = require('../services/conflitos')
-const { respondenteDaTroca } = require('../services/trocas')
+const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 // Um plantão por dia, com as vagas do diurno e do noturno (services/posicoes.js)
@@ -428,6 +428,9 @@ exports.criarTroca = async (req, res) => {
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (!ehGestao(req.user) && turnoJaTerminou(plantao.data, posicao)) {
+    return res.status(400).json({ error: 'O turno dessa vaga já terminou. Só a gestão pode registrar essa troca.' })
+  }
 
   const titular = plantao.plantao_usuarios.find(u => u.posicao === posicao)
   if (!titular) return res.status(400).json({ error: 'Essa vaga está vazia' })
@@ -567,7 +570,7 @@ exports.listarTrocasPendentes = async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message })
 
-  const data = envolvido.filter(t => respondenteDaTroca(t) === req.user.id)
+  const data = envolvido.filter(t => respondenteDaTroca(t) === req.user.id && !trocaVencida(t, t.plantoes?.data))
 
   try {
     const ids = data.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por])
@@ -611,6 +614,9 @@ exports.responderTroca = (aceitar) => async (req, res) => {
     // A vaga pode ter mudado de mãos enquanto o pedido esperava
     const titularContinua = plantao?.plantao_usuarios.some(u => u.posicao === troca.posicao && u.usuario_id === troca.usuario_saida)
     if (!titularContinua) return res.status(409).json({ error: 'O médico que está saindo não está mais nessa vaga' })
+    if (trocaVencida(troca, plantao.data)) {
+      return res.status(409).json({ error: 'O turno dessa vaga já terminou e o pedido venceu' })
+    }
 
     try {
       if ((await usuariosAfastados([troca.usuario_entrada], plantao.data)).size > 0) {

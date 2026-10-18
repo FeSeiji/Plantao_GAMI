@@ -6,7 +6,7 @@ const {
   TURNOS, pontosDaPosicao, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga,
 } = require('../services/posicoes')
 const { buscarCoberturas, repartirPlantao, duracaoDaVaga, duracaoDaCobertura } = require('../services/coberturas')
-const { respondenteDaTroca } = require('../services/trocas')
+const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { contaComoSocio } = require('../services/usuarios')
 
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
@@ -94,7 +94,8 @@ exports.resumo = async (req, res) => {
 
   const erro = [janela, proximos, trocasParaMim, trocasSolicitadas, minhasCoberturas].find(r => r.error)
   if (erro) return res.status(500).json({ error: erro.error.message })
-  trocasParaMim.data = trocasParaMim.data.filter(t => respondenteDaTroca(t) === eu)
+  trocasParaMim.data = trocasParaMim.data.filter(t => respondenteDaTroca(t) === eu && !trocaVencida(t, t.plantoes?.data))
+  trocasSolicitadas.data = trocasSolicitadas.data.filter(t => !trocaVencida(t, t.plantoes?.data))
 
   const minhas = minhasVagas(janela.data)
   const minhasProximas = minhasVagas(proximos.data)
@@ -206,6 +207,7 @@ exports.gestao = async (req, res) => {
 
   const erro = [plantoes, trocas, auth].find(r => r.error)
   if (erro) return res.status(500).json({ error: erro.error.message })
+  trocas.data = trocas.data.filter(t => !trocaVencida(t, t.plantoes?.data))
 
   let coberturas
   try {

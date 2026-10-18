@@ -47,14 +47,34 @@ function pontosDaPosicao(posicao) {
   return vagaDa(posicao)?.pontos ?? 0
 }
 
-// O turno da vaga já começou nesse plantão? Compara no horário de Brasília (o do hospital), não no do servidor
+// Instante no horário de Brasília (o do hospital), não no do servidor: "2026-10-18 14:05"
+function horaLocal(instante = new Date()) {
+  return instante.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 16)
+}
+
+// O turno da vaga já começou nesse plantão?
 function turnoJaComecou(data, posicao, agora = new Date()) {
-  const agoraLocal = agora.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 16) // "2026-10-18 14:05"
-  return `${data} ${TURNOS[turnoDaPosicao(posicao)].hora_inicio}` <= agoraLocal
+  return `${data} ${TURNOS[turnoDaPosicao(posicao)].hora_inicio}` <= horaLocal(agora)
+}
+
+// Fim do turno da vaga, no mesmo formato de horaLocal. O noturno termina no dia seguinte
+function fimDoTurno(data, posicao) {
+  const { hora_inicio, hora_fim } = TURNOS[turnoDaPosicao(posicao)]
+  if (hora_fim > hora_inicio) return `${data} ${hora_fim}`
+  const [ano, mes, dia] = data.split('-').map(Number)
+  const amanha = new Date(Date.UTC(ano, mes - 1, dia + 1)).toISOString().slice(0, 10)
+  return `${amanha} ${hora_fim}`
+}
+
+function turnoJaTerminou(data, posicao, agora = new Date()) {
+  return fimDoTurno(data, posicao) <= horaLocal(agora)
 }
 
 module.exports = {
+  horaLocal,
   turnoJaComecou,
+  fimDoTurno,
+  turnoJaTerminou,
   TURNOS,
   POSICOES,
   ehVagaDeCoordenador,
