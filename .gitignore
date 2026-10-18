@@ -3,3 +3,6 @@
 
 # Cache do TypeScript (regerado a cada typecheck/build)
 *.tsbuildinfo
+
+# Dependências: o npm install recria (no Render, a cada deploy)
+node_modules/
