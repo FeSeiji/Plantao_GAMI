@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { supabaseIndisponivel, ERRO_INDISPONIVEL } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -15,6 +16,7 @@ exports.login = async (req, res) => {
 
   const { data, error } = await supabaseLogin.auth.signInWithPassword({ email, password })
 
+  if (supabaseIndisponivel(error)) return res.status(503).json({ error: ERRO_INDISPONIVEL })
   // Conta desativada ou cadastro ainda não aprovado (os dois são ban no Supabase)
   if (error?.code === 'user_banned') {
     return res.status(403).json({ error: 'Seu cadastro está aguardando aprovação ou foi desativado. Fale com o escritório.' })
@@ -40,6 +42,8 @@ exports.refresh = async (req, res) => {
 
   const { data, error } = await supabaseLogin.auth.refreshSession({ refresh_token })
 
+  // Sem isso o front entenderia que a sessão acabou e mandaria a pessoa entrar de novo
+  if (supabaseIndisponivel(error)) return res.status(503).json({ error: ERRO_INDISPONIVEL })
   if (error?.code === 'user_banned') {
     return res.status(403).json({ error: 'Seu cadastro está aguardando aprovação ou foi desativado. Fale com o escritório.' })
   }

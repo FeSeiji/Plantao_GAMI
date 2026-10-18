@@ -40,4 +40,22 @@ app.use('/fichas', require('./routes/fichas'))
 app.use('/casos-fora', require('./routes/casosFora'))
 app.use('/hospitais', require('./routes/hospitais'))
 
+// Toda resposta é JSON, inclusive erro: a tela faz res.json() e, com o HTML padrão do Express,
+// mostrava "Unexpected token <"
+app.use((req, res) => {
+  res.status(404).json({ error: 'Rota não encontrada' })
+})
+
+// Express 5 manda para cá o erro de qualquer handler async que não foi tratado
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err)
+
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'O corpo da requisição não é um JSON válido' })
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Envio grande demais. Tente uma foto menor.' })
+
+  console.error(err)
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500
+  res.status(status).json({ error: status === 500 ? 'Erro inesperado no servidor. Tente de novo.' : err.message })
+})
+
 module.exports = app
