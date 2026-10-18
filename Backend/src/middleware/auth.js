@@ -1,6 +1,12 @@
-const { createClient } = require('@supabase/supabase-js')
+const { createClient, isAuthRetryableFetchError } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+// Supabase fora do ar ou sem resposta: não é culpa do token nem da senha, então não pede login de novo
+const supabaseIndisponivel = error => isAuthRetryableFetchError(error) || error?.status >= 500
+const ERRO_INDISPONIVEL = 'O servidor está com problemas para responder. Tente de novo em alguns minutos.'
+exports.supabaseIndisponivel = supabaseIndisponivel
+exports.ERRO_INDISPONIVEL = ERRO_INDISPONIVEL
 
 exports.authMiddleware = async (req, res, next) => {
   const authHeader = req.headers.authorization
@@ -12,6 +18,10 @@ exports.authMiddleware = async (req, res, next) => {
 
   const { data: { user }, error } = await supabase.auth.getUser(token)
 
+  if (supabaseIndisponivel(error)) {
+    console.error('Supabase indisponível ao validar o token:', error.message)
+    return res.status(503).json({ error: ERRO_INDISPONIVEL })
+  }
   if (error || !user) {
     return res.status(401).json({ error: 'Sua sessão expirou. Saia e entre novamente.' })
   }
