@@ -1,6 +1,6 @@
 # 🏥 Plantão — GAMI
 
-Sistema de gestão de plantões hospitalares do **GAMI (Grupo Anestesia Materno Infantil)**: escala de plantões, trocas entre médicos, férias e congressos, gestão de usuários e o BM Financeiro mensal.
+Sistema de gestão de plantões hospitalares do **GAMI (Grupo Anestesia Materno Infantil)**: escala de plantões, trocas entre médicos, férias e congressos, fichas anestésicas, casos fora, gestão de usuários e o BM Financeiro mensal.
 
 O projeto é dividido em duas aplicações:
 
@@ -14,9 +14,9 @@ O projeto é dividido em duas aplicações:
 **Backend**
 - **Node.js** v18+ (o `@supabase/supabase-js` recomenda v20+)
 - **Express** v5
-- **Supabase** — Autenticação (Auth) + Banco de dados (Postgres)
+- **Supabase** — autenticação (Auth), banco de dados (Postgres) e arquivos (Storage, para as fotos das fichas)
 - **Docker** + **Docker Compose**
-- **Nodemon** — Hot reload em desenvolvimento
+- **Nodemon** — hot reload em desenvolvimento
 
 **Frontend**
 - **Next.js** 15 (App Router) + **React** 19
@@ -24,7 +24,7 @@ O projeto é dividido em duas aplicações:
 - **Tailwind CSS** 3
 - **ExcelJS** — exportação do BM Financeiro para `.xlsx`
 
-**Deploy:** backend no **Render**, frontend na **Vercel**.
+**Deploy:** backend no **Render**, frontend na **Vercel**, banco no **Supabase**.
 
 ---
 
@@ -35,20 +35,24 @@ Plantão/
 ├── Backend/
 │   ├── src/
 │   │   ├── controllers/
-│   │   │   ├── authController.js   # Login, cadastro, /me (ver e editar o próprio perfil) e redefinição de senha
-│   │   │   ├── users.js            # Busca de médicos e gestão de usuários
-│   │   │   ├── plantoes.js         # Plantões, equipes/filas e trocas
-│   │   │   ├── afastamentos.js     # Férias e congressos dos médicos
+│   │   │   ├── authController.js   # Login, refresh, cadastro, /me (perfil e troca de senha) e redefinição de senha
+│   │   │   ├── users.js            # Busca de médicos e gestão de usuários (inclui a aprovação de cadastros)
+│   │   │   ├── plantoes.js         # Plantões, vagas, trocas e histórico
+│   │   │   ├── afastamentos.js     # Férias e congressos (pedido do médico, aprovação da gestão)
+│   │   │   ├── fichas.js           # Fichas anestésicas (com foto)
+│   │   │   ├── casosFora.js        # Casos fora da escala
+│   │   │   ├── hospitais.js        # Hospitais dos casos fora
 │   │   │   ├── dashboard.js        # Painel pessoal e visão da gestão
 │   │   │   └── bmFinanceiro.js     # Resumo mensal de horas e pontos
-│   │   ├── services/
-│   │   │   ├── usuarios.js         # Validação de sigla, roles e CRM
-│   │   │   └── afastamentos.js     # Consulta de férias/congressos por data
+│   │   ├── services/               # Regras compartilhadas: vagas, conflitos de horário, trocas por horas, afastamentos, usuários
 │   │   ├── middleware/
-│   │   │   └── auth.js             # Validação do JWT e checagem de roles
-│   │   ├── routes/                 # auth, users, plantoes, afastamentos, dashboard, bmFinanceiro
+│   │   │   ├── auth.js             # Validação do JWT e checagem de roles
+│   │   │   └── rateLimit.js        # Limites de login, cadastro e e-mails
+│   │   ├── routes/
 │   │   ├── app.js                  # Configuração do Express
 │   │   └── server.js               # Entrypoint — sobe o servidor
+│   ├── scripts/
+│   │   └── seed-local.js           # Dados de teste do Supabase local
 │   ├── Dockerfile
 │   ├── .env.example
 │   └── package.json
@@ -59,13 +63,19 @@ Plantão/
 │   │   └── (app)/                  # Área logada (com sidebar)
 │   │       ├── dashboard/
 │   │       ├── plantoes/           # Calendário de plantões
-│   │       ├── perfil/             # Meu perfil (dados, dias disponíveis, férias e congressos)
+│   │       ├── meu-plantao/        # Semana no formato da escala
+│   │       ├── fichas/             # Fichas anestésicas
+│   │       ├── casos-fora/         # Casos fora
+│   │       ├── perfil/             # Meu perfil (dados, senha, dias disponíveis, férias e congressos)
 │   │       ├── usuarios/           # Gestão de usuários
 │   │       └── bm-financeiro/      # BM Financeiro
-│   ├── components/                 # Modais, calendário, grid de participantes, sidebar, badges
+│   ├── components/                 # Modais, calendário, lista de participantes, sidebar, badges
 │   ├── public/                     # Logos da GAMI
 │   ├── .env.example
 │   └── package.json
+├── supabase/
+│   ├── config.toml                 # Supabase local
+│   └── migrations/                 # Schema do banco
 ├── docker-compose.yml
 └── README.md
 ```
@@ -117,9 +127,6 @@ cd Backend && npm run db:reset   # zera o banco local, aplica as migrations e cr
 
 O schema fica em `supabase/migrations/`. A **produção não aplica migrations sozinha**: cada mudança de schema vira um arquivo novo em `supabase/migrations/` e também é rodada manualmente no **SQL Editor** do Supabase de produção.
 
-- `profiles.dias_disponiveis` (`smallint[]`, 0 = domingo … 6 = sábado): dias da semana em que o médico prefere trabalhar. `null` = todos os dias.
-- `afastamentos`: períodos de férias ou congresso de cada médico (`tipo`, `data_inicio`, `data_fim`, `observacao`).
-
 ---
 
 ## ▶️ Rodando o projeto
@@ -143,6 +150,8 @@ npm run dev   # hot reload
 npm start     # produção
 ```
 
+Sem Docker, use `SUPABASE_URL=http://127.0.0.1:54321` no `.env` para o Supabase local.
+
 ### Frontend
 
 ```bash
@@ -161,10 +170,12 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 |------|-----------|
 | `anestesita_socio` | Anestesista sócio — entra em qualquer vaga do plantão; no BM conta **pontos** pela vaga |
 | `anestesita_plantonista` | Anestesista plantonista — entra em qualquer vaga do plantão; no BM conta **horas** (se também for sócio, conta pontos) |
-| `tecnico` | Técnico — gestão de usuários (inclusive de administradores, exceto a role admin) |
-| `admin` | Administrador |
+| `tecnico` | Técnico — faz parte da gestão |
+| `escritorio` | Escritório — faz parte da gestão |
 
-- As roles ficam em `app_metadata` no Supabase — só a service role key consegue alterá-las.
+- **Administrador** não é role: é a flag `is_admin`, que dá acesso de gestão e só pode ser concedida ou retirada por outro administrador.
+- **Gestão** = `escritorio`, `tecnico` e administradores. É quem monta a escala, aprova cadastros e afastamentos e edita registros de outras pessoas.
+- As roles e a flag admin ficam em `app_metadata` no Supabase — só a service role key consegue alterá-las.
 - Anestesistas precisam informar **CRM** (até 7 dígitos) + **UF** no cadastro.
 - Todo usuário tem uma **sigla** única de 2 letras, exibida nos badges do calendário.
 
@@ -172,8 +183,14 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 
 ## 📅 Funcionalidades
 
+### Cadastro e acesso
+- **Cadastro público** (`/register`): qualquer cargo (sócio, plantonista, técnico ou escritório). A conta nasce **bloqueada** e só entra depois que a gestão aprova na tela de Usuários.
+- **Login** com sessão renovada automaticamente (refresh token), sem pedir a senha de novo.
+- **Esqueci a senha** por e-mail, e **troca da própria senha** no perfil.
+- Login, cadastro e e-mails têm limite de tentativas.
+
 ### Plantões
-Segue a escala anual do cliente: **um plantão por dia**, sem tipo, com as vagas do diurno e do noturno. A vaga (posição de 1 a 13, na ordem das linhas da escala) é o que identifica cada lugar:
+Segue a escala anual do cliente: **um plantão por dia**, com as vagas do diurno e do noturno. A vaga (posição de 1 a 13, na ordem das linhas da escala) identifica cada lugar:
 
 | Turno | Horário | Vagas (posição) |
 |-------|---------|-----------------|
@@ -184,39 +201,60 @@ Regras de escala:
 - Qualquer médico (sócio ou plantonista) entra em qualquer vaga. O coordenador **não é obrigatório** (o plantão precisa de pelo menos um médico); o dashboard da gestão avisa quando o diurno está sem coordenador.
 - O mesmo médico pode estar no **diurno e no noturno** do mesmo dia (os turnos só se encostam às 19h), mas não em duas vagas do mesmo turno.
 - Um médico não pode estar em duas vagas com horários sobrepostos (inclusive a troca por horas).
-- Médico de **férias ou em congresso** não pode ser escalado nesses dias (veja abaixo).
-- O horário é fixo por turno; quem cobre só parte de uma vaga usa a troca por horas.
+- Médico com **férias ou congresso aprovados** não pode ser escalado nesses dias (veja abaixo).
+- Só a gestão cria e edita plantões e preenche ou esvazia vagas. Médicos podem **pedir uma vaga livre** (veja abaixo).
 
-Os participantes aparecem em dois **grids**, um por turno, com uma célula por vaga (clique numa vaga vazia para preenchê-la). As vagas de coordenador ficam em destaque, e quem vira coordenador é definido mudando o médico de vaga — inclusive entre o diurno e o noturno. As ações de cada médico (trocar, remover) ficam num menu ao clicar na célula. Mudar posições: a gestão e os médicos escalados no plantão.
+No modal do plantão, os participantes aparecem em **lista**, uma por turno, com uma linha por vaga: a vaga ("Coord.", "2º", "Interm."), a sigla, o nome e, embaixo, avisos como troca pendente, troca por horas ou férias. As ações de cada médico (trocar, remover) ficam no botão **⋯**, e uma vaga livre mostra **+ Adicionar**. Quem vira coordenador é definido mudando o médico de vaga — inclusive entre o diurno e o noturno. Mudar posições: a gestão e os médicos escalados no plantão. O modal também mostra o histórico de trocas, remoções e mudanças de vaga.
 
-O calendário tem visões de **semana** (uma linha por turno) e **mês**, com uma **cor por turno** (âmbar = diurno, índigo = noturno). No celular, a semana mostra os dias empilhados. A tela **Meu plantão** mostra a semana no formato da escala: as vagas nas linhas e os dias nas colunas.
+O calendário tem visões de **semana** (uma linha por turno) e **mês**, com uma **cor por turno** (âmbar = diurno, índigo = noturno). Cada sigla tem indicadores: anel roxo do coordenador, ponto laranja de troca pendente, "!" de afastamento aprovado, "?" de pedido pendente e a sigla de quem cobre a troca por horas. No celular, a semana mostra os dias empilhados.
+
+### Pedido de vaga livre
+No modal do plantão, o médico (sócio ou plantonista) vê **Pedir esta vaga** nas vagas livres, até o turno começar e se ainda não estiver naquele turno. O pedido fica pendente até a **gestão aprovar ou recusar**, pelo sino de notificações ou na própria vaga no modal.
+- Vários médicos podem pedir a mesma vaga; ao aprovar um, os outros pedidos dela são recusados.
+- Ao aprovar, o médico entra na vaga, e os outros pedidos dele no mesmo turno do plantão são cancelados.
+- As regras de escala (uma vaga por turno, sem conflito de horário, sem férias aprovadas) são checadas no pedido e de novo na aprovação.
+- Se a gestão preencher a vaga antes de responder, os pedidos dela são cancelados. O médico pode cancelar o próprio pedido.
+- Pedidos e respostas aparecem no histórico do plantão.
+
+### Meu plantão
+A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as suas vagas destacadas. Clicar em qualquer célula de um dia abre o plantão. Para sócios, plantonistas, técnicos e escritório.
 
 ### Trocas de plantão
-Substituir o médico de uma vaga já ocupada cria uma **solicitação de troca** (a troca é da vaga). A troca só vale depois que o médico que entra **aceita**, e enquanto isso o médico que sai continua no plantão. Adicionar alguém num slot vazio não precisa de aceite. O sino de notificações mostra as trocas pendentes para o usuário logado.
+- **Troca da vaga inteira:** substituir o médico de uma vaga cria uma **solicitação de troca**. Ela só vale depois do aceite: de quem entra ou, quando o substituto pede a vaga para si, de quem sai. Enquanto isso, o titular continua no plantão.
+- **Troca por horas:** o substituto cobre só parte da vaga (do início até um horário, ou de um horário até o fim). A vaga continua do titular, e as horas e pontos são divididos no BM.
+- Quem pediu (ou a gestão) pode cancelar um pedido pendente. A gestão também pode desfazer uma troca por horas já aceita.
+- O sino de notificações mostra as trocas aguardando o aceite do usuário logado.
 
 ### Meu perfil
-Acessado pelo menu da sigla (canto superior). Cada usuário vê seus dados e edita nome, sigla, telefone, data de nascimento e CRM. E-mail e funções só a gestão altera. Anestesistas também têm:
+Acessado pelo menu da sigla (canto superior). Cada usuário edita nome, sigla, telefone, data de nascimento e CRM, e troca a própria senha. E-mail e funções só a gestão altera. Anestesistas também têm:
 - **Dias disponíveis** — dias da semana em que preferem trabalhar. Quem monta o plantão ainda pode escalá-lo em outro dia, mas a busca mostra um aviso.
-- **Férias e congressos** — períodos (data inicial a final) em que o médico **não pode ser escalado**: na busca ele aparece desabilitado, com o motivo. Se já estiver escalado, o plantão ganha um indicador vermelho no calendário e no grid, para a gestão resolver.
+- **Férias e congressos** — o médico pede o período (data inicial a final) e a **gestão aprova ou recusa**. Aprovado, ele não pode ser escalado nesses dias: na busca aparece desabilitado, com o motivo. Se já estiver escalado, o plantão ganha um indicador vermelho no calendário e no modal, para a gestão resolver.
 
 Plantões que viram a noite contam pelo dia em que começam.
 
+### Fichas anestésicas
+Registro avulso de uma anestesia, sem ligação com o plantão: data, horário, anestesista, tipo de anestesia, observações e **uma foto** da ficha (guardada num bucket privado do Supabase Storage; o link da foto vale 1 hora). Todos os usuários logados veem; criam médicos e a gestão; editam e excluem quem criou ou a gestão.
+
+### Casos fora
+Cirurgias feitas por um anestesista fora da escala (substitui o antigo Google Forms): data, anestesista, se estava escalado, cirurgião, paciente (nome e CPF), cirurgia, hospital, recibo (GAMI, PMP, sem recibo ou pessoal), valor e comentários. Todos os usuários logados veem; editam e excluem quem criou ou a gestão. A lista de **hospitais** é cadastrada pela gestão (hospital desativado some das opções, mas continua nos casos antigos). Os casos do mês também aparecem numa aba do BM Financeiro.
+
 ### Gestão de usuários
-Tela para listar, criar e editar usuários, ativar/desativar contas e enviar e-mail de redefinição de senha. A lista mostra o contato (e-mail e telefone) de cada usuário, e o modal do médico mostra suas férias e congressos (só leitura).
-- **Visualizar:** `admin`, `anestesita_socio`, `tecnico`
-- **Editar:** `admin`, `tecnico` (o técnico edita administradores, mas não concede nem remove a role admin)
+Tela para listar, criar e editar usuários, **aprovar cadastros pendentes**, ativar/desativar contas e enviar e-mail de redefinição de senha. A lista mostra o contato (e-mail e telefone) de cada usuário, e o modal do médico mostra suas férias e congressos (a gestão pode remover).
+- **Visualizar:** gestão e `anestesita_socio`
+- **Editar:** gestão (só administradores concedem ou retiram a flag admin)
 
 ### Dashboard
-Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e papel na equipe/fila), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos. Os dados vêm de um único endpoint e mostram só o que é do próprio usuário.
+Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e a vaga), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos.
 
-Para `admin` e `tecnico`, o dashboard também mostra a **visão da gestão**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias por turno (turno sem médico ou diurno sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
+Para a gestão, o dashboard também mostra a **visão do hospital**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias por turno (turno sem médico ou diurno sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
 
 ### BM Financeiro
 Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado). O plantão não tem tipo: a separação é pelo **cargo** do médico.
 - **Plantonista** (só o cargo de plantonista) — soma das **horas trabalhadas**. O noturno conta inteiro no mês em que o plantão começa.
-- **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**: diurno Coordenador 7, Coordenador 7, 2º 6 … 7º 1; noturno 1º 7, 1º 7, 2º 6, 3º 5, intermediário 7.
+- **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**: diurno Coordenador 7, Coordenador 7, 2º 6 … 7º 1; noturno intermediário 7, 1º 7, 1º 7, 2º 6, 3º 5.
+- **Troca por horas:** as horas e os pontos da vaga são divididos na proporção das horas de cada um.
 
-Tem seletor de mês, busca por médico e **exportação para Excel** (uma aba para plantonistas e outra para sócios). Acesso: `admin`, `anestesita_socio` e `tecnico`.
+Tem seletor de mês, busca por médico, aba de **casos fora** e **exportação para Excel**. Acesso: gestão e `anestesita_socio`.
 
 ---
 
@@ -228,12 +266,16 @@ A API usa **JWT via Supabase Auth**. Após o login, inclua o token nas requisiç
 Authorization: Bearer <access_token>
 ```
 
+"Gestão" nas tabelas abaixo = `escritorio`, `tecnico` ou administrador.
+
 ### Públicos
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/auth/login` | Login — retorna `{ token }` |
-| `POST` | `/auth/register` | Cadastro de usuário |
+| `GET` | `/health` | Status da API e do banco (usado pelo monitor que mantém o Render acordado) |
+| `POST` | `/auth/login` | Login — retorna `{ token, refresh_token, expires_at }` |
+| `POST` | `/auth/refresh` | Renova a sessão (`refresh_token`) |
+| `POST` | `/auth/register` | Cadastro público — a conta fica pendente até a gestão aprovar |
 | `POST` | `/auth/forgot-password` | Envia e-mail de redefinição de senha |
 | `POST` | `/auth/reset-password` | Define a nova senha (`access_token` + `password`) |
 
@@ -243,7 +285,7 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`, CRM, telefone, data de nascimento, dias disponíveis) |
+| `GET` | `/auth/me` | Dados do usuário logado (`id`, `email`, `nome`, `sigla`, `roles`, `is_admin`, CRM, telefone, data de nascimento, dias disponíveis) |
 | `PATCH` | `/auth/me` | Edita o próprio cadastro (nome, sigla, telefone, data de nascimento, CRM, dias disponíveis) |
 | `POST` | `/auth/me/senha` | Troca a própria senha (`senha_atual` + `nova_senha`, mínimo 8). Encerra as sessões da conta e devolve uma nova (`token`, `refresh_token`, `expires_at`) |
 
@@ -252,11 +294,11 @@ Authorization: Bearer <access_token>
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/users` | Busca de médicos (`?search=`, `?role=`). Com `?data=` marca quem está de férias/congresso; com `?horaInicio=&horaFim=` também tira quem tem conflito de horário |
-| `GET` | `/users/gestao` | Lista para a gestão de usuários |
-| `POST` | `/users` | Cria usuário |
-| `PATCH` | `/users/:id` | Edita nome, sigla, roles e CRM |
-| `PATCH` | `/users/:id/ativo` | Ativa/desativa usuário |
-| `POST` | `/users/:id/reset-senha` | Envia e-mail de redefinição de senha |
+| `GET` | `/users/gestao` | Lista para a gestão de usuários (gestão e sócios) |
+| `POST` | `/users` | Cria usuário (gestão) |
+| `PATCH` | `/users/:id` | Edita nome, sigla, roles, flag admin e CRM (gestão) |
+| `PATCH` | `/users/:id/ativo` | Ativa/desativa usuário — também aprova cadastros pendentes (gestão) |
+| `POST` | `/users/:id/reset-senha` | Envia e-mail de redefinição de senha (gestão) |
 
 **Plantões**
 
@@ -264,14 +306,22 @@ Authorization: Bearer <access_token>
 |--------|------|-----------|
 | `GET` | `/plantoes` | Lista plantões (`?inicio=`, `?fim=`) |
 | `GET` | `/plantoes/:id` | Detalhe de um plantão |
-| `POST` | `/plantoes` | Cria o plantão do dia (`titulo`, `data`, `fila: [{ usuario_id, posicao }]`); 409 se o dia já tem plantão |
-| `PATCH` | `/plantoes/:id` | Edita título, descrição e dia |
-| `POST` | `/plantoes/:id/usuarios` | Preenche vagas vazias (`fila: [{ usuario_id, posicao }]`) |
-| `DELETE` | `/plantoes/:id/vagas/:posicao` | Esvazia a vaga (registra no histórico e cancela a troca pendente dela) |
+| `POST` | `/plantoes` | Cria o plantão do dia (`titulo`, `data`, `fila: [{ usuario_id, posicao }]`); 409 se o dia já tem plantão (gestão) |
+| `PATCH` | `/plantoes/:id` | Edita título, descrição e dia (gestão) |
+| `POST` | `/plantoes/:id/usuarios` | Preenche vagas vazias (`fila: [{ usuario_id, posicao }]`) (gestão) |
+| `DELETE` | `/plantoes/:id/vagas/:posicao` | Esvazia a vaga (registra no histórico e cancela a troca pendente dela) (gestão) |
+| `PATCH` | `/plantoes/:id/posicao` | Move o médico da vaga `posicao` para `nova_posicao` (troca com quem estiver nela); define o coordenador (gestão e médicos) |
 | `GET` | `/plantoes/:id/remocoes` | Histórico de remoções do plantão |
-| `PATCH` | `/plantoes/:id/posicao` | Move o médico da vaga `posicao` para `nova_posicao` (troca com quem estiver nela); define o coordenador |
+| `GET` | `/plantoes/:id/mudancas-posicao` | Histórico de mudanças de vaga |
 | `GET` | `/plantoes/:id/trocas` | Histórico de trocas do plantão |
 | `POST` | `/plantoes/:id/trocas` | Solicita troca da vaga (`posicao`, `usuario_entrada` e, na troca por horas, `hora_inicio`/`hora_fim`) |
+| `PATCH` | `/plantoes/:id/trocas/:trocaId/cancelar` | Cancela um pedido pendente (quem pediu ou a gestão) ou desfaz uma troca por horas aceita (gestão) |
+| `GET` | `/plantoes/:id/pedidos-vaga` | Pedidos de vaga livre do plantão (todos os status) |
+| `POST` | `/plantoes/:id/pedidos-vaga` | Pede uma vaga livre (`posicao`) (médicos) |
+| `GET` | `/plantoes/pedidos-vaga/pendentes` | Pedidos de vaga aguardando aprovação, de todos os plantões (gestão) |
+| `PATCH` | `/plantoes/pedidos-vaga/:pedidoId/aprovar` | Aprova: o médico entra na vaga e os outros pedidos dela são recusados (gestão) |
+| `PATCH` | `/plantoes/pedidos-vaga/:pedidoId/recusar` | Recusa o pedido (gestão) |
+| `PATCH` | `/plantoes/pedidos-vaga/:pedidoId/cancelar` | Cancela um pedido pendente (quem pediu ou a gestão) |
 | `GET` | `/plantoes/trocas/pendentes` | Trocas aguardando o aceite do usuário logado |
 | `PATCH` | `/plantoes/trocas/:trocaId/aceitar` | Aceita a troca |
 | `PATCH` | `/plantoes/trocas/:trocaId/recusar` | Recusa a troca |
@@ -280,23 +330,48 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/afastamentos/me` | Períodos atuais e futuros do usuário logado |
-| `POST` | `/afastamentos` | Cadastra férias ou congresso (só anestesistas) — retorna os plantões já escalados no período |
-| `DELETE` | `/afastamentos/:id` | Remove um período próprio |
-| `GET` | `/afastamentos/usuario/:usuarioId` | Períodos atuais e futuros de um médico (`admin`, `tecnico`) |
+| `GET` | `/afastamentos/me` | Períodos atuais e futuros do usuário logado (inclui os recusados) |
+| `POST` | `/afastamentos` | Pede férias ou congresso (só anestesistas) — fica pendente até a gestão aprovar |
+| `DELETE` | `/afastamentos/:id` | Remove um período (o próprio médico, enquanto não for aprovado; a gestão, qualquer um) |
+| `GET` | `/afastamentos/pendentes` | Pedidos aguardando aprovação (gestão) |
+| `GET` | `/afastamentos/usuario/:usuarioId` | Períodos atuais e futuros de um médico (gestão) |
+| `PATCH` | `/afastamentos/:id/aprovar` | Aprova o pedido (gestão) |
+| `PATCH` | `/afastamentos/:id/recusar` | Recusa o pedido (gestão) |
+
+**Fichas anestésicas**
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/fichas` | Lista as fichas |
+| `GET` | `/fichas/:id` | Detalhe, com o link temporário da foto |
+| `POST` | `/fichas` | Cria a ficha (foto em `fotos_novas`, como data URL) (médicos e gestão) |
+| `PATCH` | `/fichas/:id` | Edita (quem criou ou a gestão) |
+| `DELETE` | `/fichas/:id` | Exclui, com a foto (quem criou ou a gestão) |
+
+**Casos fora e hospitais**
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/casos-fora` | Lista os casos fora |
+| `POST` | `/casos-fora` | Registra um caso (médicos e gestão) |
+| `PATCH` | `/casos-fora/:id` | Edita (quem criou ou a gestão) |
+| `DELETE` | `/casos-fora/:id` | Exclui (quem criou ou a gestão) |
+| `GET` | `/hospitais` | Lista os hospitais |
+| `POST` | `/hospitais` | Cadastra um hospital (gestão) |
+| `PATCH` | `/hospitais/:id` | Renomeia ou ativa/desativa (gestão) |
 
 **Dashboard**
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/dashboard` | Próximo plantão, agenda de 7 dias, trocas pendentes e resumo do mês do usuário logado |
-| `GET` | `/dashboard/gestao` | Visão do hospital (`admin`, `tecnico`): plantões em andamento, alertas de cobertura, trocas pendentes, resumo/top 5 do mês e equipe |
+| `GET` | `/dashboard/gestao` | Visão do hospital (gestão): plantões em andamento, alertas de cobertura, trocas pendentes, resumo/top 5 do mês e equipe |
 
 **BM Financeiro**
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista e pontos por sócio no mês (pelo cargo do médico) |
+| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista, pontos por sócio e os casos fora do mês (gestão e sócios) |
 
 ---
 
@@ -316,7 +391,16 @@ Authorization: Bearer <access_token>
 }
 ```
 
-> `crm` e `crm_uf` são obrigatórios só para anestesistas.
+> `crm` e `crm_uf` são obrigatórios só para anestesistas. A conta fica pendente até a gestão aprovar.
+
+**Resposta:**
+
+```json
+{
+  "id": "…",
+  "pendente": true
+}
+```
 
 ## 🔑 Exemplo — Login
 
@@ -333,6 +417,8 @@ Authorization: Bearer <access_token>
 
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "…",
+  "expires_at": 1760000000
 }
 ```
