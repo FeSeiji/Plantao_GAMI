@@ -1,16 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import FichaModal from "../../../components/FichaModal"
 import ExportarFichasModal from "../../../components/ExportarFichasModal"
-import { ROLES_EDICAO } from "../../../components/UsuarioModal"
-import { FichaResumo, rotuloTipo } from "../../../components/fichas"
+import { ROLES_ANESTESISTA, ROLES_EDICAO } from "../../../components/UsuarioModal"
+import { FichaResumo, Pessoa, rotuloTipo } from "../../../components/fichas"
 import { apiFetch } from "../../../components/sessao"
 
 // Quem cria fichas — mesma lista do requireRole em Backend/src/routes/fichas.js
 const ROLES_CRIAR_FICHA = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
+// O backend devolve a lista em páginas desse tamanho (FICHAS_POR_PAGINA em Backend/src/controllers/fichas.js)
+const FICHAS_POR_PAGINA = 200
 
 const FILTRO_CLASS =
   "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
@@ -38,7 +40,13 @@ export default function FichasPage() {
   const [exportarAberto, setExportarAberto] = useState(false)
   const [inicio, setInicio] = useState(() => diasAtras(30))
   const [fim, setFim] = useState("")
-  const [buscaAnestesista, setBuscaAnestesista] = useState("")
+  const [anestesistaId, setAnestesistaId] = useState("")
+  const [anestesistas, setAnestesistas] = useState<Pessoa[]>([])
+  // Página cheia = pode haver mais fichas no período
+  const [temMais, setTemMais] = useState(false)
+  const [carregandoMais, setCarregandoMais] = useState(false)
+  // Só a resposta da busca mais recente vale (os filtros podem mudar no meio de um "Carregar mais")
+  const buscaAtual = useRef(0)
   // undefined = modal fechado, null = nova ficha
   const [selecionada, setSelecionada] = useState<string | null | undefined>(undefined)
 
@@ -57,38 +65,60 @@ export default function FichasPage() {
     }
   }, [router])
 
-  const carregar = useCallback(() => {
-    const token = localStorage.getItem("token")
-    if (!token) return
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (inicio) params.set("inicio", inicio)
-    if (fim) params.set("fim", fim)
-    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/fichas?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar as fichas.")
-        setFichas(data)
-        setError("")
+  // offset 0 recomeça a lista; maior que 0 acrescenta a próxima página ("Carregar mais")
+  const buscar = useCallback(
+    (offset: number) => {
+      const token = localStorage.getItem("token")
+      if (!token) return
+      const busca = offset === 0 ? ++buscaAtual.current : buscaAtual.current
+      if (offset === 0) setLoading(true)
+      else setCarregandoMais(true)
+      const params = new URLSearchParams({ offset: String(offset) })
+      if (inicio) params.set("inicio", inicio)
+      if (fim) params.set("fim", fim)
+      if (anestesistaId) params.set("anestesista_id", anestesistaId)
+      apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/fichas?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [inicio, fim])
+        .then(async (res) => {
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar as fichas.")
+          if (busca !== buscaAtual.current) return
+          setFichas((atuais) => (offset === 0 ? data : [...atuais, ...data]))
+          setTemMais(data.length === FICHAS_POR_PAGINA)
+          setError("")
+        })
+        .catch((err) => busca === buscaAtual.current && setError(err.message))
+        .finally(() => {
+          if (busca !== buscaAtual.current) return
+          setLoading(false)
+          setCarregandoMais(false)
+        })
+    },
+    [inicio, fim, anestesistaId],
+  )
+
+  const carregar = useCallback(() => buscar(0), [buscar])
 
   useEffect(() => {
     carregar()
   }, [carregar])
 
-  // O filtro de anestesista é feito aqui mesmo, pelo nome ou pela sigla
-  const visiveis = useMemo(() => {
-    const termo = buscaAnestesista.trim().toLowerCase()
-    if (!termo) return fichas
-    return fichas.filter((f) =>
-      f.anestesistas.some((a) => [a.nome, a.sigla, a.email].some((v) => v?.toLowerCase().includes(termo))),
-    )
-  }, [fichas, buscaAnestesista])
+  // Opções do filtro: sócios e plantonistas, como no cadastro de casos fora
+  useEffect(() => {
+    const token = localStorage.getItem("token")
+    if (!token) return
+    const params = new URLSearchParams({ role: ROLES_ANESTESISTA.join(",") })
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/users?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar os anestesistas.")
+        setAnestesistas([...data].sort((a: Pessoa, b: Pessoa) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR")))
+      })
+      .catch((err) => setError(err.message))
+  }, [])
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -129,14 +159,20 @@ export default function FichasPage() {
           <label htmlFor="filtroAnestesista" className="block text-xs font-medium text-gray-500 mb-1">
             Anestesista
           </label>
-          <input
+          <select
             id="filtroAnestesista"
-            type="text"
-            value={buscaAnestesista}
-            onChange={(e) => setBuscaAnestesista(e.target.value)}
-            placeholder="Nome ou sigla"
-            className={`${FILTRO_CLASS} w-full`}
-          />
+            value={anestesistaId}
+            onChange={(e) => setAnestesistaId(e.target.value)}
+            className={`${FILTRO_CLASS} w-full bg-white`}
+          >
+            <option value="">Todos</option>
+            {anestesistas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {nomeDe(a)}
+                {a.sigla ? ` (${a.sigla})` : ""}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -154,7 +190,7 @@ export default function FichasPage() {
             </tr>
           </thead>
           <tbody>
-            {visiveis.map((f) => (
+            {fichas.map((f) => (
               <tr
                 key={f.id}
                 onClick={() => setSelecionada(f.id)}
@@ -196,8 +232,20 @@ export default function FichasPage() {
             ))}
           </tbody>
         </table>
-        {!loading && visiveis.length === 0 && <p className="px-4 py-8 text-center text-sm text-gray-400">Nenhuma ficha nesse período.</p>}
+        {!loading && fichas.length === 0 && <p className="px-4 py-8 text-center text-sm text-gray-400">Nenhuma ficha nesse período.</p>}
       </div>
+
+      {temMais && !loading && (
+        <div className="flex justify-center mt-4">
+          <button
+            onClick={() => buscar(fichas.length)}
+            disabled={carregandoMais}
+            className="border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            {carregandoMais ? "Carregando..." : "Carregar mais"}
+          </button>
+        </div>
+      )}
 
       {exportarAberto && <ExportarFichasModal ehGestao={ehGestao} onClose={() => setExportarAberto(false)} />}
 
