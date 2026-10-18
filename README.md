@@ -254,7 +254,7 @@ Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gra
 - **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**: diurno Coordenador 7, Coordenador 7, 2º 6 … 7º 1; noturno intermediário 7, 1º 7, 1º 7, 2º 6, 3º 5.
 - **Troca por horas:** as horas e os pontos da vaga são divididos na proporção das horas de cada um.
 
-Tem seletor de mês, busca por médico, aba de **casos fora** e **exportação para Excel**. Acesso: gestão e `anestesita_socio`.
+Tem seletor de mês, busca por médico, aba de **casos fora** e **exportação para Excel**. Acesso: só **administradores** (flag `is_admin`).
 
 ---
 
@@ -371,7 +371,7 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista, pontos por sócio e os casos fora do mês (gestão e sócios) |
+| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista, pontos por sócio e os casos fora do mês (só administradores) |
 
 ---
 

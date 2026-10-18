@@ -3,8 +3,8 @@ const router = express.Router()
 const { requireRole } = require('../middleware/auth')
 const { resumoMensal } = require('../controllers/bmFinanceiro')
 
-// Todos menos o plantonista
-const podeVerBm = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
+// Só administradores (a flag is_admin)
+const podeVerBm = requireRole('admin')
 
 router.get('/', podeVerBm, resumoMensal)
 
