@@ -35,7 +35,13 @@ export type CelulaGrade =
       rotulo?: React.ReactNode
       texto: string
       onClick?: () => void
+      // Texto da ação à direita (padrão: "+ Adicionar")
+      acao?: string
       ativa?: boolean
+      // Pedido de vaga pendente: a linha fica em destaque, com o aviso e os botões embaixo do texto
+      destaque?: "pendente"
+      status?: React.ReactNode
+      extra?: React.ReactNode
     }
 
 // Fundo da linha, traço colorido à esquerda e cor do aviso (status)
@@ -78,15 +84,34 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
     <div ref={ref} className="border border-gray-200 rounded-xl divide-y divide-gray-100">
       {celulas.map((c) => {
         if (c.tipo === "vazia") {
-          const conteudo = (
+          const cor = c.destaque ? CORES[c.destaque] : null
+          const textoAcao = c.acao ?? "+ Adicionar"
+          const miolo = (
             <>
-              {c.ativa && <Faixa cor="bg-brand-600" />}
               <span className={`${COLUNA_VAGA} text-gray-400`}>{c.rotulo}</span>
               <span className="w-6 h-6 rounded-full border-2 border-dashed border-gray-200 shrink-0" />
-              <span className="flex-1 text-sm">{c.texto}</span>
-              {c.onClick && <span className="text-xs font-semibold text-brand-700">+ Adicionar</span>}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm">{c.texto}</p>
+                {c.status && <div className={`text-xs leading-snug mt-0.5 ${cor?.status ?? "text-gray-500"}`}>{c.status}</div>}
+                {c.extra && <div className="mt-1">{c.extra}</div>}
+              </div>
             </>
           )
+
+          // Com botões dentro (Aprovar/Recusar), a linha não pode ser um botão: a ação vira um botão à direita
+          if (c.extra) {
+            return (
+              <div key={c.chave} className={`${LINHA} ${cor?.fundo ?? ""} text-gray-400`}>
+                {cor && <Faixa cor={cor.faixa} />}
+                {miolo}
+                {c.onClick && (
+                  <button type="button" onClick={c.onClick} className="shrink-0 text-xs font-semibold text-brand-700 hover:text-brand-900">
+                    {textoAcao}
+                  </button>
+                )}
+              </div>
+            )
+          }
 
           return c.onClick ? (
             <button
@@ -94,14 +119,17 @@ export default function GradeParticipantes({ celulas }: { celulas: CelulaGrade[]
               type="button"
               onClick={c.onClick}
               className={`${LINHA} w-full text-left transition-colors ${
-                c.ativa ? "bg-brand-50 text-brand-700" : "text-gray-400 hover:bg-gray-50"
+                c.ativa ? "bg-brand-50 text-brand-700" : `${cor?.fundo ?? ""} text-gray-400 hover:bg-gray-50`
               }`}
             >
-              {conteudo}
+              {c.ativa ? <Faixa cor="bg-brand-600" /> : cor && <Faixa cor={cor.faixa} />}
+              {miolo}
+              <span className="shrink-0 text-xs font-semibold text-brand-700">{textoAcao}</span>
             </button>
           ) : (
-            <div key={c.chave} className={`${LINHA} text-gray-300`}>
-              {conteudo}
+            <div key={c.chave} className={`${LINHA} ${cor?.fundo ?? ""} text-gray-300`}>
+              {cor && <Faixa cor={cor.faixa} />}
+              {miolo}
             </div>
           )
         }

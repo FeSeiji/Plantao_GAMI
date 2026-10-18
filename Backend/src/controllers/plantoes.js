@@ -6,7 +6,7 @@ const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastad
 
 const { ehGestao } = require('../middleware/auth')
 const {
-  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga,
+  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou,
 } = require('../services/posicoes')
 const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
 const { usuariosComConflito } = require('../services/conflitos')
@@ -334,6 +334,7 @@ exports.alterarPosicao = async (req, res) => {
       if (error.code === '23505') return res.status(409).json({ error: 'Essa vaga acabou de ser ocupada. Recarregue o plantão.' })
       return res.status(400).json({ error: error.message })
     }
+    await cancelarPedidosDasVagas(plantao.id, [nova_posicao], req.user.id)
   }
 
   const { error: logError } = await supabase
@@ -403,6 +404,8 @@ exports.addUsuarios = async (req, res) => {
     if (error.code === '23505') return res.status(409).json({ error: 'Essa vaga já está ocupada' })
     return res.status(400).json({ error: error.message })
   }
+
+  await cancelarPedidosDasVagas(plantao.id, membros.map(m => m.posicao), req.user.id)
 
   return res.status(201).json({ message: 'Médicos adicionados ao plantão' })
 }
@@ -676,6 +679,244 @@ exports.responderTroca = (aceitar) => async (req, res) => {
 
 // Cada médico numa vaga do plantão (services/posicoes.js). O mesmo médico pode estar no diurno e no noturno,
 // mas não em duas vagas do mesmo turno
+// Pedido de vaga livre: o médico pede para entrar numa vaga vazia e a gestão aprova ou recusa.
+// As regras da escala (uma vaga por turno, sem conflito de horário, sem férias aprovadas) valem no pedido
+// e de novo na aprovação, porque a escala pode ter mudado no meio do caminho
+exports.pedirVaga = async (req, res) => {
+  const { posicao } = req.body
+
+  if (!POSICOES.includes(posicao)) {
+    return res.status(400).json({ error: `posicao é obrigatória (vaga de 1 a ${POSICOES.length})` })
+  }
+
+  const { data: plantao, error: plantaoError } = await supabase
+    .from('plantoes')
+    .select('id, data, plantao_usuarios(usuario_id, posicao)')
+    .eq('id', req.params.id)
+    .maybeSingle()
+
+  if (plantaoError) return res.status(500).json({ error: plantaoError.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+  if (plantao.plantao_usuarios.some(u => u.posicao === posicao)) {
+    return res.status(400).json({ error: 'Essa vaga já está ocupada' })
+  }
+  if (turnoJaComecou(plantao.data, posicao)) {
+    return res.status(400).json({ error: 'O turno dessa vaga já começou' })
+  }
+
+  try {
+    await validarEntradaNaVaga(req.user.id, plantao, posicao, 'Você já está escalado nesse horário')
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
+  }
+
+  const { data: pedido, error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .insert({ plantao_id: plantao.id, posicao, usuario_id: req.user.id })
+    .select()
+    .single()
+
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Você já pediu essa vaga' })
+    return res.status(400).json({ error: error.message })
+  }
+
+  try {
+    return res.status(201).json(formatPedidoVaga(pedido, await buscarPerfis([req.user.id])))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Todos os pedidos do plantão (o modal mostra os pendentes na vaga e o resto no histórico)
+exports.listarPedidosVagaDoPlantao = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .select('*')
+    .eq('plantao_id', req.params.id)
+    .order('solicitado_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const perfis = await buscarPerfis(data.flatMap(p => [p.usuario_id, p.respondido_por]).filter(Boolean))
+    return res.json(data.map(p => formatPedidoVaga(p, perfis)))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Pedidos aguardando a gestão, de todos os plantões (sino de notificações)
+exports.listarPedidosVagaPendentes = async (req, res) => {
+  const { data, error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .select('*, plantoes(id, titulo, data)')
+    .eq('status', 'pendente')
+    .order('solicitado_em', { ascending: true })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const perfis = await buscarPerfis(data.map(p => p.usuario_id))
+    return res.json(data.map(({ plantoes: plantao, ...p }) => ({
+      ...formatPedidoVaga(p, perfis),
+      plantao: plantao && { ...plantao, ...horarioDaVaga(plantao, p.posicao) },
+    })))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+exports.responderPedidoVaga = (aprovar) => async (req, res) => {
+  const { data: pedido, error: pedidoError } = await supabase
+    .from('plantao_pedidos_vaga')
+    .select('*, plantoes(id, data, plantao_usuarios(usuario_id, posicao))')
+    .eq('id', req.params.pedidoId)
+    .maybeSingle()
+
+  if (pedidoError) return res.status(500).json({ error: pedidoError.message })
+  if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' })
+  if (pedido.status !== 'pendente') return res.status(400).json({ error: 'Esse pedido já foi respondido ou cancelado' })
+
+  const plantao = pedido.plantoes
+
+  if (aprovar) {
+    if (plantao.plantao_usuarios.some(u => u.posicao === pedido.posicao)) {
+      return res.status(409).json({ error: 'Essa vaga já foi preenchida' })
+    }
+    try {
+      if ((await usuariosSemRoleMedico([pedido.usuario_id])).length > 0) {
+        return res.status(400).json({ error: 'Quem pediu a vaga não é mais médico (sócio ou plantonista)' })
+      }
+      const perfil = (await buscarPerfis([pedido.usuario_id])).get(pedido.usuario_id)
+      const nome = perfil?.nome ?? perfil?.email ?? 'O médico'
+      await validarEntradaNaVaga(pedido.usuario_id, plantao, pedido.posicao, `${nome} já está escalado nesse horário`)
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
+    }
+  }
+
+  // Reserva a resposta antes de mexer na vaga: só uma resposta passa, mesmo com dois cliques ao mesmo tempo
+  const respondidoEm = new Date().toISOString()
+  const { data: respondido, error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .update({ status: aprovar ? 'aprovado' : 'recusado', respondido_por: req.user.id, respondido_em: respondidoEm })
+    .eq('id', pedido.id)
+    .eq('status', 'pendente')
+    .select()
+    .maybeSingle()
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!respondido) return res.status(400).json({ error: 'Esse pedido já foi respondido ou cancelado' })
+
+  if (aprovar) {
+    const { error: vagaError } = await supabase
+      .from('plantao_usuarios')
+      .insert({ plantao_id: plantao.id, usuario_id: pedido.usuario_id, posicao: pedido.posicao })
+
+    if (vagaError) {
+      // O médico não entrou: o pedido volta a ficar pendente
+      await supabase
+        .from('plantao_pedidos_vaga')
+        .update({ status: 'pendente', respondido_por: null, respondido_em: null })
+        .eq('id', pedido.id)
+      if (vagaError.code === '23505') return res.status(409).json({ error: 'Essa vaga acabou de ser preenchida' })
+      return res.status(400).json({ error: vagaError.message })
+    }
+
+    // Os outros pedidos da vaga são recusados; os outros pedidos desse médico no mesmo turno perdem o sentido
+    const vagasDoTurno = POSICOES.filter(p => turnoDaPosicao(p) === turnoDaPosicao(pedido.posicao))
+    await Promise.all([
+      supabase
+        .from('plantao_pedidos_vaga')
+        .update({ status: 'recusado', respondido_por: req.user.id, respondido_em: respondidoEm })
+        .eq('plantao_id', plantao.id)
+        .eq('posicao', pedido.posicao)
+        .eq('status', 'pendente'),
+      supabase
+        .from('plantao_pedidos_vaga')
+        .update({ status: 'cancelado', respondido_por: req.user.id, respondido_em: respondidoEm })
+        .eq('plantao_id', plantao.id)
+        .eq('usuario_id', pedido.usuario_id)
+        .in('posicao', vagasDoTurno)
+        .eq('status', 'pendente'),
+    ])
+  }
+
+  try {
+    const perfis = await buscarPerfis([respondido.usuario_id, req.user.id])
+    return res.json(formatPedidoVaga(respondido, perfis))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// O médico desiste do próprio pedido (a gestão também pode cancelar)
+exports.cancelarPedidoVaga = async (req, res) => {
+  const { data: pedido, error: pedidoError } = await supabase
+    .from('plantao_pedidos_vaga')
+    .select('id, usuario_id, status')
+    .eq('id', req.params.pedidoId)
+    .maybeSingle()
+
+  if (pedidoError) return res.status(500).json({ error: pedidoError.message })
+  if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' })
+  if (!ehGestao(req.user) && pedido.usuario_id !== req.user.id) {
+    return res.status(403).json({ error: 'Você só pode cancelar os seus pedidos' })
+  }
+
+  const { data: cancelado, error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .update({ status: 'cancelado', respondido_por: req.user.id, respondido_em: new Date().toISOString() })
+    .eq('id', pedido.id)
+    .eq('status', 'pendente')
+    .select()
+    .maybeSingle()
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!cancelado) return res.status(400).json({ error: 'Esse pedido já foi respondido ou cancelado' })
+
+  try {
+    return res.json(formatPedidoVaga(cancelado, await buscarPerfis([cancelado.usuario_id, req.user.id])))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Erro se o médico não puder entrar na vaga: já está no turno (aqui ou em outro plantão), tem conflito
+// de horário ou está de férias/congresso aprovados nesse dia
+async function validarEntradaNaVaga(usuarioId, plantao, posicao, mensagemConflito) {
+  if ((await usuariosComConflito([usuarioId], horarioDaVaga(plantao, posicao))).size > 0) {
+    throw new Error(mensagemConflito)
+  }
+  await validarSemAfastamento([usuarioId], plantao.data)
+}
+
+// A vaga foi preenchida pela gestão: os pedidos pendentes dela deixam de valer
+async function cancelarPedidosDasVagas(plantaoId, posicoes, porId) {
+  const { error } = await supabase
+    .from('plantao_pedidos_vaga')
+    .update({ status: 'cancelado', respondido_por: porId, respondido_em: new Date().toISOString() })
+    .eq('plantao_id', plantaoId)
+    .in('posicao', posicoes)
+    .eq('status', 'pendente')
+  if (error) console.error('Falha ao cancelar pedidos de vaga:', error.message)
+}
+
+function formatPedidoVaga(row, perfis) {
+  return {
+    id: row.id,
+    plantaoId: row.plantao_id,
+    posicao: row.posicao,
+    status: row.status,
+    solicitadoEm: row.solicitado_em,
+    respondidoEm: row.respondido_em,
+    usuario: perfis.get(row.usuario_id) ?? { id: row.usuario_id },
+    respondidoPor: row.respondido_por ? perfis.get(row.respondido_por) ?? { id: row.respondido_por } : null,
+  }
+}
+
 async function validarFila(fila, { data }) {
   if (!Array.isArray(fila) || fila.length === 0) {
     throw new Error('fila deve ser um array não vazio de { usuario_id, posicao }')
