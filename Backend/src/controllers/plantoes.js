@@ -11,6 +11,8 @@ const {
 const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
 const { usuariosComConflito } = require('../services/conflitos')
 const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
+const { esvaziarVaga } = require('../services/escalas')
+const { estaDesativado } = require('../services/usuarios')
 
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
 // Um plantão por dia, com as vagas do diurno e do noturno (services/posicoes.js)
@@ -190,36 +192,11 @@ exports.removerDaVaga = async (req, res) => {
   const membro = plantao.plantao_usuarios.find(u => u.posicao === posicao)
   if (!membro) return res.status(404).json({ error: 'Essa vaga já está vazia' })
 
-  const { error } = await supabase
-    .from('plantao_usuarios')
-    .delete()
-    .eq('id', membro.id)
-
-  if (error) return res.status(400).json({ error: error.message })
-
-  // A troca pendente da vaga (e a troca por horas valendo) perde o sentido, mas continua no histórico como cancelada
-  const { error: trocaError } = await supabase
-    .from('plantao_trocas')
-    .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
-    .eq('plantao_id', plantao.id)
-    .eq('posicao', posicao)
-    .eq('usuario_saida', membro.usuario_id)
-    .or('status.eq.pendente,and(status.eq.aceita,hora_inicio.not.is.null)')
-
-  if (trocaError) return res.status(500).json({ error: trocaError.message })
-
-  // Registro no histórico do plantão, como acontece com as trocas
-  const { error: logError } = await supabase
-    .from('plantao_remocoes')
-    .insert({
-      plantao_id: plantao.id,
-      usuario_id: membro.usuario_id,
-      removido_por: req.user.id,
-      era_coordenador: ehVagaDeCoordenador(posicao),
-      posicao,
-    })
-
-  if (logError) return res.status(500).json({ error: `Médico removido, mas o histórico não foi gravado: ${logError.message}` })
+  try {
+    await esvaziarVaga(plantao.id, membro, req.user.id)
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
 
   return res.status(204).send()
 }
@@ -453,7 +430,7 @@ exports.criarTroca = async (req, res) => {
   try {
     const invalidos = await usuariosSemRoleMedico([usuario_entrada])
     if (invalidos.length > 0) {
-      return res.status(400).json({ error: 'usuario_entrada precisa ser um médico (anestesita_socio ou anestesita_plantonista)' })
+      return res.status(400).json({ error: 'usuario_entrada precisa ser um médico ativo (anestesita_socio ou anestesita_plantonista)' })
     }
 
     // Uma vaga tem no máximo uma troca por horas valendo; com ela ativa, nem a troca inteira é aceita
@@ -945,7 +922,7 @@ async function validarFila(fila, { data }) {
   const usuarioIds = [...new Set(fila.map(f => f.usuario_id))]
   const invalidos = await usuariosSemRoleMedico(usuarioIds)
   if (invalidos.length > 0) {
-    throw new Error(`Usuários que não são médicos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+    throw new Error(`Usuários que não são médicos ativos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
   }
 
   await validarHorariosLivres(fila, data)
@@ -976,7 +953,8 @@ async function usuariosSemRoleMedico(usuarioIds) {
     idsUnicos.map(async id => {
       const { data, error } = await supabase.auth.admin.getUserById(id)
       const roles = data?.user?.app_metadata?.roles ?? []
-      const valido = !error && roles.some(r => ROLES_MEDICO.includes(r))
+      // Conta desativada (ou cadastro ainda não aprovado) não entra em vaga nem em troca
+      const valido = !error && roles.some(r => ROLES_MEDICO.includes(r)) && !estaDesativado(data.user)
       return { id, valido }
     })
   )

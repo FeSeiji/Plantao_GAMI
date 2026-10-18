@@ -1,7 +1,8 @@
 // users.js - sem o dotenv, as variáveis já estarão disponíveis
 const { createClient } = require('@supabase/supabase-js')
 
-const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario, estaDesativado } = require('../services/usuarios')
+const { liberarEscalasFuturas } = require('../services/escalas')
 const { usuariosAfastados } = require('../services/afastamentos')
 const { usuariosComConflito } = require('../services/conflitos')
 const { ehAdmin } = require('../middleware/auth')
@@ -245,6 +246,18 @@ exports.alterarAtivo = async (req, res) => {
     return res.status(400).json({ error: error.message })
   }
 
+  if (!ativo) {
+    // Sai das vagas e pedidos do que ainda não começou. Desativar de novo repete só o que faltou
+    try {
+      return res.json({ id, ativo, liberado: await liberarEscalasFuturas(id, req.user.id) })
+    } catch (err) {
+      console.error(err)
+      return res.status(500).json({
+        error: `Conta desativada, mas não foi possível tirá-la de todas as escalas futuras (${err.message}). Tente desativar de novo.`
+      })
+    }
+  }
+
   return res.json({ id, ativo })
 }
 
@@ -265,10 +278,6 @@ exports.enviarResetSenha = async (req, res) => {
   }
 
   return res.json({ message: `E-mail de redefinição enviado para ${data.user.email}` })
-}
-
-function estaDesativado(authUser) {
-  return Boolean(authUser?.banned_until && new Date(authUser.banned_until) > new Date())
 }
 
 async function buscarIdsComAlgumaRole(rolesAceitas) {
