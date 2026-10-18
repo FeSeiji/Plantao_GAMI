@@ -22,6 +22,9 @@ const MAX_ANESTESISTAS = 10
 const MAX_VALOR = 99999999.99
 // Exportação: no máximo um ano por planilha
 const MAX_DIAS_EXPORTACAO = 366
+const PAGINA_EXPORTACAO = 1000
+// Mesmo valor em Frontend/app/(app)/fichas/page.tsx
+const FICHAS_POR_PAGINA = 200
 
 const DATA_REGEX = /^\d{4}-\d{2}-\d{2}$/
 const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d(:00)?$/
@@ -37,15 +40,20 @@ function filtrarVisiveis(query, user) {
   return query.or(`anestesista_ids.cs.{${user.id}},criado_por.eq.${user.id}`)
 }
 
+// A lista vem em páginas de FICHAS_POR_PAGINA; a tela pede a seguinte com offset ("Carregar mais")
 exports.listar = async (req, res) => {
   const { inicio, fim, anestesista_id } = req.query
+  const offset = Number(req.query.offset ?? 0)
+  if (!Number.isInteger(offset) || offset < 0) return res.status(400).json({ error: 'offset inválido' })
 
+  // O id desempata fichas com a mesma data e hora, senão uma ficha pode repetir ou sumir entre as páginas
   let query = supabase
     .from('fichas_anestesicas')
     .select(CAMPOS)
     .order('data', { ascending: false })
     .order('hora_inicio', { ascending: false })
-    .limit(200)
+    .order('id', { ascending: false })
+    .range(offset, offset + FICHAS_POR_PAGINA - 1)
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
@@ -74,16 +82,25 @@ exports.exportar = async (req, res) => {
   const dias = (new Date(`${fim}T00:00:00Z`) - new Date(`${inicio}T00:00:00Z`)) / 86400000
   if (dias >= MAX_DIAS_EXPORTACAO) return res.status(400).json({ error: 'Exporte no máximo um ano por vez' })
 
-  const query = supabase
-    .from('fichas_anestesicas')
-    .select('data, hora_inicio, anestesista_ids, criado_por')
-    .gte('data', inicio)
-    .lte('data', fim)
-    .order('data', { ascending: true })
-    .order('hora_inicio', { ascending: true })
+  // O Supabase devolve no máximo max_rows linhas por consulta (1000 por padrão): busca em páginas até
+  // vir uma vazia, avançando pelo que de fato veio, para não depender do valor configurado
+  const data = []
+  for (;;) {
+    const query = supabase
+      .from('fichas_anestesicas')
+      .select('data, hora_inicio, anestesista_ids, criado_por')
+      .gte('data', inicio)
+      .lte('data', fim)
+      .order('data', { ascending: true })
+      .order('hora_inicio', { ascending: true })
+      .order('id', { ascending: true })
 
-  const { data, error } = await filtrarVisiveis(query, req.user)
-  if (error) return res.status(500).json({ error: error.message })
+    const { data: pagina, error } = await filtrarVisiveis(query, req.user)
+      .range(data.length, data.length + PAGINA_EXPORTACAO - 1)
+    if (error) return res.status(500).json({ error: error.message })
+    if (pagina.length === 0) break
+    data.push(...pagina)
+  }
 
   try {
     const gestao = ehGestao(req.user)
