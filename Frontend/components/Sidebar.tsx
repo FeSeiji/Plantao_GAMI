@@ -7,8 +7,8 @@ import { usePathname, useRouter } from "next/navigation"
 import { ROLES_GESTAO } from "./UsuarioModal"
 import { limparSessao } from "./sessao"
 
-// Todos menos o plantonista — mesma lista do backend em routes/bmFinanceiro.js
-const ROLES_BM_FINANCEIRO = ["escritorio", "admin", "anestesita_socio", "tecnico"]
+// Só administradores — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin"]
 // Médicos e a gestão (técnico e escritório) — mesma lista em app/(app)/meu-plantao/page.tsx
 const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnico", "escritorio"]
 
