@@ -15,11 +15,15 @@ const MAX_BYTES_FOTO = 3 * 1024 * 1024
 const MIME_FOTO = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 const VALIDADE_LINK_FOTO = 60 * 60 // 1h
 
-const CAMPOS = 'id, data, hora_inicio, hora_fim, anestesista_id, tipo_anestesia, tipo_outro, observacoes, fotos, criado_por, criado_em, atualizado_por, atualizado_em'
+const CAMPOS = 'id, data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos, criado_por, criado_em, atualizado_por, atualizado_em'
 const MAX_OBSERVACOES = 2000
+const MAX_ANESTESISTAS = 10
+const MAX_VALOR = 99999999.99
 
 const DATA_REGEX = /^\d{4}-\d{2}-\d{2}$/
 const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d(:00)?$/
+
+const dataValida = valor => DATA_REGEX.test(valor ?? '') && !isNaN(new Date(`${valor}T00:00:00Z`).getTime())
 
 const podeEditar = (user, ficha) => ehGestao(user) || ficha.criado_por === user.id
 
@@ -35,13 +39,13 @@ exports.listar = async (req, res) => {
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
-  if (anestesista_id) query = query.eq('anestesista_id', anestesista_id)
+  if (anestesista_id) query = query.contains('anestesista_ids', [anestesista_id])
 
   const { data, error } = await query
   if (error) return res.status(500).json({ error: error.message })
 
   try {
-    const perfis = await buscarPerfis(data.flatMap(f => [f.anestesista_id, f.criado_por, f.atualizado_por]))
+    const perfis = await buscarPerfis(data.flatMap(f => [...f.anestesista_ids, f.criado_por, f.atualizado_por]))
     return res.json(data.map(f => formatar(f, perfis, req.user)))
   } catch (err) {
     return res.status(500).json({ error: err.message })
@@ -60,14 +64,14 @@ exports.obter = async (req, res) => {
   if (!ficha) return res.status(404).json({ error: 'Ficha não encontrada' })
 
   try {
-    const perfis = await buscarPerfis([ficha.anestesista_id, ficha.criado_por, ficha.atualizado_por])
+    const perfis = await buscarPerfis([...ficha.anestesista_ids, ficha.criado_por, ficha.atualizado_por])
     return res.json({ ...formatar(ficha, perfis, req.user), fotos: await linksDasFotos(ficha.fotos) })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
 }
 
-// Corpo: data, hora_inicio, hora_fim, anestesista_id, tipo_anestesia, tipo_outro, observacoes, fotos_novas (data URLs)
+// Corpo: data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos_novas (data URLs)
 exports.criar = async (req, res) => {
   let campos
   try {
@@ -177,16 +181,17 @@ exports.remover = async (req, res) => {
 }
 
 async function validarCampos(body) {
-  const { data, hora_inicio, hora_fim, anestesista_id, tipo_anestesia, tipo_outro, observacoes } = body ?? {}
+  const { data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor } = body ?? {}
 
-  if (!DATA_REGEX.test(data ?? '') || isNaN(new Date(`${data}T00:00:00Z`).getTime())) {
-    throw new Error('data é obrigatória (AAAA-MM-DD)')
-  }
+  if (!dataValida(data)) throw new Error('data é obrigatória (AAAA-MM-DD)')
+  if (!dataValida(data_fim)) throw new Error('data_fim é obrigatória (AAAA-MM-DD)')
   if (!HORA_REGEX.test(hora_inicio ?? '') || !HORA_REGEX.test(hora_fim ?? '')) {
     throw new Error('hora_inicio e hora_fim são obrigatórias (HH:MM)')
   }
-  if (hora_inicio.slice(0, 5) === hora_fim.slice(0, 5)) {
-    throw new Error('A hora de término precisa ser diferente da de início')
+  // Datas em AAAA-MM-DD comparam certo como texto
+  if (data_fim < data) throw new Error('A data final não pode ser antes da data inicial')
+  if (data_fim === data && hora_fim.slice(0, 5) <= hora_inicio.slice(0, 5)) {
+    throw new Error('No mesmo dia, a hora de término precisa ser depois da de início')
   }
   if (!TIPOS_ANESTESIA.includes(tipo_anestesia)) {
     throw new Error('tipo_anestesia inválido')
@@ -195,17 +200,34 @@ async function validarCampos(body) {
   if (tipo_anestesia === 'outros' && !outro) {
     throw new Error('Descreva o tipo de anestesia em "outros"')
   }
-  if (!anestesista_id) throw new Error('anestesista_id é obrigatório')
+  // Um ou mais médicos, na ordem em que foram escolhidos
+  const ids = [...new Set(Array.isArray(anestesista_ids) ? anestesista_ids.filter(Boolean) : [])]
+  if (ids.length === 0) throw new Error('Escolha pelo menos um anestesista')
+  if (ids.length > MAX_ANESTESISTAS) throw new Error(`No máximo ${MAX_ANESTESISTAS} anestesistas por ficha`)
 
-  const { data: auth, error } = await supabase.auth.admin.getUserById(anestesista_id)
-  if (error || !auth?.user) throw new Error('Anestesista não encontrado')
-  if (!(auth.user.app_metadata?.roles ?? []).some(r => ROLES_ANESTESISTA.includes(r))) {
-    throw new Error('O anestesista precisa ser um médico (sócio ou plantonista)')
+  const usuarios = await Promise.all(ids.map(id => supabase.auth.admin.getUserById(id)))
+  for (const { data: auth, error } of usuarios) {
+    if (error || !auth?.user) throw new Error('Anestesista não encontrado')
+    if (!(auth.user.app_metadata?.roles ?? []).some(r => ROLES_ANESTESISTA.includes(r))) {
+      throw new Error('Os anestesistas precisam ser médicos (sócios ou plantonistas)')
+    }
   }
 
-  // Término antes do início = passou da meia-noite
+  // Valor em R$, opcional (mesma regra dos casos fora)
+  let valorNormalizado = null
+  if (valor != null && valor !== '') {
+    valorNormalizado = Number(String(valor).replace(',', '.'))
+    if (!Number.isFinite(valorNormalizado) || valorNormalizado < 0 || valorNormalizado > MAX_VALOR) {
+      throw new Error('Valor inválido')
+    }
+    valorNormalizado = Math.round(valorNormalizado * 100) / 100
+  }
+
   const obs = String(observacoes ?? '').trim().slice(0, MAX_OBSERVACOES) || null
-  return { data, hora_inicio, hora_fim, anestesista_id, tipo_anestesia, tipo_outro: outro, observacoes: obs }
+  return {
+    data, data_fim, hora_inicio, hora_fim, anestesista_ids: ids,
+    tipo_anestesia, tipo_outro: outro, observacoes: obs, valor: valorNormalizado,
+  }
 }
 
 // Recebe data URLs ("data:image/jpeg;base64,...") e grava no bucket. Retorna os caminhos.
@@ -252,12 +274,14 @@ function formatar(f, perfis, user) {
   return {
     id: f.id,
     data: f.data,
+    data_fim: f.data_fim ?? f.data,
     hora_inicio: f.hora_inicio,
     hora_fim: f.hora_fim,
     tipo_anestesia: f.tipo_anestesia,
     tipo_outro: f.tipo_outro,
     observacoes: f.observacoes,
-    anestesista: pessoa(f.anestesista_id),
+    valor: f.valor == null ? null : Number(f.valor),
+    anestesistas: f.anestesista_ids.map(pessoa),
     qtdFotos: f.fotos.length,
     criadoPor: pessoa(f.criado_por),
     criadoEm: f.criado_em,

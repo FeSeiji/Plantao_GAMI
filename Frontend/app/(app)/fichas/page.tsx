@@ -79,7 +79,7 @@ export default function FichasPage() {
     const termo = buscaAnestesista.trim().toLowerCase()
     if (!termo) return fichas
     return fichas.filter((f) =>
-      [f.anestesista.nome, f.anestesista.sigla, f.anestesista.email].some((v) => v?.toLowerCase().includes(termo)),
+      f.anestesistas.some((a) => [a.nome, a.sigla, a.email].some((v) => v?.toLowerCase().includes(termo))),
     )
   }, [fichas, buscaAnestesista])
 
@@ -132,7 +132,7 @@ export default function FichasPage() {
           <thead>
             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
               <th className="px-4 py-3">Data</th>
-              <th className="px-4 py-3">Anestesista</th>
+              <th className="px-4 py-3">Anestesistas</th>
               <th className="px-4 py-3 hidden sm:table-cell">Tipo</th>
               <th className="px-4 py-3 hidden md:table-cell">Registrada por</th>
               <th className="px-4 py-3 text-right">Foto</th>
@@ -148,14 +148,22 @@ export default function FichasPage() {
                 <td className="px-4 py-3 whitespace-nowrap">
                   <p className="font-medium text-gray-800">{formatarData(f.data)}</p>
                   <p className="text-xs text-gray-500">
-                    {f.hora_inicio.slice(0, 5)} – {f.hora_fim.slice(0, 5)}
+                    {f.hora_inicio.slice(0, 5)} – {f.data_fim !== f.data && `${formatarData(f.data_fim).slice(0, 5)} `}
+                    {f.hora_fim.slice(0, 5)}
                   </p>
                 </td>
                 <td className="px-4 py-3 max-w-0 w-full sm:max-w-none sm:w-auto">
                   <div className="flex items-center gap-2">
-                    <SiglaBadge sigla={f.anestesista.sigla} size="sm" />
+                    {/* Siglas sobrepostas, uma por médico da ficha */}
+                    <div className="flex shrink-0 -space-x-1.5">
+                      {f.anestesistas.map((a) => (
+                        <span key={a.id} className="rounded-full ring-2 ring-white">
+                          <SiglaBadge sigla={a.sigla} size="sm" />
+                        </span>
+                      ))}
+                    </div>
                     <div className="min-w-0">
-                      <p className="text-gray-800 truncate">{nomeDe(f.anestesista)}</p>
+                      <p className="text-gray-800 truncate">{f.anestesistas.map(nomeDe).join(", ")}</p>
                       {/* No celular o tipo aparece aqui, já que a coluna fica escondida */}
                       <p className="text-xs text-gray-500 truncate sm:hidden">{rotuloTipo(f)}</p>
                     </div>

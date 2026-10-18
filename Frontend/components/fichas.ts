@@ -14,16 +14,19 @@ export const TIPOS_ANESTESIA: { valor: TipoAnestesia; rotulo: string }[] = [
 
 export const MAX_FOTOS = 1
 export const MAX_OBSERVACOES = 2000
+export const MAX_ANESTESISTAS = 10
 
 export type FichaResumo = {
   id: string
   data: string
+  data_fim: string
   hora_inicio: string
   hora_fim: string
   tipo_anestesia: TipoAnestesia
   tipo_outro: string | null
   observacoes: string | null
-  anestesista: Pessoa
+  valor: number | null
+  anestesistas: Pessoa[]
   qtdFotos: number
   criadoPor: Pessoa
   criadoEm: string

@@ -6,8 +6,10 @@ import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { INPUT_CLASS } from "./UsuarioModal"
 import { useViewportVisivel } from "./useViewportVisivel"
 import { apiFetch } from "./sessao"
+import { formatarValor } from "./casosFora"
 import {
   FichaDetalhe,
+  MAX_ANESTESISTAS,
   MAX_FOTOS,
   MAX_OBSERVACOES,
   Pessoa,
@@ -56,12 +58,14 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
   const [editando, setEditando] = useState(criando)
 
   const [data, setData] = useState(hojeLocal())
+  const [dataFim, setDataFim] = useState(hojeLocal())
   const [horaInicio, setHoraInicio] = useState("")
   const [horaFim, setHoraFim] = useState("")
-  const [anestesista, setAnestesista] = useState<Pessoa | null>(null)
+  const [anestesistas, setAnestesistas] = useState<Pessoa[]>([])
   const [tipo, setTipo] = useState<TipoAnestesia | null>(null)
   const [tipoOutro, setTipoOutro] = useState("")
   const [observacoes, setObservacoes] = useState("")
+  const [valor, setValor] = useState("")
   const [fotosMantidas, setFotosMantidas] = useState<{ caminho: string; url: string }[]>([])
   const [fotosNovas, setFotosNovas] = useState<string[]>([])
 
@@ -73,15 +77,18 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
   const [salvando, setSalvando] = useState(false)
   const [processandoFoto, setProcessandoFoto] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
 
   function preencher(f: FichaDetalhe) {
     setData(f.data)
+    setDataFim(f.data_fim)
     setHoraInicio(f.hora_inicio.slice(0, 5))
     setHoraFim(f.hora_fim.slice(0, 5))
-    setAnestesista(f.anestesista)
+    setAnestesistas(f.anestesistas)
     setTipo(f.tipo_anestesia)
     setTipoOutro(f.tipo_outro ?? "")
     setObservacoes(f.observacoes ?? "")
+    setValor(f.valor == null ? "" : String(f.valor))
     setFotosMantidas(f.fotos)
     setFotosNovas([])
   }
@@ -93,12 +100,14 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
         const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
         const id = localStorage.getItem("userId")
         if (id && roles.some((r) => ROLES_ANESTESISTA.includes(r))) {
-          setAnestesista({
-            id,
-            nome: localStorage.getItem("nome") || null,
-            email: localStorage.getItem("email"),
-            sigla: localStorage.getItem("sigla") || null,
-          })
+          setAnestesistas([
+            {
+              id,
+              nome: localStorage.getItem("nome") || null,
+              email: localStorage.getItem("email"),
+              sigla: localStorage.getItem("sigla") || null,
+            },
+          ])
         }
       } catch {}
       return
@@ -117,11 +126,14 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
+      if (e.key !== "Escape") return
+      // Com a foto ampliada, o Esc fecha só a foto
+      if (fotoAmpliada) setFotoAmpliada(null)
+      else onClose()
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [onClose])
+  }, [onClose, fotoAmpliada])
 
   // Busca de anestesista: a mesma lista de médicos usada no plantão
   useEffect(() => {
@@ -147,6 +159,12 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 
   const totalFotos = fotosMantidas.length + fotosNovas.length
 
+  // A data final acompanha a inicial enquanto for o mesmo dia (ou ficaria antes dela)
+  function mudarData(nova: string) {
+    if (dataFim === data || dataFim < nova) setDataFim(nova)
+    setData(nova)
+  }
+
   async function adicionarFotos(e: React.ChangeEvent<HTMLInputElement>) {
     const arquivos = Array.from(e.target.files ?? []).slice(0, MAX_FOTOS - totalFotos)
     e.target.value = ""
@@ -166,21 +184,26 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
   async function salvar(e: React.FormEvent) {
     e.preventDefault()
     setError("")
-    if (!anestesista) return setError("Escolha o anestesista.")
+    if (anestesistas.length === 0) return setError("Escolha pelo menos um anestesista.")
     if (!tipo) return setError("Escolha o tipo de anestesia.")
     if (tipo === "outros" && !tipoOutro.trim()) return setError("Descreva o tipo de anestesia.")
-    if (horaInicio === horaFim) return setError("A hora de término precisa ser diferente da de início.")
+    if (dataFim < data) return setError("A data final não pode ser antes da data inicial.")
+    if (dataFim === data && horaFim <= horaInicio) {
+      return setError("No mesmo dia, a hora de término precisa ser depois da de início. Se passou da meia-noite, ajuste a data final.")
+    }
 
     setSalvando(true)
     try {
       const corpo = {
         data,
+        data_fim: dataFim,
         hora_inicio: horaInicio,
         hora_fim: horaFim,
-        anestesista_id: anestesista.id,
+        anestesista_ids: anestesistas.map((a) => a.id),
         tipo_anestesia: tipo,
         tipo_outro: tipo === "outros" ? tipoOutro.trim() : null,
         observacoes: observacoes.trim() || null,
+        valor: valor === "" ? null : Number(valor),
         fotos_novas: fotosNovas,
         ...(criando ? {} : { fotos_mantidas: fotosMantidas.map((f) => f.caminho) }),
       }
@@ -222,7 +245,9 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 
   const tipoAtual = somenteLeitura ? f?.tipo_anestesia ?? null : tipo
   const outroAtual = somenteLeitura ? f?.tipo_outro ?? "" : tipoOutro
-  const anestesistaAtual = somenteLeitura ? f?.anestesista ?? null : anestesista
+  const anestesistasAtuais = somenteLeitura ? f?.anestesistas ?? [] : anestesistas
+  // Quem já está na ficha não aparece de novo na busca
+  const resultadosLivres = resultados.filter((r) => !anestesistas.some((a) => a.id === r.id))
   const fotosVisiveis = somenteLeitura
     ? (f?.fotos ?? []).map((x) => ({ chave: x.caminho, src: x.url, remover: null as null | (() => void) }))
     : [
@@ -243,14 +268,76 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
     <div className="bg-white p-2 sm:p-3">
       <div className="border-2 border-gray-700 p-3 sm:p-4 space-y-3">
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_17rem]">
-          {/* Canto livre do cartão: título e quem registrou */}
-          <div className="sm:row-span-2 flex flex-col justify-between gap-2">
+          {/* Canto livre do cartão: título, médicos da ficha e quem registrou */}
+          <div className="sm:row-span-2 flex flex-col gap-3">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-gray-500">GAMI</p>
               <h1 className="text-lg font-bold uppercase tracking-wide text-gray-800">{titulo}</h1>
             </div>
+
+            {/* Um ou mais médicos, cada um na sua linha */}
+            <CaixaCinza>
+              <label htmlFor="fichaBusca" className="block text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-1">
+                Anestesistas
+              </label>
+              <div className="space-y-1.5">
+                {anestesistasAtuais.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 border-b border-gray-700 pb-0.5 min-h-[1.75rem]">
+                    <SiglaBadge sigla={a.sigla} size="sm" />
+                    <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900">{nomeDe(a)}</span>
+                    {!somenteLeitura && (
+                      <button
+                        type="button"
+                        onClick={() => setAnestesistas((prev) => prev.filter((x) => x.id !== a.id))}
+                        className="text-xs font-medium text-brand-700 hover:text-brand-800"
+                      >
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {!somenteLeitura && anestesistas.length < MAX_ANESTESISTAS && (
+                  <div className="relative">
+                    <input
+                      id="fichaBusca"
+                      type="text"
+                      value={busca}
+                      onChange={(e) => setBusca(e.target.value)}
+                      placeholder={anestesistas.length > 0 ? "+ Adicionar outro anestesista" : "Buscar anestesista"}
+                      autoComplete="off"
+                      className={INPUT_LINHA}
+                    />
+                    {busca.trim() && (
+                      <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {buscando ? (
+                          <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
+                        ) : resultadosLivres.length === 0 ? (
+                          <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum anestesista encontrado.</p>
+                        ) : (
+                          resultadosLivres.map((r) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => {
+                                setAnestesistas((prev) => [...prev, r])
+                                setBusca("")
+                              }}
+                              className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              <SiglaBadge sigla={r.sigla} size="sm" />
+                              <span className="min-w-0 truncate">{nomeDe(r)}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CaixaCinza>
+
             {f && (
-              <p className="text-[11px] text-gray-500 leading-snug">
+              <p className="mt-auto text-[11px] text-gray-500 leading-snug">
                 Criada por {nomeDe(f.criadoPor)} em {new Date(f.criadoEm).toLocaleString("pt-BR")}
                 {f.atualizadoPor && f.atualizadoEm && (
                   <span className="block">
@@ -261,12 +348,19 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
             )}
           </div>
 
-          <CaixaCinza>
-            <CampoLinha rotulo="Data" htmlFor="fichaData">
+          <CaixaCinza className="space-y-2">
+            <CampoLinha rotulo={<>Data<br />inicial</>} htmlFor="fichaData">
               {somenteLeitura ? (
                 <ValorLinha>{f ? formatarData(f.data) : ""}</ValorLinha>
               ) : (
-                <input id="fichaData" type="date" required value={data} onChange={(e) => setData(e.target.value)} className={INPUT_LINHA} />
+                <input id="fichaData" type="date" required value={data} onChange={(e) => mudarData(e.target.value)} className={INPUT_LINHA} />
+              )}
+            </CampoLinha>
+            <CampoLinha rotulo={<>Data<br />final</>} htmlFor="fichaDataFim">
+              {somenteLeitura ? (
+                <ValorLinha>{f ? formatarData(f.data_fim) : ""}</ValorLinha>
+              ) : (
+                <input id="fichaDataFim" type="date" required min={data} value={dataFim} onChange={(e) => setDataFim(e.target.value)} className={INPUT_LINHA} />
               )}
             </CampoLinha>
           </CaixaCinza>
@@ -294,7 +388,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
           <div className="order-2 sm:order-none border-2 border-gray-700 p-2 flex flex-col min-h-[11rem]">
             <div className="grid grid-cols-1 gap-2 flex-1 content-start">
               {fotosVisiveis.map((foto) => (
-                <MiniaturaFoto key={foto.chave} src={foto.src} onRemover={foto.remover} />
+                <MiniaturaFoto key={foto.chave} src={foto.src} onAmpliar={() => setFotoAmpliada(foto.src)} onRemover={foto.remover} />
               ))}
               {!somenteLeitura && totalFotos < MAX_FOTOS && (
                 <label className="aspect-square flex flex-col items-center justify-center border-2 border-dashed border-gray-400 text-gray-500 hover:bg-gray-50 cursor-pointer text-center">
@@ -315,56 +409,6 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 
           {/* Linhas do cartão */}
           <div className="space-y-4">
-            <div className="relative">
-              <CampoLinha rotulo="Anestesista" htmlFor="fichaBusca">
-                {anestesistaAtual && (somenteLeitura || !busca) ? (
-                  <div className="flex items-center gap-2 border-b border-gray-700 pb-0.5 min-h-[1.75rem]">
-                    <SiglaBadge sigla={anestesistaAtual.sigla} size="sm" />
-                    <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900">{nomeDe(anestesistaAtual)}</span>
-                    {!somenteLeitura && (
-                      <button type="button" onClick={() => setAnestesista(null)} className="text-xs font-medium text-brand-700 hover:text-brand-800">
-                        Trocar
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <input
-                    id="fichaBusca"
-                    type="text"
-                    value={busca}
-                    onChange={(e) => setBusca(e.target.value)}
-                    placeholder="Buscar anestesista"
-                    autoComplete="off"
-                    className={INPUT_LINHA}
-                  />
-                )}
-              </CampoLinha>
-              {!somenteLeitura && busca.trim() && (
-                <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                  {buscando ? (
-                    <p className="px-4 py-2.5 text-sm text-gray-400">Buscando...</p>
-                  ) : resultados.length === 0 ? (
-                    <p className="px-4 py-2.5 text-sm text-gray-400">Nenhum anestesista encontrado.</p>
-                  ) : (
-                    resultados.map((r) => (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => {
-                          setAnestesista(r)
-                          setBusca("")
-                        }}
-                        className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <SiglaBadge sigla={r.sigla} size="sm" />
-                        <span className="min-w-0 truncate">{nomeDe(r)}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
             <div>
               <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-2">Tipo de anestesia</p>
               {/* Quadradinhos como no papel: marcar um desmarca o outro. Colunas de largura mínima
@@ -401,6 +445,24 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
                 )}
               </div>
             )}
+
+            <CampoLinha rotulo="Valor (R$)" htmlFor="fichaValor">
+              {somenteLeitura ? (
+                <ValorLinha>{formatarValor(f?.valor ?? null)}</ValorLinha>
+              ) : (
+                <input
+                  id="fichaValor"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={valor}
+                  onChange={(e) => setValor(e.target.value)}
+                  placeholder="0,00 (opcional)"
+                  className={INPUT_LINHA}
+                />
+              )}
+            </CampoLinha>
           </div>
         </div>
 
@@ -513,6 +575,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
         )}
       </div>
 
+      {fotoAmpliada && <FotoAmpliada src={fotoAmpliada} onFechar={() => setFotoAmpliada(null)} />}
       {confirmacao && <ConfirmacaoModal confirmacao={confirmacao} onClose={() => setConfirmacao(null)} />}
     </div>
   )
@@ -571,19 +634,14 @@ function Quadradinho({ rotulo, marcado, onClick }: { rotulo: string; marcado: bo
   )
 }
 
-function MiniaturaFoto({ src, onRemover }: { src: string; onRemover: (() => void) | null }) {
+function MiniaturaFoto({ src, onAmpliar, onRemover }: { src: string; onAmpliar: () => void; onRemover: (() => void) | null }) {
   return (
     <div className="relative aspect-square overflow-hidden border border-gray-300">
-      {onRemover ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="Foto da ficha" className="w-full h-full object-cover" />
-      ) : (
-        // Na visualização, tocar abre a foto em tamanho grande
-        <a href={src} target="_blank" rel="noreferrer">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt="Foto da ficha" className="w-full h-full object-cover hover:opacity-90" />
-        </a>
-      )}
+      {/* Tocar amplia a foto por cima da ficha, sem sair da tela */}
+      <button type="button" onClick={onAmpliar} aria-label="Ampliar foto" className="block w-full h-full cursor-zoom-in">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt="Foto da ficha" className="w-full h-full object-cover hover:opacity-90" />
+      </button>
       {onRemover && (
         <button
           type="button"
@@ -594,6 +652,24 @@ function MiniaturaFoto({ src, onRemover }: { src: string; onRemover: (() => void
           ✕
         </button>
       )}
+    </div>
+  )
+}
+
+// Foto em tela cheia por cima da ficha: fecha no ✕, tocando fora da foto ou no Esc
+function FotoAmpliada({ src, onFechar }: { src: string; onFechar: () => void }) {
+  return (
+    <div role="dialog" aria-label="Foto ampliada" onClick={onFechar} className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="Foto da ficha ampliada" onClick={(e) => e.stopPropagation()} className="max-w-full max-h-full object-contain" />
+      <button
+        type="button"
+        onClick={onFechar}
+        aria-label="Fechar foto"
+        className="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg flex items-center justify-center hover:bg-white/25"
+      >
+        ✕
+      </button>
     </div>
   )
 }
