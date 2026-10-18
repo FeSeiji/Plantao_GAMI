@@ -93,10 +93,22 @@ type MudancaPosicaoHistorico = {
   alteradoPor: Pessoa;
 };
 
+// Pedido de um médico para entrar numa vaga livre; a gestão aprova ou recusa
+type PedidoVaga = {
+  id: string;
+  posicao: number;
+  status: "pendente" | "aprovado" | "recusado" | "cancelado";
+  solicitadoEm: string;
+  respondidoEm: string | null;
+  usuario: Pessoa;
+  respondidoPor: Pessoa | null;
+};
+
 type EventoHistorico =
   | { tipo: "troca"; quando: string; troca: TrocaHistorico }
   | { tipo: "remocao"; quando: string; remocao: RemocaoHistorico }
-  | { tipo: "posicao"; quando: string; mudanca: MudancaPosicaoHistorico };
+  | { tipo: "posicao"; quando: string; mudanca: MudancaPosicaoHistorico }
+  | { tipo: "pedido"; quando: string; pedido: PedidoVaga };
 
 // Quem pode mudar médicos de vaga — mesma lista do requireRole em Backend/src/routes/plantoes.js.
 // Fora da gestão, só nos plantões em que está escalado
@@ -105,6 +117,8 @@ const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "anestes
 const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
 // Criar e editar plantões (dia, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
 export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "tecnico"];
+// Pedir uma vaga livre: só médicos — mesma lista em Backend/src/routes/plantoes.js
+const ROLES_MEDICO = ["anestesita_socio", "anestesita_plantonista"];
 
 type Usuario = {
   id: string;
@@ -169,6 +183,8 @@ export default function PlantaoModal({
   const [podeMudarPosicao, setPodeMudarPosicao] = useState(false);
   const [podeGerirEquipe, setPodeGerirEquipe] = useState(false);
   const [podeEditarPlantao, setPodeEditarPlantao] = useState(false);
+  const [souMedico, setSouMedico] = useState(false);
+  const [pedidosVaga, setPedidosVaga] = useState<PedidoVaga[]>([]);
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null);
   // Vaga com o painel de troca aberto
   const [trocandoPosicao, setTrocandoPosicao] = useState<number | null>(null);
@@ -216,10 +232,12 @@ export default function PlantaoModal({
       setPodeMudarPosicao(roles.some((r) => ROLES_MUDAR_POSICAO.includes(r)));
       setPodeGerirEquipe(roles.some((r) => ROLES_GERIR_EQUIPE.includes(r)));
       setPodeEditarPlantao(roles.some((r) => ROLES_EDITAR_PLANTAO.includes(r)));
+      setSouMedico(roles.some((r) => ROLES_MEDICO.includes(r)));
     } catch {
       setPodeMudarPosicao(false);
       setPodeGerirEquipe(false);
       setPodeEditarPlantao(false);
+      setSouMedico(false);
     }
   }, []);
 
@@ -241,6 +259,9 @@ export default function PlantaoModal({
       .catch(() => {});
     buscar("mudancas-posicao")
       .then((data) => data && setMudancasPosicao(data))
+      .catch(() => {});
+    buscar("pedidos-vaga")
+      .then((data) => data && setPedidosVaga(data))
       .catch(() => {});
   }, [plantao.id]);
 
@@ -562,6 +583,98 @@ export default function PlantaoModal({
           ? err.message
           : "Não foi possível responder a essa solicitação.",
       );
+    }
+  }
+
+  // Depois que a gestão aprova um pedido, o médico entra na vaga: busca o plantão de novo
+  async function recarregarPlantao() {
+    const token = localStorage.getItem("token");
+    const res = await apiFetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return;
+    const result = await res.json();
+    setPlantao(result);
+    setSelecionados(result.usuarios);
+  }
+
+  async function chamarPedidoVaga(caminho: string, method: "POST" | "PATCH", body?: object) {
+    const token = localStorage.getItem("token");
+    const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/${caminho}`, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${token}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.error ?? "Não foi possível concluir o pedido.");
+    return result;
+  }
+
+  // Médico pede uma vaga livre; entra quando a gestão aprovar
+  function pedirVaga(posicao: number) {
+    setConfirmacao({
+      titulo: "Pedir esta vaga?",
+      mensagem: (
+        <p>
+          Você pede a vaga de{" "}
+          <span className="font-semibold">{descreverPosicao(posicao)}</span> neste
+          plantão. Você entra na escala quando a gestão aprovar.
+        </p>
+      ),
+      rotuloConfirmar: "Pedir vaga",
+      acao: async () => {
+        setError("");
+        try {
+          const pedido = await chamarPedidoVaga(`${plantao.id}/pedidos-vaga`, "POST", { posicao });
+          setPedidosVaga((prev) => [pedido, ...prev]);
+          window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Não foi possível pedir a vaga.");
+        }
+      },
+    });
+  }
+
+  function cancelarPedidoVaga(pedido: PedidoVaga) {
+    setConfirmacao({
+      titulo: "Cancelar pedido?",
+      mensagem: (
+        <p>
+          O seu pedido da vaga de {descreverPosicao(pedido.posicao)} é cancelado.
+        </p>
+      ),
+      rotuloConfirmar: "Cancelar pedido",
+      perigo: true,
+      acao: async () => {
+        setError("");
+        try {
+          await chamarPedidoVaga(`pedidos-vaga/${pedido.id}/cancelar`, "PATCH");
+          carregarHistorico();
+          window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Não foi possível cancelar o pedido.");
+        }
+      },
+    });
+  }
+
+  // Gestão: aprovar coloca o médico na vaga (e recusa os outros pedidos dela)
+  async function responderPedidoVaga(pedido: PedidoVaga, aprovar: boolean) {
+    setError("");
+    try {
+      await chamarPedidoVaga(`pedidos-vaga/${pedido.id}/${aprovar ? "aprovar" : "recusar"}`, "PATCH");
+      if (aprovar) {
+        await recarregarPlantao();
+        onUpdated();
+      }
+      carregarHistorico();
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível responder ao pedido.");
     }
   }
 
@@ -899,21 +1012,85 @@ export default function PlantaoModal({
     };
   }
 
+  // Vaga livre: a gestão preenche (no modo edição) e responde aos pedidos; o médico pede a vaga
+  function celulaVazia(p: number, turno: Turno, editavel: boolean): CelulaGrade {
+    const base = {
+      tipo: "vazia" as const,
+      chave: `vaga-${p}`,
+      rotulo: rotuloPosicaoAbreviado(p),
+      texto: "Vaga livre",
+      ativa: adicionando?.posicao === p,
+    };
+    const pendentes = pedidosVaga.filter((pd) => pd.status === "pendente" && pd.posicao === p);
+
+    if (podeGerirEquipe) {
+      return {
+        ...base,
+        onClick: editavel ? () => abrirAdicao({ posicao: p }) : undefined,
+        destaque: pendentes.length > 0 ? "pendente" : undefined,
+        extra: pendentes.length > 0 && (
+          <ul className="space-y-1">
+            {pendentes.map((pd) => (
+              <li key={pd.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                <span className="text-amber-800">
+                  <span className="font-semibold">{nomeDe(pd.usuario)}</span> pediu esta vaga
+                </span>
+                <span className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => responderPedidoVaga(pd, true)}
+                    className="text-green-600 hover:text-green-800 font-bold"
+                  >
+                    Aprovar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => responderPedidoVaga(pd, false)}
+                    className="text-red-600 hover:text-red-800 font-bold"
+                  >
+                    Recusar
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ),
+      };
+    }
+
+    if (!souMedico) return base;
+
+    const meuPedido = pendentes.find((pd) => pd.usuario.id === meuId);
+    if (meuPedido) {
+      return {
+        ...base,
+        destaque: "pendente",
+        status: "Seu pedido aguarda a aprovação da gestão",
+        extra: (
+          <button
+            type="button"
+            onClick={() => cancelarPedidoVaga(meuPedido)}
+            className="text-xs font-bold text-red-600 hover:text-red-800"
+          >
+            Cancelar pedido
+          </button>
+        ),
+      };
+    }
+
+    // Só antes do turno começar e se ele ainda não estiver nesse turno do plantão
+    const { hora_inicio } = horarioDaVaga(plantao.data, p);
+    const turnoComecou = new Date(`${plantao.data}T${hora_inicio}:00`) <= new Date();
+    if (turnoComecou || noTurno(meuId, turno)) return base;
+
+    return { ...base, acao: "Pedir esta vaga", onClick: () => pedirVaga(p) };
+  }
+
   function montarCelulas(turno: Turno, editavel: boolean): CelulaGrade[] {
     return vagasDoTurno(turno).map((p): CelulaGrade => {
       const u = selecionados.find((s) => s.posicao === p);
       if (u) return celulaMedico(u, editavel);
-      return {
-        tipo: "vazia",
-        chave: `vaga-${p}`,
-        rotulo: rotuloPosicaoAbreviado(p),
-        texto: "Vaga livre",
-        ativa: adicionando?.posicao === p,
-        onClick:
-          editavel && podeGerirEquipe
-            ? () => abrirAdicao({ posicao: p })
-            : undefined,
-      };
+      return celulaVazia(p, turno, editavel);
     });
   }
 
@@ -1074,6 +1251,11 @@ export default function PlantaoModal({
       tipo: "posicao" as const,
       quando: mudanca.alteradoEm,
       mudanca,
+    })),
+    ...pedidosVaga.map((pedido) => ({
+      tipo: "pedido" as const,
+      quando: pedido.solicitadoEm,
+      pedido,
     })),
   ].sort((a, b) => b.quando.localeCompare(a.quando));
 
@@ -1378,6 +1560,40 @@ export default function PlantaoModal({
                           </>
                         )}{" "}
                         em {new Date(m.alteradoEm).toLocaleString("pt-BR")}
+                      </span>
+                    </li>
+                  );
+                }
+
+                if (evento.tipo === "pedido") {
+                  const pd = evento.pedido;
+                  const cor = {
+                    pendente: "bg-amber-400",
+                    aprovado: "bg-green-500",
+                    recusado: "bg-red-500",
+                    cancelado: "bg-gray-400",
+                  }[pd.status];
+                  const quando = (iso: string) => new Date(iso).toLocaleString("pt-BR");
+                  return (
+                    <li
+                      key={`pedido-${pd.id}`}
+                      className="flex items-start gap-2 text-xs text-gray-600"
+                    >
+                      <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cor}`} />
+                      <span>
+                        <span className="font-semibold">{nomeDe(pd.usuario)}</span>{" "}
+                        pediu a vaga ({descreverPosicao(pd.posicao)}) em{" "}
+                        {quando(pd.solicitadoEm)}
+                        {pd.status === "pendente" && " — aguardando aprovação"}
+                        {pd.status !== "pendente" && pd.respondidoEm && (
+                          <>
+                            {" "}— {pd.status === "aprovado" ? "aprovado" : pd.status === "recusado" ? "recusado" : "cancelado"}
+                            {pd.respondidoPor && pd.status !== "cancelado" && (
+                              <> por <span className="font-semibold">{nomeDe(pd.respondidoPor)}</span></>
+                            )}{" "}
+                            em {quando(pd.respondidoEm)}
+                          </>
+                        )}
                       </span>
                     </li>
                   );

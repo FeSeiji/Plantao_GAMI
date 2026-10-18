@@ -1,5 +1,5 @@
 // Dados de teste para o Supabase LOCAL: usuários de todos os cargos, plantões do mês passado ao mês que vem,
-// trocas, troca por horas, afastamentos, hospitais, casos fora e fichas.
+// trocas, troca por horas, pedido de vaga livre, afastamentos, hospitais, casos fora e fichas.
 // Uso (no host, com o Supabase local rodando): npm run db:reset — zera o banco e roda este script.
 const path = require('path')
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
@@ -170,6 +170,16 @@ async function main() {
       .eq('plantao_id', diaPassado.plantaoId).eq('posicao', 10),
     'troca aceita'
   )
+
+  // Pedido de vaga livre aguardando a gestão: quem está de folga pede a vaga 7 do próximo fim de semana
+  let fimDeSemana
+  for (let k = 2; !fimDeSemana; k++) {
+    const e = escala.get(diaRelativo(k))
+    if (e && !e.vagas.has(7)) fimDeSemana = e
+  }
+  await ok(supabase.from('plantao_pedidos_vaga').insert({
+    plantao_id: fimDeSemana.plantaoId, posicao: 7, usuario_id: fimDeSemana.folga.id,
+  }), 'pedido de vaga')
 
   // Afastamentos: férias aprovadas (com plantões no período, para aparecer o "!"), congresso pendente e um recusado
   await ok(supabase.from('afastamentos').insert([

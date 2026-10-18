@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { apiFetch } from "./sessao"
 import { formatarIntervalo } from "./trocaPorHoras"
+import { descreverPosicao } from "./posicoes"
 
 type Pessoa = {
   id: string
@@ -41,7 +42,15 @@ type AfastamentoPendente = {
   usuario: Pessoa
 }
 
-// Quem aprova férias e congressos — mesma lista do requireRole em Backend/src/routes/afastamentos.js
+// Médico pedindo uma vaga livre, aguardando a gestão
+type PedidoVagaPendente = {
+  id: string
+  posicao: number
+  usuario: Pessoa
+  plantao: { id: string; titulo: string; data: string; hora_inicio: string; hora_fim: string }
+}
+
+// Quem aprova férias, congressos e pedidos de vaga — mesma lista dos requireRole em Backend/src/routes
 const ROLES_GESTAO = ["escritorio", "admin", "tecnico"]
 
 function formatarData(data: string) {
@@ -54,6 +63,7 @@ export const EVENTO_TROCAS_ATUALIZADAS = "trocas-atualizadas"
 export default function NotificacaoTrocaSino() {
   const [pendentes, setPendentes] = useState<TrocaPendente[]>([])
   const [afastamentos, setAfastamentos] = useState<AfastamentoPendente[]>([])
+  const [pedidosVaga, setPedidosVaga] = useState<PedidoVagaPendente[]>([])
   const [aberto, setAberto] = useState(false)
   const [processando, setProcessando] = useState<string | null>(null)
   const [error, setError] = useState("")
@@ -85,6 +95,15 @@ export default function NotificacaoTrocaSino() {
       .then(async (res) => {
         if (!res.ok) return
         setAfastamentos(await res.json())
+      })
+      .catch(() => {})
+
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/pedidos-vaga/pendentes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) return
+        setPedidosVaga(await res.json())
       })
       .catch(() => {})
   }, [])
@@ -165,7 +184,37 @@ export default function NotificacaoTrocaSino() {
     }
   }
 
-  const total = pendentes.length + afastamentos.length
+  // Aprovar coloca o médico na vaga e recusa os outros pedidos dela: recarrega a lista
+  async function responderPedidoVaga(id: string, aprovar: boolean) {
+    setError("")
+    setProcessando(id)
+
+    try {
+      const token = localStorage.getItem("token")
+      const res = await apiFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/pedidos-vaga/${id}/${aprovar ? "aprovar" : "recusar"}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.error ?? "Não foi possível responder a esse pedido.")
+      }
+
+      setPedidosVaga((prev) => prev.filter((p) => p.id !== id))
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível responder a esse pedido.")
+    } finally {
+      setProcessando(null)
+    }
+  }
+
+  const total = pendentes.length + afastamentos.length + pedidosVaga.length
 
   return (
     <div className="relative" ref={containerRef}>
@@ -194,6 +243,50 @@ export default function NotificacaoTrocaSino() {
 
           {error && (
             <p className="text-red-600 text-xs bg-red-50 border-b border-red-200 px-4 py-2">{error}</p>
+          )}
+
+          {pedidosVaga.length > 0 && (
+            <>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 pt-3 pb-1">
+                Pedidos de vaga
+              </p>
+              <ul className="divide-y divide-gray-100 border-b border-gray-100">
+                {pedidosVaga.map((p) => (
+                  <li key={p.id} className="px-4 py-3">
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">{p.usuario.nome ?? p.usuario.email}</span> pediu a vaga de{" "}
+                      {descreverPosicao(p.posicao)} no plantão <span className="font-semibold">{p.plantao.titulo}</span>.
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formatarData(p.plantao.data)} · {p.plantao.hora_inicio.slice(0, 5)}-{p.plantao.hora_fim.slice(0, 5)}
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        type="button"
+                        disabled={processando === p.id}
+                        onClick={() => responderPedidoVaga(p.id, true)}
+                        className="flex-1 bg-brand-700 hover:bg-brand-800 text-white text-xs font-semibold py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                      >
+                        Aprovar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={processando === p.id}
+                        onClick={() => responderPedidoVaga(p.id, false)}
+                        className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                      >
+                        Recusar
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {afastamentos.length === 0 && pendentes.length > 0 && (
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 pt-3 pb-1">
+                  Trocas
+                </p>
+              )}
+            </>
           )}
 
           {afastamentos.length > 0 && (

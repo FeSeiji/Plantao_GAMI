@@ -47,7 +47,14 @@ function pontosDaPosicao(posicao) {
   return vagaDa(posicao)?.pontos ?? 0
 }
 
+// O turno da vaga já começou nesse plantão? Compara no horário de Brasília (o do hospital), não no do servidor
+function turnoJaComecou(data, posicao, agora = new Date()) {
+  const agoraLocal = agora.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 16) // "2026-10-18 14:05"
+  return `${data} ${TURNOS[turnoDaPosicao(posicao)].hora_inicio}` <= agoraLocal
+}
+
 module.exports = {
+  turnoJaComecou,
   TURNOS,
   POSICOES,
   ehVagaDeCoordenador,
