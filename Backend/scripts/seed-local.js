@@ -1,5 +1,5 @@
 // Dados de teste para o Supabase LOCAL: usuários de todos os cargos, plantões do mês passado ao mês que vem,
-// trocas, troca por horas, pedido de vaga livre, afastamentos, hospitais, casos fora e fichas.
+// trocas, troca por horas, pedido de vaga livre, afastamentos, hospitais, convênios, casos fora e fichas.
 // Uso (no host, com o Supabase local rodando): npm run db:reset — zera o banco e roda este script.
 const path = require('path')
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
@@ -190,8 +190,17 @@ async function main() {
 
   // Hospitais (um desativado) e casos fora
   const hospitais = await ok(supabase.from('hospitais').insert([
-    { nome: 'Hospital São Lucas', ativo: true }, { nome: 'Hospital Santa Clara', ativo: true }, { nome: 'Hospital Antigo', ativo: false },
+    { nome: 'Hospital São Lucas', cnpj: '11222333000181', ativo: true },
+    { nome: 'Hospital Santa Clara', cnpj: null, ativo: true },
+    { nome: 'Hospital Antigo', cnpj: null, ativo: false },
   ]).select('id, nome'), 'hospitais')
+
+  // Convênios das fichas (um desativado)
+  const convenios = await ok(supabase.from('convenios').insert([
+    { nome: 'Unimed', cnpj: '44555666000199', ativo: true },
+    { nome: 'Bradesco Saúde', cnpj: null, ativo: true },
+    { nome: 'Convênio Antigo', cnpj: null, ativo: false },
+  ]).select('id, nome'), 'convênios')
 
   await ok(supabase.from('casos_fora').insert([
     { data: diaRelativo(-2), anestesista_id: ana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', paciente_nome: 'Maria da Silva', paciente_cpf: cpfValido('123456789'), cirurgia: 'Colecistectomia', hospital_id: hospitais[0].id, recibo: 'gami', valor: 1200, criado_por: escritorio },
@@ -199,10 +208,24 @@ async function main() {
     { data: diaRelativo(-9), anestesista_id: juliana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', paciente_nome: 'Ana Pereira', paciente_cpf: cpfValido('111444777'), cirurgia: 'Herniorrafia', recibo: 'pessoal', valor: 850.5, comentarios: 'Paciente particular', criado_por: juliana.id },
   ]), 'casos fora')
 
-  // Fichas anestésicas (sem foto): uma com um anestesista, outra virando a noite com dois
+  // Fichas anestésicas (sem foto), com os dados do faturamento: uma com um anestesista, outra virando a noite com dois
+  const faturamento = {
+    numero_atendimento: '5478', autorizacao: '7841254', cirurgiao_nome: 'Dr. Paulo Viana', cirurgiao_crm: '654321',
+    hospital_id: hospitais[0].id, convenio_id: convenios[0].id,
+  }
   await ok(supabase.from('fichas_anestesicas').insert([
-    { data: diaRelativo(-1), hora_inicio: '08:00', hora_fim: '10:30', anestesista_id: ana.id, anestesista_ids: [ana.id], tipo_anestesia: 'raquianestesia', criado_por: ana.id },
-    { data: diaRelativo(-3), data_fim: diaRelativo(-2), hora_inicio: '22:00', hora_fim: '02:00', anestesista_id: bruno.id, anestesista_ids: [bruno.id, igor.id], tipo_anestesia: 'outros', tipo_outro: 'Bloqueio de plexo', observacoes: 'Caso longo', valor: 2500, criado_por: escritorio },
+    {
+      ...faturamento, data: diaRelativo(-1), data_fim: diaRelativo(-1), hora_inicio: '08:00', hora_fim: '10:30',
+      anestesista_id: ana.id, anestesista_ids: [ana.id], tipo_anestesia: 'raquianestesia',
+      paciente_nome: 'Maria da Silva', paciente_cpf: cpfValido('123456789'), paciente_sexo: 'F', paciente_nascimento: '1990-05-20',
+      procedimento_codigo: '30303010', procedimento_nome: 'Cesariana', valor: null, tipo_outro: null, observacoes: null, criado_por: ana.id,
+    },
+    {
+      ...faturamento, data: diaRelativo(-3), data_fim: diaRelativo(-2), hora_inicio: '22:00', hora_fim: '02:00',
+      anestesista_id: bruno.id, anestesista_ids: [bruno.id, igor.id], tipo_anestesia: 'outros', tipo_outro: 'Bloqueio de plexo',
+      paciente_nome: 'José Santos', paciente_cpf: null, paciente_sexo: 'M', paciente_nascimento: '1978-11-02',
+      procedimento_codigo: null, procedimento_nome: 'Artroscopia de ombro', observacoes: 'Caso longo', valor: 2500, criado_por: escritorio,
+    },
   ]), 'fichas')
 
   console.log(`Pronto: ${medicos.length + 3} usuários, ${plantoes.length} plantões (${dataLocal(inicio)} a ${dataLocal(fim)}).`)

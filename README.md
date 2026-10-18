@@ -39,9 +39,11 @@ Plantão/
 │   │   │   ├── users.js            # Busca de médicos e gestão de usuários (inclui a aprovação de cadastros)
 │   │   │   ├── plantoes.js         # Plantões, vagas, trocas e histórico
 │   │   │   ├── afastamentos.js     # Férias e congressos (pedido do médico, aprovação da gestão)
-│   │   │   ├── fichas.js           # Fichas anestésicas (com foto)
+│   │   │   ├── fichas.js           # Fichas anestésicas (com foto) e a exportação para o faturamento
 │   │   │   ├── casosFora.js        # Casos fora da escala
-│   │   │   ├── hospitais.js        # Hospitais dos casos fora
+│   │   │   ├── cadastros.js        # Cadastro simples (nome, CNPJ, ativo) usado por hospitais e convênios
+│   │   │   ├── hospitais.js        # Hospitais dos casos fora e das fichas
+│   │   │   ├── convenios.js        # Convênios das fichas
 │   │   │   ├── dashboard.js        # Painel pessoal e visão da gestão
 │   │   │   └── bmFinanceiro.js     # Resumo mensal de horas e pontos
 │   │   ├── services/               # Regras compartilhadas: vagas, conflitos de horário, trocas por horas, afastamentos, usuários
@@ -233,7 +235,17 @@ Acessado pelo menu da sigla (canto superior). Cada usuário edita nome, sigla, t
 Plantões que viram a noite contam pelo dia em que começam.
 
 ### Fichas anestésicas
-Registro avulso de uma anestesia, sem ligação com o plantão: data, horário, anestesista, tipo de anestesia, observações e **uma foto** da ficha (guardada num bucket privado do Supabase Storage; o link da foto vale 1 hora). Todos os usuários logados veem; criam médicos e a gestão; editam e excluem quem criou ou a gestão.
+Registro avulso de uma anestesia, sem ligação com o plantão: data e horário (início e fim, podendo virar a noite), um ou mais anestesistas, tipo de anestesia, valor, observações e **uma foto** da ficha (guardada num bucket privado do Supabase Storage; o link da foto vale 1 hora). Também guarda os dados do **faturamento**:
+- **Paciente:** nome e data de nascimento (obrigatórios), CPF e sexo.
+- **Atendimento:** número do atendimento, autorização/senha, convênio e hospital.
+- **Cirurgião:** nome e CRM.
+- **Procedimento:** código e nome (o nome é obrigatório).
+
+Convênios e hospitais são cadastrados pela gestão, com nome e CNPJ (o hospital é o mesmo dos casos fora). Desativar um item tira ele da lista das novas fichas, mas as antigas continuam com ele.
+
+- **Quem vê:** a gestão vê todas as fichas; o médico (sócio ou plantonista) vê as fichas em que é um dos anestesistas e as que ele mesmo registrou.
+- **Quem cria:** médicos e a gestão. **Edita e exclui:** quem criou ou a gestão.
+- **Exportar:** todos. O botão **Exportar** abre um modal para escolher o período e baixa um `.xlsx` no modelo do faturamento (Data, Hora, Número de Atendimento … Nome Procedimento), com **uma linha por anestesista**. A gestão exporta todas as fichas do período; o médico, só as linhas em que ele é o anestesista. Datas no formato `dd/mm/aa`, hora `hh:mm:ss`, CPF e CNPJ só com os dígitos.
 
 ### Casos fora
 Cirurgias feitas por um anestesista fora da escala (substitui o antigo Google Forms): data, anestesista, se estava escalado, cirurgião, paciente (nome e CPF), cirurgia, hospital, recibo (GAMI, PMP, sem recibo ou pessoal), valor e comentários. Todos os usuários logados veem; editam e excluem quem criou ou a gestão. A lista de **hospitais** é cadastrada pela gestão (hospital desativado some das opções, mas continua nos casos antigos). Os casos do mês também aparecem numa aba do BM Financeiro.
@@ -342,13 +354,14 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/fichas` | Lista as fichas |
-| `GET` | `/fichas/:id` | Detalhe, com o link temporário da foto |
+| `GET` | `/fichas` | Lista as fichas (gestão: todas; médico: as dele) |
+| `GET` | `/fichas/exportar?inicio=&fim=` | Linhas da planilha do faturamento no período (até um ano), uma por anestesista |
+| `GET` | `/fichas/:id` | Detalhe, com o link temporário da foto (404 para quem não pode ver a ficha) |
 | `POST` | `/fichas` | Cria a ficha (foto em `fotos_novas`, como data URL) (médicos e gestão) |
 | `PATCH` | `/fichas/:id` | Edita (quem criou ou a gestão) |
 | `DELETE` | `/fichas/:id` | Exclui, com a foto (quem criou ou a gestão) |
 
-**Casos fora e hospitais**
+**Casos fora, hospitais e convênios**
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
@@ -357,8 +370,11 @@ Authorization: Bearer <access_token>
 | `PATCH` | `/casos-fora/:id` | Edita (quem criou ou a gestão) |
 | `DELETE` | `/casos-fora/:id` | Exclui (quem criou ou a gestão) |
 | `GET` | `/hospitais` | Lista os hospitais |
-| `POST` | `/hospitais` | Cadastra um hospital (gestão) |
-| `PATCH` | `/hospitais/:id` | Renomeia ou ativa/desativa (gestão) |
+| `POST` | `/hospitais` | Cadastra um hospital, com CNPJ opcional (gestão) |
+| `PATCH` | `/hospitais/:id` | Edita nome e CNPJ ou ativa/desativa (gestão) |
+| `GET` | `/convenios` | Lista os convênios |
+| `POST` | `/convenios` | Cadastra um convênio, com CNPJ opcional (gestão) |
+| `PATCH` | `/convenios/:id` | Edita nome e CNPJ ou ativa/desativa (gestão) |
 
 **Dashboard**
 

@@ -3,11 +3,13 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
 const { ehGestao } = require('../middleware/auth')
+const { cpfValido } = require('../services/documentos')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-// Ficha anestésica: registro avulso (sem ligação com plantão), visível para todos os usuários logados.
-// Edita e exclui quem criou ou a gestão (escritório, técnico e admin).
+// Ficha anestésica: registro avulso (sem ligação com plantão), com os dados do paciente e do procedimento.
+// A gestão (escritório, técnico e admin) vê todas; o médico vê as fichas em que é um dos anestesistas
+// e as que ele mesmo registrou. Edita e exclui quem criou ou a gestão.
 const BUCKET = 'fichas-anestesicas'
 const TIPOS_ANESTESIA = ['raquianestesia', 'duplo_bloqueio', 'geral', 'peridural', 'outros']
 const MAX_FOTOS = 1
@@ -15,10 +17,19 @@ const MAX_BYTES_FOTO = 3 * 1024 * 1024
 const MIME_FOTO = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 const VALIDADE_LINK_FOTO = 60 * 60 // 1h
 
-const CAMPOS = 'id, data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos, criado_por, criado_em, atualizado_por, atualizado_em'
+const CAMPOS = [
+  'id, data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos',
+  'numero_atendimento, autorizacao, paciente_nome, paciente_cpf, paciente_sexo, paciente_nascimento',
+  'cirurgiao_nome, cirurgiao_crm, procedimento_codigo, procedimento_nome, hospital_id, convenio_id',
+  'hospital:hospitais(nome, cnpj), convenio:convenios(nome, cnpj)',
+  'criado_por, criado_em, atualizado_por, atualizado_em',
+].join(', ')
 const MAX_OBSERVACOES = 2000
 const MAX_ANESTESISTAS = 10
 const MAX_VALOR = 99999999.99
+const MAX_TEXTO = 100
+// Exportação: no máximo um ano por planilha
+const MAX_DIAS_EXPORTACAO = 366
 
 const DATA_REGEX = /^\d{4}-\d{2}-\d{2}$/
 const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d(:00)?$/
@@ -26,6 +37,13 @@ const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d(:00)?$/
 const dataValida = valor => DATA_REGEX.test(valor ?? '') && !isNaN(new Date(`${valor}T00:00:00Z`).getTime())
 
 const podeEditar = (user, ficha) => ehGestao(user) || ficha.criado_por === user.id
+const podeVer = (user, ficha) => podeEditar(user, ficha) || ficha.anestesista_ids.includes(user.id)
+
+// Fora da gestão, a consulta só traz as fichas do próprio médico (participante ou quem registrou)
+function filtrarVisiveis(query, user) {
+  if (ehGestao(user)) return query
+  return query.or(`anestesista_ids.cs.{${user.id}},criado_por.eq.${user.id}`)
+}
 
 exports.listar = async (req, res) => {
   const { inicio, fim, anestesista_id } = req.query
@@ -41,12 +59,68 @@ exports.listar = async (req, res) => {
   if (fim) query = query.lte('data', fim)
   if (anestesista_id) query = query.contains('anestesista_ids', [anestesista_id])
 
-  const { data, error } = await query
+  const { data, error } = await filtrarVisiveis(query, req.user)
   if (error) return res.status(500).json({ error: error.message })
 
   try {
     const perfis = await buscarPerfis(data.flatMap(f => [...f.anestesista_ids, f.criado_por, f.atualizado_por]))
     return res.json(data.map(f => formatar(f, perfis, req.user)))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Linhas da planilha no modelo do faturamento: uma por anestesista da ficha, na ordem das colunas.
+// A gestão exporta todas as fichas do período; o médico, só as linhas em que ele é o anestesista.
+exports.exportar = async (req, res) => {
+  const { inicio, fim } = req.query
+  if (!dataValida(inicio) || !dataValida(fim)) {
+    return res.status(400).json({ error: 'inicio e fim são obrigatórios (AAAA-MM-DD)' })
+  }
+  if (fim < inicio) return res.status(400).json({ error: 'A data final não pode ser antes da inicial' })
+  const dias = (new Date(`${fim}T00:00:00Z`) - new Date(`${inicio}T00:00:00Z`)) / 86400000
+  if (dias >= MAX_DIAS_EXPORTACAO) return res.status(400).json({ error: 'Exporte no máximo um ano por vez' })
+
+  const query = supabase
+    .from('fichas_anestesicas')
+    .select(CAMPOS)
+    .gte('data', inicio)
+    .lte('data', fim)
+    .order('data', { ascending: true })
+    .order('hora_inicio', { ascending: true })
+
+  const { data, error } = await filtrarVisiveis(query, req.user)
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const gestao = ehGestao(req.user)
+    const perfis = await buscarPerfis(data.flatMap(f => f.anestesista_ids))
+    const linhas = data.flatMap(f => f.anestesista_ids
+      .filter(id => gestao || id === req.user.id)
+      .map(id => {
+        const anestesista = perfis.get(id)
+        return {
+          data: f.data,
+          hora: f.hora_inicio,
+          numero_atendimento: f.numero_atendimento,
+          autorizacao: f.autorizacao,
+          paciente: f.paciente_nome,
+          paciente_cpf: f.paciente_cpf,
+          paciente_sexo: f.paciente_sexo,
+          paciente_nascimento: f.paciente_nascimento,
+          anestesista_crm: anestesista?.crm ?? null,
+          anestesista: anestesista?.nome ?? anestesista?.email ?? null,
+          cirurgiao_crm: f.cirurgiao_crm,
+          cirurgiao: f.cirurgiao_nome,
+          convenio_cnpj: f.convenio?.cnpj ?? null,
+          convenio: f.convenio?.nome ?? null,
+          hospital_cnpj: f.hospital?.cnpj ?? null,
+          hospital: f.hospital?.nome ?? null,
+          procedimento_codigo: f.procedimento_codigo,
+          procedimento_nome: f.procedimento_nome,
+        }
+      }))
+    return res.json(linhas)
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -61,7 +135,8 @@ exports.obter = async (req, res) => {
     .maybeSingle()
 
   if (error) return res.status(500).json({ error: error.message })
-  if (!ficha) return res.status(404).json({ error: 'Ficha não encontrada' })
+  // Ficha de outro médico: para quem não pode vê-la, é como se não existisse
+  if (!ficha || !podeVer(req.user, ficha)) return res.status(404).json({ error: 'Ficha não encontrada' })
 
   try {
     const perfis = await buscarPerfis([...ficha.anestesista_ids, ficha.criado_por, ficha.atualizado_por])
@@ -71,7 +146,7 @@ exports.obter = async (req, res) => {
   }
 }
 
-// Corpo: data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos_novas (data URLs)
+// Corpo: os campos de validarCampos e fotos_novas (data URLs)
 exports.criar = async (req, res) => {
   let campos
   try {
@@ -108,7 +183,7 @@ exports.criar = async (req, res) => {
 exports.atualizar = async (req, res) => {
   const { data: atual, error: atualError } = await supabase
     .from('fichas_anestesicas')
-    .select('id, criado_por, fotos')
+    .select('id, criado_por, fotos, hospital_id, convenio_id')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -120,7 +195,7 @@ exports.atualizar = async (req, res) => {
 
   let campos
   try {
-    campos = await validarCampos(req.body)
+    campos = await validarCampos(req.body, atual)
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -180,7 +255,8 @@ exports.remover = async (req, res) => {
   return res.status(204).send()
 }
 
-async function validarCampos(body) {
+// atual: na edição, a ficha pode continuar num hospital ou convênio que a gestão desativou depois
+async function validarCampos(body, atual = null) {
   const { data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor } = body ?? {}
 
   if (!dataValida(data)) throw new Error('data é obrigatória (AAAA-MM-DD)')
@@ -227,7 +303,61 @@ async function validarCampos(body) {
   return {
     data, data_fim, hora_inicio, hora_fim, anestesista_ids: ids,
     tipo_anestesia, tipo_outro: outro, observacoes: obs, valor: valorNormalizado,
+    ...(await validarPacienteEProcedimento(body ?? {}, atual)),
   }
+}
+
+// Campos do modelo de faturamento: paciente, cirurgião, convênio, hospital e procedimento.
+// Obrigatórios: nome e nascimento do paciente e o nome do procedimento
+async function validarPacienteEProcedimento(body, atual) {
+  const paciente_nome = textoOpcional(body.paciente_nome)
+  if (!paciente_nome) throw new Error('Nome do paciente é obrigatório')
+
+  const paciente_nascimento = body.paciente_nascimento || null
+  if (!dataValida(paciente_nascimento)) throw new Error('Data de nascimento do paciente é obrigatória (AAAA-MM-DD)')
+  if (paciente_nascimento > new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })) {
+    throw new Error('A data de nascimento do paciente não pode ser no futuro')
+  }
+
+  const paciente_cpf = String(body.paciente_cpf ?? '').replace(/\D/g, '') || null
+  if (paciente_cpf && !cpfValido(paciente_cpf)) throw new Error('CPF do paciente inválido')
+
+  const paciente_sexo = body.paciente_sexo || null
+  if (paciente_sexo && !['M', 'F'].includes(paciente_sexo)) throw new Error("Sexo do paciente deve ser 'M' ou 'F'")
+
+  const procedimento_nome = textoOpcional(body.procedimento_nome)
+  if (!procedimento_nome) throw new Error('Nome do procedimento é obrigatório')
+
+  const procedimento_codigo = String(body.procedimento_codigo ?? '').replace(/\D/g, '').slice(0, 20) || null
+
+  return {
+    numero_atendimento: textoOpcional(body.numero_atendimento),
+    autorizacao: textoOpcional(body.autorizacao),
+    paciente_nome,
+    paciente_cpf,
+    paciente_sexo,
+    paciente_nascimento,
+    cirurgiao_nome: textoOpcional(body.cirurgiao_nome),
+    cirurgiao_crm: textoOpcional(body.cirurgiao_crm),
+    procedimento_codigo,
+    procedimento_nome,
+    hospital_id: await validarCadastro('hospitais', 'Hospital', body.hospital_id, atual?.hospital_id),
+    convenio_id: await validarCadastro('convenios', 'Convênio', body.convenio_id, atual?.convenio_id),
+  }
+}
+
+function textoOpcional(valor) {
+  return String(valor ?? '').trim().slice(0, MAX_TEXTO) || null
+}
+
+// Hospital ou convênio opcional: precisa existir e estar ativo (ou ser o que a ficha já tinha)
+async function validarCadastro(tabela, rotulo, id, idAtual) {
+  if (!id) return null
+  const { data, error } = await supabase.from(tabela).select('id, ativo').eq('id', id).maybeSingle()
+  if (error) throw error
+  if (!data) throw new Error(`${rotulo} não encontrado`)
+  if (!data.ativo && data.id !== idAtual) throw new Error(`Esse ${rotulo.toLowerCase()} foi desativado`)
+  return data.id
 }
 
 // Recebe data URLs ("data:image/jpeg;base64,...") e grava no bucket. Retorna os caminhos.
@@ -281,6 +411,18 @@ function formatar(f, perfis, user) {
     tipo_outro: f.tipo_outro,
     observacoes: f.observacoes,
     valor: f.valor == null ? null : Number(f.valor),
+    numero_atendimento: f.numero_atendimento,
+    autorizacao: f.autorizacao,
+    paciente_nome: f.paciente_nome,
+    paciente_cpf: f.paciente_cpf,
+    paciente_sexo: f.paciente_sexo,
+    paciente_nascimento: f.paciente_nascimento,
+    cirurgiao_nome: f.cirurgiao_nome,
+    cirurgiao_crm: f.cirurgiao_crm,
+    procedimento_codigo: f.procedimento_codigo,
+    procedimento_nome: f.procedimento_nome,
+    hospital: f.hospital_id ? { id: f.hospital_id, ...f.hospital } : null,
+    convenio: f.convenio_id ? { id: f.convenio_id, ...f.convenio } : null,
     anestesistas: f.anestesista_ids.map(pessoa),
     qtdFotos: f.fotos.length,
     criadoPor: pessoa(f.criado_por),
@@ -297,7 +439,7 @@ async function buscarPerfis(usuarioIds) {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, nome, email, sigla')
+    .select('id, nome, email, sigla, crm, crm_uf')
     .in('id', idsUnicos)
 
   if (error) throw error

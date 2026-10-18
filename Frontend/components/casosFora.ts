@@ -13,7 +13,9 @@ export const RECIBOS: { valor: Recibo; rotulo: string }[] = [
 export const MAX_TEXTO = 200
 export const MAX_COMENTARIOS = 2000
 
-export type Hospital = { id: string; nome: string | null; ativo: boolean }
+// Cadastro simples da gestão (hospitais dos casos fora e das fichas, convênios das fichas)
+export type Cadastro = { id: string; nome: string | null; cnpj?: string | null; ativo: boolean }
+export type Hospital = Cadastro
 
 export type CasoFora = {
   id: string
@@ -44,6 +46,16 @@ export function formatarCpf(cpf: string) {
     .replace(/^(\d{3})(\d)/, "$1.$2")
     .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
     .replace(/\.(\d{3})(\d{1,2})$/, ".$1-$2")
+}
+
+// "12345678000195" ou parte dele -> "12.345.678/0001-95"
+export function formatarCnpj(cnpj: string) {
+  const d = cnpj.replace(/\D/g, "").slice(0, 14)
+  return d
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1/$2")
+    .replace(/(\d{4})(\d)/, "$1-$2")
 }
 
 // 11 dígitos, não todos iguais, e os dois dígitos verificadores batendo
