@@ -34,9 +34,25 @@ export function AvisoIndisponivel({ dias, data }: { dias: number[] | null | unde
 export type Afastamento = {
   id: string
   tipo: "ferias" | "congresso"
+  // Só no congresso; null nos cadastrados antes dos tipos (não descontam até alguém definir)
+  congresso_tipo?: TipoCongresso | null
   data_inicio: string
   data_fim: string
   status?: "pendente" | "aprovado"
+}
+
+// Congresso: o médico continua na escala e recebe só parte da vaga — mesmos fatores do backend
+// (FATOR_CONGRESSO em Backend/src/services/afastamentos.js)
+export type TipoCongresso = "palestrante" | "congressista"
+export const TIPOS_CONGRESSO: { valor: TipoCongresso; rotulo: string; desconto: string }[] = [
+  { valor: "palestrante", rotulo: "Palestrante", desconto: "−20%" },
+  { valor: "congressista", rotulo: "Congressista", desconto: "−40%" },
+]
+
+// "Palestrante (−20%)", ou o aviso para quem ainda não definiu
+export function rotuloTipoCongresso(tipo?: TipoCongresso | null) {
+  const t = TIPOS_CONGRESSO.find((x) => x.valor === tipo)
+  return t ? `${t.rotulo} (${t.desconto})` : "definir tipo"
 }
 
 export const afastamentoPendente = (a?: Afastamento | null) => a?.status === "pendente"
@@ -58,6 +74,14 @@ export function formatarDataCurta(data: string) {
 export function rotuloAfastamento(a: Afastamento) {
   const tipo = a.tipo === "ferias" ? "férias" : "congresso"
   return `${tipo} ${formatarDataCurta(a.data_inicio)}–${formatarDataCurta(a.data_fim)}`
+}
+
+// Aviso na vaga do plantão (linha do modal e título da sigla no calendário).
+// Congresso aprovado não tira o médico da escala: mostra o tipo, que define o desconto
+export function avisoAfastamento(a: Afastamento) {
+  if (afastamentoPendente(a)) return `Pedido de ${rotuloAfastamento(a)} aguardando aprovação`
+  if (a.tipo === "congresso") return `Congresso ${rotuloAfastamento(a).replace("congresso ", "")}: ${rotuloTipoCongresso(a.congresso_tipo)}`
+  return `Indisponível: ${rotuloAfastamento(a)}`
 }
 
 // Motivo na lista de busca, onde o médico aparece mas não pode ser escolhido

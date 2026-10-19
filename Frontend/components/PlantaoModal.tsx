@@ -11,8 +11,8 @@ import {
   AvisoAfastamento,
   AvisoIndisponivel,
   afastamentoPendente,
+  avisoAfastamento,
   deFerias,
-  rotuloAfastamento,
 } from "./disponibilidade";
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
 import SeletorTrocaPorHoras from "./SeletorTrocaPorHoras";
@@ -986,9 +986,7 @@ export default function PlantaoModal({
           <>
             {u.afastamento && (
               <span className="block font-semibold not-italic">
-                {afastamentoPendente(u.afastamento)
-                  ? `Pedido de ${rotuloAfastamento(u.afastamento)} aguardando aprovação`
-                  : `Indisponível: ${rotuloAfastamento(u.afastamento)}`}
+                {avisoAfastamento(u.afastamento)}
               </span>
             )}
             {u.cobertura && (

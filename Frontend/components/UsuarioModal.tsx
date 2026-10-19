@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
-import { TIPOS_AFASTAMENTO } from "./disponibilidade"
+import { TIPOS_AFASTAMENTO, TIPOS_CONGRESSO, TipoCongresso } from "./disponibilidade"
 import { apiFetch } from "./sessao"
 
 export type UsuarioGestao = {
@@ -49,6 +49,7 @@ export const INPUT_CLASS =
 type AfastamentoGestao = {
   id: string
   tipo: string
+  congresso_tipo: TipoCongresso | null
   data_inicio: string
   data_fim: string
   observacao: string | null
@@ -101,6 +102,24 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
       .then(setAfastamentos)
       .catch(() => setAfastamentos([]))
   }, [usuario, ehAnestesista])
+
+  // A gestão define ou muda o tipo do congresso a qualquer momento (muda o desconto no BM)
+  async function definirTipoCongresso(id: string, novo: TipoCongresso) {
+    setError("")
+    try {
+      const token = localStorage.getItem("token")
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/afastamentos/${id}/tipo-congresso`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ congresso_tipo: novo }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.error ?? "Não foi possível salvar o tipo do congresso.")
+      setAfastamentos((prev) => (prev ?? []).map((a) => (a.id === id ? { ...a, congresso_tipo: result.congresso_tipo } : a)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar o tipo do congresso.")
+    }
+  }
 
   async function removerAfastamento(id: string) {
     setError("")
@@ -387,6 +406,23 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                           {formatarData(a.data_inicio)}
                           {a.data_fim !== a.data_inicio && ` a ${formatarData(a.data_fim)}`}
                         </p>
+                        {a.tipo === "congresso" && (
+                          <select
+                            aria-label="Tipo do congresso"
+                            value={a.congresso_tipo ?? ""}
+                            onChange={(e) => definirTipoCongresso(a.id, e.target.value as TipoCongresso)}
+                            className={`mt-1 text-xs border rounded-md px-1.5 py-0.5 bg-white ${
+                              a.congresso_tipo ? "border-gray-300 text-gray-700" : "border-amber-300 text-amber-800"
+                            }`}
+                          >
+                            {!a.congresso_tipo && <option value="">Definir tipo</option>}
+                            {TIPOS_CONGRESSO.map((t) => (
+                              <option key={t.valor} value={t.valor}>
+                                {t.rotulo} ({t.desconto})
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         {a.observacao && <p className="text-xs text-gray-500 truncate">{a.observacao}</p>}
                       </div>
                       {a.status === "pendente" && (

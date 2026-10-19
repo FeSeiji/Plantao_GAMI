@@ -2,7 +2,7 @@
 
 import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
-import { Afastamento, afastamentoPendente, rotuloAfastamento } from "./disponibilidade"
+import { Afastamento, afastamentoPendente, avisoAfastamento } from "./disponibilidade"
 import { TURNOS, Turno, formatarTurno, rotuloPosicaoCurto, turnoDaPosicao } from "./posicoes"
 import { formatarIntervalo } from "./trocaPorHoras"
 
@@ -82,10 +82,7 @@ export function BadgeComMarcador({
       title={
         [
           usuario.nome ?? usuario.email,
-          usuario.afastamento &&
-            (afastamentoPendente(usuario.afastamento)
-              ? `Pedido de ${rotuloAfastamento(usuario.afastamento)} aguardando aprovação`
-              : `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`),
+          usuario.afastamento && avisoAfastamento(usuario.afastamento),
           usuario.trocaPendente && "Troca pendente de aceite",
           usuario.cobertura &&
             (usuario.cobertura.ferias

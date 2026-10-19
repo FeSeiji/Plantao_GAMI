@@ -5,8 +5,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const TIPOS_AFASTAMENTO = ['ferias', 'congresso']
 const ROTULO_TIPO = { ferias: 'férias', congresso: 'congresso' }
 
+// Congresso: o médico continua na escala, mas recebe só parte da vaga (pontos ou horas).
+// Congresso sem tipo (cadastrado antes dos tipos) ainda não desconta
+const FATOR_CONGRESSO = { palestrante: 0.8, congressista: 0.6 }
+const TIPOS_CONGRESSO = Object.keys(FATOR_CONGRESSO)
+
 // Só o necessário para o indicador — a observação é visível apenas para o próprio médico
-const CAMPOS_PUBLICOS = 'id, usuario_id, tipo, data_inicio, data_fim, status'
+const CAMPOS_PUBLICOS = 'id, usuario_id, tipo, congresso_tipo, data_inicio, data_fim, status'
 
 // Hoje no fuso do hospital (o servidor roda em UTC), no formato AAAA-MM-DD
 function hojeLocal() {
@@ -36,7 +41,15 @@ async function buscarAfastamentosNoPeriodo(usuarioIds, inicio, fim, { incluirPen
 // Plantões que viram a noite contam pelo dia em que começam.
 function afastamentoEm(afastamentos, usuarioId, data) {
   const a = afastamentos.find(x => x.usuario_id === usuarioId && x.data_inicio <= data && x.data_fim >= data)
-  return a ? { id: a.id, tipo: a.tipo, data_inicio: a.data_inicio, data_fim: a.data_fim, status: a.status } : null
+  return a
+    ? { id: a.id, tipo: a.tipo, congresso_tipo: a.congresso_tipo, data_inicio: a.data_inicio, data_fim: a.data_fim, status: a.status }
+    : null
+}
+
+// Quanto da vaga o médico recebe nesse dia: 1, ou o fator do congresso aprovado (afastamentos = só os aprovados)
+function fatorDoDia(afastamentos, usuarioId, data) {
+  const a = afastamentoEm(afastamentos, usuarioId, data)
+  return a?.tipo === 'congresso' ? FATOR_CONGRESSO[a.congresso_tipo] ?? 1 : 1
 }
 
 // Map usuario_id -> afastamento aprovado, só para quem está afastado nessa data
@@ -58,10 +71,12 @@ async function estaDeFerias(usuarioId, data) {
 
 module.exports = {
   TIPOS_AFASTAMENTO,
+  TIPOS_CONGRESSO,
   ROTULO_TIPO,
   hojeLocal,
   buscarAfastamentosNoPeriodo,
   afastamentoEm,
+  fatorDoDia,
   usuariosAfastados,
   estaDeFerias,
 }

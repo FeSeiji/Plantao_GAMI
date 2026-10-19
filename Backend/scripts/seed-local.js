@@ -181,10 +181,12 @@ async function main() {
     plantao_id: fimDeSemana.plantaoId, posicao: 7, usuario_id: fimDeSemana.folga.id,
   }), 'pedido de vaga')
 
-  // Afastamentos: férias aprovadas (com plantões no período, para aparecer o "!"), congresso pendente e um recusado
+  // Afastamentos: férias aprovadas (com plantões no período, para aparecer o "!"), congresso pendente,
+  // congresso aprovado (desconta no BM) e um recusado
   await ok(supabase.from('afastamentos').insert([
     { usuario_id: carla.id, tipo: 'ferias', data_inicio: diaRelativo(7), data_fim: diaRelativo(13), status: 'aprovado', respondido_por: escritorio, respondido_em: new Date().toISOString() },
-    { usuario_id: daniel.id, tipo: 'congresso', data_inicio: diaRelativo(20), data_fim: diaRelativo(22), observacao: 'Congresso Brasileiro de Anestesiologia', status: 'pendente' },
+    { usuario_id: daniel.id, tipo: 'congresso', congresso_tipo: 'congressista', data_inicio: diaRelativo(20), data_fim: diaRelativo(22), observacao: 'Congresso Brasileiro de Anestesiologia', status: 'pendente' },
+    { usuario_id: ana.id, tipo: 'congresso', congresso_tipo: 'palestrante', data_inicio: diaRelativo(2), data_fim: diaRelativo(3), status: 'aprovado', respondido_por: escritorio, respondido_em: new Date().toISOString() },
     { usuario_id: bruno.id, tipo: 'ferias', data_inicio: diaRelativo(30), data_fim: diaRelativo(40), status: 'recusado', respondido_por: escritorio, respondido_em: new Date().toISOString() },
   ]), 'afastamentos')
 

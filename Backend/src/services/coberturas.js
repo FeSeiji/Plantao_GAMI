@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const { horarioDaVaga, ehVagaDeCoordenador } = require('./posicoes')
+const { fatorDoDia } = require('./afastamentos')
 
 // Troca por horas ("cobertura"): uma troca de plantao_trocas com hora_inicio/hora_fim.
 // Depois de aceita, a vaga continua do titular (usuario_saida) e o convidado (usuario_entrada)
@@ -80,9 +81,17 @@ async function buscarCoberturas(plantaoIds) {
 
 // Quem fez quanto de cada vaga do plantão: o titular fica com o que sobra e quem cobre com o intervalo.
 // Na cobertura de férias os dois ficam com a vaga inteira (fracao 1).
+// afastamentos (aprovados): quem está em congresso recebe só a parte do tipo dele (palestrante 80%, congressista 60%).
 // Retorna [{ usuario_id, posicao, coordenador, fracao, minutos }] — fracao de 0 a 1 da vaga inteira,
 // usada para ratear horas (plantonista) e pontos da posição (sócio).
-function repartirPlantao(plantao, membros, coberturas) {
+function repartirPlantao(plantao, membros, coberturas, afastamentos = []) {
+  return repartirSemDesconto(plantao, membros, coberturas).map(parte => {
+    const fator = fatorDoDia(afastamentos, parte.usuario_id, plantao.data)
+    return fator === 1 ? parte : { ...parte, fracao: parte.fracao * fator, minutos: Math.round(parte.minutos * fator) }
+  })
+}
+
+function repartirSemDesconto(plantao, membros, coberturas) {
   const partes = []
   for (const m of membros) {
     const total = duracaoDaVaga(horarioDaVaga(plantao, m.posicao))
