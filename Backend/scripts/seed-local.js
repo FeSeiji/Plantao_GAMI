@@ -1,5 +1,5 @@
 // Dados de teste para o Supabase LOCAL: usuários de todos os cargos, plantões do mês passado ao mês que vem,
-// trocas, troca por horas, pedido de vaga livre, afastamentos, hospitais, casos fora e fichas.
+// trocas, troca por horas, pedido de vaga livre, afastamentos, hospitais, cirurgiões, casos fora e fichas.
 // Uso (no host, com o Supabase local rodando): npm run db:reset — zera o banco e roda este script.
 const path = require('path')
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
@@ -193,10 +193,15 @@ async function main() {
     { nome: 'Hospital São Lucas', ativo: true }, { nome: 'Hospital Santa Clara', ativo: true }, { nome: 'Hospital Antigo', ativo: false },
   ]).select('id, nome'), 'hospitais')
 
+  // Cirurgiões (um desativado). O caso da Dra. Lívia Prado fica com um nome digitado fora da lista
+  const cirurgioes = await ok(supabase.from('cirurgioes').insert([
+    { nome: 'Dr. Paulo Viana', ativo: true }, { nome: 'Dra. Beatriz Moura', ativo: true }, { nome: 'Dr. Cirurgião Antigo', ativo: false },
+  ]).select('id, nome'), 'cirurgiões')
+
   await ok(supabase.from('casos_fora').insert([
-    { data: diaRelativo(-2), anestesista_id: ana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', paciente_nome: 'Maria da Silva', paciente_cpf: cpfValido('123456789'), cirurgia: 'Colecistectomia', hospital_id: hospitais[0].id, recibo: 'gami', valor: 1200, criado_por: escritorio },
+    { data: diaRelativo(-2), anestesista_id: ana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', cirurgiao_id: cirurgioes[0].id, paciente_nome: 'Maria da Silva', paciente_cpf: cpfValido('123456789'), cirurgia: 'Colecistectomia', hospital_id: hospitais[0].id, recibo: 'gami', valor: 1200, criado_por: escritorio },
     { data: diaRelativo(-5), anestesista_id: igor.id, escalado: true, cirurgiao: 'Dra. Lívia Prado', paciente_nome: 'José Santos', paciente_cpf: cpfValido('987654321'), cirurgia: 'Artroscopia de joelho', hospital_id: hospitais[1].id, recibo: 'sem_recibo', criado_por: escritorio },
-    { data: diaRelativo(-9), anestesista_id: juliana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', paciente_nome: 'Ana Pereira', paciente_cpf: cpfValido('111444777'), cirurgia: 'Herniorrafia', recibo: 'pessoal', valor: 850.5, comentarios: 'Paciente particular', criado_por: juliana.id },
+    { data: diaRelativo(-9), anestesista_id: juliana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', cirurgiao_id: cirurgioes[0].id, paciente_nome: 'Ana Pereira', paciente_cpf: cpfValido('111444777'), cirurgia: 'Herniorrafia', recibo: 'pessoal', valor: 850.5, comentarios: 'Paciente particular', criado_por: juliana.id },
   ]), 'casos fora')
 
   // Fichas anestésicas (sem foto): uma com um anestesista, outra virando a noite com dois

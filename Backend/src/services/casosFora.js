@@ -2,7 +2,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const CAMPOS = 'id, data, anestesista_id, escalado, cirurgiao, paciente_nome, paciente_cpf, cirurgia, hospital_id, recibo, valor, comentarios, criado_por, criado_em, atualizado_por, atualizado_em'
+const CAMPOS = 'id, data, anestesista_id, escalado, cirurgiao, cirurgiao_id, paciente_nome, paciente_cpf, cirurgia, hospital_id, recibo, valor, comentarios, criado_por, criado_em, atualizado_por, atualizado_em'
 
 // Casos fora do período, já com anestesista, hospital e autores preenchidos.
 // Usado pela tela de casos fora e pelo BM Financeiro.
@@ -21,9 +21,10 @@ async function listarCasosFora({ inicio, fim, anestesista_id } = {}) {
   const { data, error } = await query
   if (error) throw error
 
-  const [perfis, hospitais] = await Promise.all([
+  const [perfis, hospitais, cirurgioes] = await Promise.all([
     buscarPerfis(data.flatMap(c => [c.anestesista_id, c.criado_por, c.atualizado_por])),
-    buscarHospitais(data.map(c => c.hospital_id)),
+    buscarCadastro('hospitais', data.map(c => c.hospital_id)),
+    buscarCadastro('cirurgioes', data.map(c => c.cirurgiao_id)),
   ])
 
   const pessoa = id => (id ? perfis.get(id) ?? { id } : null)
@@ -31,7 +32,8 @@ async function listarCasosFora({ inicio, fim, anestesista_id } = {}) {
     id: c.id,
     data: c.data,
     escalado: c.escalado,
-    cirurgiao: c.cirurgiao,
+    // Cirurgião da lista aparece com o nome atual (o escritório pode ter renomeado); de fora, como foi digitado
+    cirurgiao: cirurgioes.get(c.cirurgiao_id)?.nome ?? c.cirurgiao,
     paciente_nome: c.paciente_nome,
     paciente_cpf: c.paciente_cpf,
     cirurgia: c.cirurgia,
@@ -62,12 +64,13 @@ async function buscarPerfis(usuarioIds) {
   return new Map(data.map(perfil => [perfil.id, perfil]))
 }
 
-async function buscarHospitais(hospitalIds) {
-  const idsUnicos = [...new Set(hospitalIds.filter(Boolean))]
+// Hospitais ou cirurgiões pelos ids (as duas tabelas têm id, nome e ativo)
+async function buscarCadastro(tabela, ids) {
+  const idsUnicos = [...new Set(ids.filter(Boolean))]
   if (idsUnicos.length === 0) return new Map()
 
   const { data, error } = await supabase
-    .from('hospitais')
+    .from(tabela)
     .select('id, nome, ativo')
     .in('id', idsUnicos)
 

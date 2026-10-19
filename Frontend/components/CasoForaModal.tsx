@@ -9,6 +9,7 @@ import { apiFetch } from "./sessao"
 import { Pessoa } from "./fichas"
 import {
   CasoFora,
+  Cirurgiao,
   Hospital,
   MAX_COMENTARIOS,
   MAX_TEXTO,
@@ -70,6 +71,7 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
 
   const [anestesistas, setAnestesistas] = useState<Pessoa[]>([])
   const [hospitais, setHospitais] = useState<Hospital[]>([])
+  const [cirurgioes, setCirurgioes] = useState<Cirurgiao[]>([])
 
   const [error, setError] = useState("")
   const [salvando, setSalvando] = useState(false)
@@ -102,17 +104,23 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
     } catch {}
   }, [caso])
 
-  // Listas dos dropdowns: médicos (sócios e plantonistas) e hospitais
+  // Listas dos dropdowns: médicos (sócios e plantonistas) e hospitais; e as sugestões de cirurgião
   useEffect(() => {
     if (!editando) return
     const params = new URLSearchParams({ role: ROLES_ANESTESISTA.join(",") })
-    Promise.all([chamarApi(`/users?${params}`), chamarApi("/hospitais")])
-      .then(async ([resUsuarios, resHospitais]) => {
-        const [usuarios, listaHospitais] = await Promise.all([resUsuarios.json(), resHospitais.json()])
+    Promise.all([chamarApi(`/users?${params}`), chamarApi("/hospitais"), chamarApi("/cirurgioes")])
+      .then(async ([resUsuarios, resHospitais, resCirurgioes]) => {
+        const [usuarios, listaHospitais, listaCirurgioes] = await Promise.all([
+          resUsuarios.json(),
+          resHospitais.json(),
+          resCirurgioes.json(),
+        ])
         if (!resUsuarios.ok) throw new Error(usuarios.error ?? "Não foi possível carregar os anestesistas.")
         if (!resHospitais.ok) throw new Error(listaHospitais.error ?? "Não foi possível carregar os hospitais.")
+        if (!resCirurgioes.ok) throw new Error(listaCirurgioes.error ?? "Não foi possível carregar os cirurgiões.")
         setAnestesistas([...usuarios].sort((a: Pessoa, b: Pessoa) => nomeDe(a).localeCompare(nomeDe(b), "pt-BR")))
         setHospitais(listaHospitais)
+        setCirurgioes(listaCirurgioes)
       })
       .catch((err) => setError(err.message))
   }, [editando])
@@ -247,15 +255,27 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
         <label htmlFor="casoCirurgiao" className={LABEL_CLASS}>
           Cirurgião
         </label>
+        {/* list + datalist: o navegador sugere os nomes da lista enquanto digita, mas aceita qualquer nome.
+            Quem liga o caso ao cirurgião da lista é o backend, comparando o nome */}
         <input
           id="casoCirurgiao"
           type="text"
           required
+          list="casoCirurgiaoSugestoes"
+          autoComplete="off"
           maxLength={MAX_TEXTO}
           value={cirurgiao}
           onChange={(e) => setCirurgiao(e.target.value)}
           className={INPUT_CLASS}
         />
+        <datalist id="casoCirurgiaoSugestoes">
+          {cirurgioes
+            .filter((c) => c.ativo)
+            .map((c) => (
+              <option key={c.id} value={c.nome ?? ""} />
+            ))}
+        </datalist>
+        <p className="text-xs text-gray-400 mt-1">Escolha da lista ou digite o nome, se ele não estiver nela.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_11rem] gap-4">
