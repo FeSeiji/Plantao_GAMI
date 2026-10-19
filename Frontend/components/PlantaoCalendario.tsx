@@ -62,12 +62,15 @@ export function doTurno(plantao: Plantao, turno: Turno) {
 // "!" de afastamento aprovado ou "?" de pedido pendente, a sigla de quem cobre a troca por horas
 // e a posição na fila ou na equipe.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
+// data: o dia do plantão, porque o nome da vaga muda no fim de semana
 export function BadgeComMarcador({
   usuario,
+  data,
   size = "sm",
   mostrarPosicao = true,
 }: {
   usuario: Usuario
+  data: string
   size?: "sm" | "responsivo"
   mostrarPosicao?: boolean
 }) {
@@ -112,7 +115,7 @@ export function BadgeComMarcador({
       {/* O coordenador já tem o anel; os demais mostram a vaga */}
       {mostrarPosicao && usuario.posicao != null && !usuario.coordenador && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          {rotuloPosicaoCurto(usuario.posicao)}
+          {rotuloPosicaoCurto(data, usuario.posicao)}
         </span>
       )}
     </div>
@@ -200,7 +203,7 @@ function SiglasDoTurno({ plantao, turno }: { plantao: Plantao; turno: Turno }) {
       {usuarios.length === 0 ? (
         <SiglaBadge sigla={null} size="sm" />
       ) : (
-        usuarios.map((u) => <BadgeComMarcador key={u.posicao} usuario={u} />)
+        usuarios.map((u) => <BadgeComMarcador key={u.posicao} usuario={u} data={plantao.data} />)
       )}
     </div>
   )
@@ -497,7 +500,7 @@ export default function PlantaoCalendario({
                             >
                               <div className="hidden sm:flex -space-x-1 shrink-0">
                                 {usuarios.slice(0, 3).map((u) => (
-                                  <BadgeComMarcador key={u.posicao} usuario={u} />
+                                  <BadgeComMarcador key={u.posicao} usuario={u} data={plantao.data} />
                                 ))}
                               </div>
                               {usuarios.length > 3 && (

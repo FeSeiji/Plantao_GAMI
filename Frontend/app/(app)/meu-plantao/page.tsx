@@ -12,9 +12,10 @@ import {
 import {
   TURNOS,
   formatarTurno,
+  linhasDoTurno,
   rotuloPosicao,
   rotuloPosicaoCurto,
-  vagasDoTurno,
+  vagaNaoExisteNoDia,
 } from "../../../components/posicoes"
 import { apiFetch } from "../../../components/sessao"
 
@@ -188,29 +189,39 @@ export default function MeuPlantaoPage() {
                     {formatarTurno(turno.valor)}
                   </td>
                 </tr>
-                {vagasDoTurno(turno.valor).map((posicao) => (
+                {linhasDoTurno(turno.valor).map(({ posicao, rotulo, curto }) => (
                   <tr
                     key={posicao}
                     // Linha separando os coordenadores do resto do diurno
                     className={`border-b border-gray-100 ${posicao === 3 ? "border-t-2 border-t-gray-200" : ""}`}
                   >
                     <td className="py-2 text-center text-xs font-semibold text-gray-400">
-                      <span className="sm:hidden">{rotuloPosicaoCurto(posicao)}</span>
-                      <span className="hidden sm:inline">{rotuloPosicao(posicao)}</span>
+                      <span className="sm:hidden">{curto}</span>
+                      <span className="hidden sm:inline">{rotulo}</span>
                     </td>
                     {dias.map((dia) => {
                       const chave = formatarDataLocal(dia)
                       const plantao = plantaoPorDia.get(chave)
                       const usuario = plantao?.usuarios.find((u) => u.posicao === posicao)
+                      // No fim de semana o 7º não existe e outras vagas mudam de nome (o 2º vira a manhã)
+                      const semVaga = vagaNaoExisteNoDia(chave, posicao)
+                      const outroNome = !semVaga && rotuloPosicao(chave, posicao) !== rotulo
                       return (
                         // A célula inteira abre o plantão, inclusive o espaço em volta da sigla e as vagas vazias
                         <td
                           key={chave}
                           onClick={plantao ? () => setPlantaoSelecionado(plantao) : undefined}
-                          className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : ""} ${
+                          className={`py-2 text-center ${chave === hoje ? "bg-brand-50" : semVaga && plantao ? "bg-gray-50" : ""} ${
                             plantao ? `cursor-pointer ${chave === hoje ? "hover:bg-brand-100" : "hover:bg-gray-50"}` : ""
                           }`}
+                          title={semVaga ? "Essa vaga não existe no fim de semana" : undefined}
                         >
+                          {outroNome && (
+                            <span className="block text-[9px] leading-none font-semibold text-gray-400 mb-0.5">
+                              <span className="sm:hidden">{rotuloPosicaoCurto(chave, posicao)}</span>
+                              <span className="hidden sm:inline">{rotuloPosicao(chave, posicao)}</span>
+                            </span>
+                          )}
                           {usuario ? (
                             // Sem onClick próprio: o clique (ou Enter pelo teclado) sobe para a célula
                             <button
@@ -222,9 +233,9 @@ export default function MeuPlantaoPage() {
                               }`}
                             >
                               {/* Mesmos indicadores do calendário; a vaga já é a linha da tabela */}
-                              <BadgeComMarcador usuario={usuario} size="responsivo" mostrarPosicao={false} />
+                              <BadgeComMarcador usuario={usuario} data={chave} size="responsivo" mostrarPosicao={false} />
                             </button>
-                          ) : plantao ? (
+                          ) : plantao && !semVaga ? (
                             <span className="text-gray-300">—</span>
                           ) : null}
                         </td>

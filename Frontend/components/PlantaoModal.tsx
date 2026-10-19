@@ -19,10 +19,9 @@ import { EVENTO_TROCAS_ATUALIZADAS } from "./NotificacaoTrocaSino";
 import {
   TURNOS,
   Turno,
-  VAGAS,
   descreverPosicao,
   ehVagaDeCoordenador,
-  formatarTurno,
+  formatarTurnoDoDia,
   horarioDaVaga,
   rotuloPosicaoAbreviado,
   turnoDaPosicao,
@@ -621,7 +620,7 @@ export default function PlantaoModal({
       mensagem: (
         <p>
           Você pede a vaga de{" "}
-          <span className="font-semibold">{descreverPosicao(posicao)}</span> neste
+          <span className="font-semibold">{descreverPosicao(plantao.data, posicao)}</span> neste
           plantão. Você entra na escala quando a gestão aprovar.
         </p>
       ),
@@ -644,7 +643,7 @@ export default function PlantaoModal({
       titulo: "Cancelar pedido?",
       mensagem: (
         <p>
-          O seu pedido da vaga de {descreverPosicao(pedido.posicao)} é cancelado.
+          O seu pedido da vaga de {descreverPosicao(plantao.data, pedido.posicao)} é cancelado.
         </p>
       ),
       rotuloConfirmar: "Cancelar pedido",
@@ -857,7 +856,7 @@ export default function PlantaoModal({
           <p>
             <span className="font-semibold">{nomeDe(u)}</span> será removido
             deste plantão
-            {u.posicao != null ? ` (${descreverPosicao(u.posicao)})` : ""}
+            {u.posicao != null ? ` (${descreverPosicao(plantao.data, u.posicao)})` : ""}
             . A remoção fica registrada no histórico.
           </p>
           {u.trocaPendente && (
@@ -922,7 +921,7 @@ export default function PlantaoModal({
       ? editavel
       : podeMudarPosicao && estouEscalado;
 
-    let rotulo: React.ReactNode = rotuloPosicaoAbreviado(posicao);
+    let rotulo: React.ReactNode = rotuloPosicaoAbreviado(plantao.data, posicao);
     if (!pendente && !u.cobertura && mostraSeletorPosicao) {
       rotulo = (
         <select
@@ -933,10 +932,10 @@ export default function PlantaoModal({
         >
           {TURNOS.map((t) => (
             <optgroup key={t.valor} label={t.rotulo}>
-              {VAGAS.filter((v) => v.turno === t.valor).map((v) => (
-                <option key={v.posicao} value={v.posicao}>
-                  {rotuloPosicaoAbreviado(v.posicao)}
-                  {v.posicao !== posicao && selecionados.some((o) => o.posicao === v.posicao)
+              {vagasDoTurno(t.valor, plantao.data, [posicao]).map((p) => (
+                <option key={p} value={p}>
+                  {rotuloPosicaoAbreviado(plantao.data, p)}
+                  {p !== posicao && selecionados.some((o) => o.posicao === p)
                     ? " (trocar)"
                     : ""}
                 </option>
@@ -1017,7 +1016,7 @@ export default function PlantaoModal({
     const base = {
       tipo: "vazia" as const,
       chave: `vaga-${p}`,
-      rotulo: rotuloPosicaoAbreviado(p),
+      rotulo: rotuloPosicaoAbreviado(plantao.data, p),
       texto: "Vaga livre",
       ativa: adicionando?.posicao === p,
     };
@@ -1087,7 +1086,8 @@ export default function PlantaoModal({
   }
 
   function montarCelulas(turno: Turno, editavel: boolean): CelulaGrade[] {
-    return vagasDoTurno(turno).map((p): CelulaGrade => {
+    const ocupadas = selecionados.flatMap((s) => (s.posicao != null ? [s.posicao] : []));
+    return vagasDoTurno(turno, plantao.data, ocupadas).map((p): CelulaGrade => {
       const u = selecionados.find((s) => s.posicao === p);
       if (u) return celulaMedico(u, editavel);
       return celulaVazia(p, turno, editavel);
@@ -1113,7 +1113,7 @@ export default function PlantaoModal({
           className="text-xs font-semibold text-brand-700"
         >
           {pedindoVagaParaMim ? "Pedir a vaga de" : "Substituir"}{" "}
-          {nomeDe(usuarioTrocando)} ({descreverPosicao(trocandoPosicao!)})
+          {nomeDe(usuarioTrocando)} ({descreverPosicao(plantao.data, trocandoPosicao!)})
         </label>
         <button
           type="button"
@@ -1291,7 +1291,7 @@ export default function PlantaoModal({
         {!editando && (
           <p className="text-gray-400 text-sm mb-6">
             {new Date(`${plantao.data}T00:00:00`).toLocaleDateString("pt-BR")} ·{" "}
-            {TURNOS.map((t) => `${t.rotulo} ${formatarTurno(t.valor)}`).join(" · ")}
+            {TURNOS.map((t) => `${t.rotulo} ${formatarTurnoDoDia(t.valor, plantao.data)}`).join(" · ")}
           </p>
         )}
 
@@ -1352,7 +1352,7 @@ export default function PlantaoModal({
                 <div key={t.valor}>
                   <p className="block text-sm font-medium text-gray-700 mb-2">
                     {t.rotulo}{" "}
-                    <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                    <span className="font-normal text-gray-400">· {formatarTurnoDoDia(t.valor, plantao.data)}</span>
                   </p>
 
                   <GradeParticipantes celulas={montarCelulas(t.valor, true)} />
@@ -1364,7 +1364,7 @@ export default function PlantaoModal({
                           htmlFor="buscaUsuario"
                           className="text-xs font-semibold text-brand-700"
                         >
-                          Adicionar: {descreverPosicao(adicionando.posicao)}
+                          Adicionar: {descreverPosicao(plantao.data, adicionando.posicao)}
                         </label>
                         <button
                           type="button"
@@ -1462,7 +1462,7 @@ export default function PlantaoModal({
               <div key={t.valor}>
                 <p className="text-sm font-medium text-gray-700 mb-2">
                   {t.rotulo}{" "}
-                  <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                  <span className="font-normal text-gray-400">· {formatarTurnoDoDia(t.valor, plantao.data)}</span>
                 </p>
                 <GradeParticipantes celulas={montarCelulas(t.valor, false)} />
                 {trocandoPosicao != null && turnoDaPosicao(trocandoPosicao) === t.valor && painelTroca}
@@ -1499,7 +1499,7 @@ export default function PlantaoModal({
                   const papel = r.eraCoordenador
                     ? " (coordenador)"
                     : r.posicao != null
-                      ? ` (${descreverPosicao(r.posicao)})`
+                      ? ` (${descreverPosicao(plantao.data, r.posicao)})`
                       : "";
                   return (
                     <li
@@ -1541,12 +1541,12 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` (${descreverPosicao(m.posicaoAnterior)})`}{" "}
+                              ` (${descreverPosicao(plantao.data, m.posicaoAnterior)})`}{" "}
                             com{" "}
                             <span className="font-semibold">
                               {nomeDe(m.usuarioTrocado)}
                             </span>{" "}
-                            ({descreverPosicao(m.posicaoNova)})
+                            ({descreverPosicao(plantao.data, m.posicaoNova)})
                           </>
                         ) : (
                           <>
@@ -1555,8 +1555,8 @@ export default function PlantaoModal({
                               {nomeDe(m.usuario)}
                             </span>
                             {m.posicaoAnterior != null &&
-                              ` de ${descreverPosicao(m.posicaoAnterior)}`}{" "}
-                            para {descreverPosicao(m.posicaoNova)}
+                              ` de ${descreverPosicao(plantao.data, m.posicaoAnterior)}`}{" "}
+                            para {descreverPosicao(plantao.data, m.posicaoNova)}
                           </>
                         )}{" "}
                         em {new Date(m.alteradoEm).toLocaleString("pt-BR")}
@@ -1582,7 +1582,7 @@ export default function PlantaoModal({
                       <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cor}`} />
                       <span>
                         <span className="font-semibold">{nomeDe(pd.usuario)}</span>{" "}
-                        pediu a vaga ({descreverPosicao(pd.posicao)}) em{" "}
+                        pediu a vaga ({descreverPosicao(plantao.data, pd.posicao)}) em{" "}
                         {quando(pd.solicitadoEm)}
                         {pd.status === "pendente" && " — aguardando aprovação"}
                         {pd.status !== "pendente" && pd.respondidoEm && (
@@ -1623,7 +1623,7 @@ export default function PlantaoModal({
                       <span className="font-semibold">
                         {nomeDe(t.usuarioSaida)}
                       </span>
-                      {t.posicao != null && ` (${descreverPosicao(t.posicao)})`}{" "}
+                      {t.posicao != null && ` (${descreverPosicao(plantao.data, t.posicao)})`}{" "}
                       por{" "}
                       <span className="font-semibold">
                         {nomeDe(t.usuarioEntrada)}

@@ -6,7 +6,7 @@ const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastad
 
 const { ehGestao } = require('../middleware/auth')
 const {
-  TURNOS, POSICOES, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou,
+  POSICOES, vagaExisteNoDia, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou,
 } = require('../services/posicoes')
 const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
 const { usuariosComConflito } = require('../services/conflitos')
@@ -144,6 +144,10 @@ exports.updatePlantao = async (req, res) => {
         return res.status(400).json({ error: 'Esse plantão tem troca por horas valendo. Cancele-a antes de mudar o dia.' })
       }
 
+      if (atual.plantao_usuarios.some(u => !vagaExisteNoDia(data, u.posicao))) {
+        return res.status(400).json({ error: 'A vaga do 7º não existe no fim de semana. Esvazie-a antes de mudar o dia.' })
+      }
+
       // As vagas atuais ainda estão no dia antigo e não contam como conflito
       const ignorar = atual.plantao_usuarios.map(u => ({ plantao_id: atual.id, posicao: u.posicao }))
       await validarHorariosLivres(atual.plantao_usuarios, data, { ignorar })
@@ -243,6 +247,9 @@ exports.alterarPosicao = async (req, res) => {
 
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+  if (!vagaExisteNoDia(plantao.data, nova_posicao)) {
+    return res.status(400).json({ error: 'Essa vaga não existe no fim de semana' })
+  }
 
   // Fora da gestão, só quem está escalado nesse plantão mexe nas posições dele
   if (!ehGestao(req.user) && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
@@ -272,8 +279,13 @@ exports.alterarPosicao = async (req, res) => {
     })
   }
 
-  // Entre o diurno e o noturno, cada um precisa estar livre no turno para onde vai
-  if (turnoDaPosicao(posicao) !== turnoDaPosicao(nova_posicao)) {
+  // Entre vagas de horários diferentes (o diurno e o noturno, ou a manhã do fim de semana), cada um precisa
+  // estar livre no horário para onde vai
+  const horario = p => {
+    const { hora_inicio, hora_fim } = horarioDaVaga(plantao, p)
+    return `${hora_inicio}-${hora_fim}`
+  }
+  if (horario(posicao) !== horario(nova_posicao)) {
     const indo = [{ usuario_id: membro.usuario_id, posicao: nova_posicao }]
     if (ocupante) indo.push({ usuario_id: ocupante.usuario_id, posicao })
     const ignorar = [{ plantao_id: plantao.id, posicao }, { plantao_id: plantao.id, posicao: nova_posicao }]
@@ -681,6 +693,9 @@ exports.pedirVaga = async (req, res) => {
   if (plantaoError) return res.status(500).json({ error: plantaoError.message })
   if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
 
+  if (!vagaExisteNoDia(plantao.data, posicao)) {
+    return res.status(400).json({ error: 'Essa vaga não existe no fim de semana' })
+  }
   if (plantao.plantao_usuarios.some(u => u.posicao === posicao)) {
     return res.status(400).json({ error: 'Essa vaga já está ocupada' })
   }
@@ -908,6 +923,9 @@ async function validarFila(fila, { data }) {
   if (fila.some(f => !f?.usuario_id || !POSICOES.includes(f.posicao))) {
     throw new Error(`cada item da fila precisa de usuario_id e posicao (vaga de 1 a ${POSICOES.length})`)
   }
+  if (fila.some(f => !vagaExisteNoDia(data, f.posicao))) {
+    throw new Error('A vaga do 7º não existe no fim de semana')
+  }
 
   const posicoes = fila.map(f => f.posicao)
   if (new Set(posicoes).size !== posicoes.length) {
@@ -933,11 +951,17 @@ async function validarFila(fila, { data }) {
 
 // Erro se algum médico já estiver ocupado no horário da vaga que vai ocupar nesse dia
 async function validarHorariosLivres(membros, data, { ignorar = [] } = {}) {
+  // Uma consulta por horário: o diurno, o noturno e, no fim de semana, a manhã
+  const porHorario = new Map()
+  for (const m of membros) {
+    const horario = horarioDaVaga({ data }, m.posicao)
+    const chave = `${horario.hora_inicio}-${horario.hora_fim}`
+    if (!porHorario.has(chave)) porHorario.set(chave, { horario, ids: [] })
+    porHorario.get(chave).ids.push(m.usuario_id)
+  }
   const ocupados = new Set()
-  for (const [turno, horario] of Object.entries(TURNOS)) {
-    const ids = membros.filter(m => turnoDaPosicao(m.posicao) === turno).map(m => m.usuario_id)
-    if (ids.length === 0) continue
-    for (const id of await usuariosComConflito(ids, { data, ...horario }, { ignorar })) ocupados.add(id)
+  for (const { horario, ids } of porHorario.values()) {
+    for (const id of await usuariosComConflito(ids, horario, { ignorar })) ocupados.add(id)
   }
   if (ocupados.size === 0) return
 

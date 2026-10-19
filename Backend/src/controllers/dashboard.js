@@ -29,10 +29,15 @@ function doTurno(plantao, turno) {
   }
 }
 
+// Uma vaga como linha da agenda: o turno dela, mas com o horário da vaga (a manhã do fim de semana acaba às 13h)
+function daVaga(plantao, posicao) {
+  return { ...doTurno(plantao, turnoDaPosicao(posicao)), ...horarioDaVaga(plantao, posicao) }
+}
+
 // Cada vaga minha vira uma linha (quem faz o diurno e o noturno do mesmo dia tem duas), com "eu" = essa vaga
 function minhasVagas(plantoes) {
   return plantoes.flatMap(({ eu, ...plantao }) =>
-    eu.map(vaga => ({ ...doTurno(plantao, turnoDaPosicao(vaga.posicao)), eu: [vaga] }))
+    eu.map(vaga => ({ ...daVaga(plantao, vaga.posicao), eu: [vaga] }))
   )
 }
 
@@ -106,7 +111,7 @@ exports.resumo = async (req, res) => {
       const slot = c.plantoes.plantao_usuarios.find(u => u.posicao === c.posicao && u.usuario_id === c.usuario_saida)
       if (!slot) return null
       return {
-        ...doTurno(c.plantoes, turnoDaPosicao(c.posicao)),
+        ...daVaga(c.plantoes, c.posicao),
         eu: [slot],
         cobertura: { titular: c.usuario_saida, hora_inicio: c.hora_inicio, hora_fim: c.hora_fim },
       }
