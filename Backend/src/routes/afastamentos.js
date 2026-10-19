@@ -2,12 +2,13 @@ const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
 const {
-  listarMeus, listarDoUsuario, listarPendentes, criar, remover, responder, definirTipoCongresso,
+  listarMeus, listarDoUsuario, listarPendentes, listarTodos, criar, remover, responder, definirTipoCongresso,
 } = require('../controllers/afastamentos')
 
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
 
 // Férias e congressos: o médico pede, a gestão aprova ou recusa. Só o aprovado bloqueia a escala.
+router.get('/', gestao, listarTodos)
 router.get('/me', listarMeus)
 router.get('/pendentes', gestao, listarPendentes)
 router.get('/usuario/:usuarioId', gestao, listarDoUsuario)
