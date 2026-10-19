@@ -97,7 +97,7 @@ exports.remover = async (req, res) => {
 // atual: na edição, o caso pode continuar num hospital ou cirurgião que foi desativado depois
 async function validarCampos(body, atual = {}) {
   const {
-    data, anestesista_id, escalado, cirurgiao, paciente_nome, paciente_cpf, cirurgia,
+    data, anestesista_id, segundo_anestesista_id, escalado, cirurgiao, paciente_nome, paciente_cpf, cirurgia,
     hospital_id, recibo, valor, comentarios,
   } = body ?? {}
 
@@ -140,15 +140,17 @@ async function validarCampos(body, atual = {}) {
   const cirurgiaoDaLista = await buscarCirurgiao(textos.cirurgiao, atual.cirurgiao_id)
 
   if (!anestesista_id) throw new Error('anestesista_id é obrigatório')
-  const { data: auth, error } = await supabase.auth.admin.getUserById(anestesista_id)
-  if (error || !auth?.user) throw new Error('Anestesista não encontrado')
-  if (!(auth.user.app_metadata?.roles ?? []).some(r => ROLES_ANESTESISTA.includes(r))) {
-    throw new Error('O anestesista precisa ser um médico (sócio ou plantonista)')
+  await validarAnestesista(anestesista_id, 'O anestesista')
+  // Segundo anestesista: opcional (o caso tem no máximo dois)
+  if (segundo_anestesista_id) {
+    if (segundo_anestesista_id === anestesista_id) throw new Error('Escolha dois anestesistas diferentes')
+    await validarAnestesista(segundo_anestesista_id, 'O segundo anestesista')
   }
 
   return {
     data,
     anestesista_id,
+    segundo_anestesista_id: segundo_anestesista_id || null,
     escalado,
     ...textos,
     // Nome da lista liga o caso ao cirurgião (e fica escrito como na lista); nome de fora fica só como texto
@@ -159,6 +161,14 @@ async function validarCampos(body, atual = {}) {
     recibo: recibo ?? null,
     valor: valorNormalizado,
     comentarios: String(comentarios ?? '').trim().slice(0, MAX_COMENTARIOS) || null,
+  }
+}
+
+async function validarAnestesista(id, rotulo) {
+  const { data: auth, error } = await supabase.auth.admin.getUserById(id)
+  if (error || !auth?.user) throw new Error(`${rotulo} não foi encontrado`)
+  if (!(auth.user.app_metadata?.roles ?? []).some(r => ROLES_ANESTESISTA.includes(r))) {
+    throw new Error(`${rotulo} precisa ser um médico (sócio ou plantonista)`)
   }
 }
 

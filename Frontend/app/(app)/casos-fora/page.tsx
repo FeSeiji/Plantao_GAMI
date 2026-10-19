@@ -6,7 +6,7 @@ import SiglaBadge from "../../../components/SiglaBadge"
 import CasoForaModal from "../../../components/CasoForaModal"
 import CadastroNomesModal from "../../../components/CadastroNomesModal"
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
-import { CasoFora, formatarValor } from "../../../components/casosFora"
+import { CasoFora, anestesistasDe, formatarValor } from "../../../components/casosFora"
 import { apiFetch } from "../../../components/sessao"
 
 // Quem registra casos — mesma lista do requireRole em Backend/src/routes/casosFora.js
@@ -99,12 +99,12 @@ export default function CasosForaPage() {
     carregar()
   }, [carregar])
 
-  // O filtro de anestesista é feito aqui mesmo, pelo nome ou pela sigla
+  // O filtro de anestesista é feito aqui mesmo, pelo nome ou pela sigla de qualquer um dos dois
   const visiveis = useMemo(() => {
     const termo = buscaAnestesista.trim().toLowerCase()
     if (!termo) return casos
     return casos.filter((c) =>
-      [c.anestesista.nome, c.anestesista.sigla, c.anestesista.email].some((v) => v?.toLowerCase().includes(termo)),
+      anestesistasDe(c).some((a) => [a.nome, a.sigla, a.email].some((v) => v?.toLowerCase().includes(termo))),
     )
   }, [casos, buscaAnestesista])
 
@@ -194,9 +194,16 @@ export default function CasosForaPage() {
                 </td>
                 <td className="px-4 py-3 max-w-0 w-full sm:max-w-none sm:w-auto">
                   <div className="flex items-center gap-2">
-                    <SiglaBadge sigla={c.anestesista.sigla} size="sm" />
+                    {/* Siglas sobrepostas, uma por anestesista do caso */}
+                    <div className="flex shrink-0 -space-x-1.5">
+                      {anestesistasDe(c).map((a) => (
+                        <span key={a.id} className="rounded-full ring-2 ring-white">
+                          <SiglaBadge sigla={a.sigla} size="sm" />
+                        </span>
+                      ))}
+                    </div>
                     <div className="min-w-0">
-                      <p className="text-gray-800 truncate">{nomeDe(c.anestesista)}</p>
+                      <p className="text-gray-800 truncate">{anestesistasDe(c).map(nomeDe).join(" e ")}</p>
                       {/* No celular o paciente aparece aqui, já que a coluna fica escondida */}
                       <p className="text-xs text-gray-500 truncate sm:hidden">{c.paciente_nome}</p>
                     </div>

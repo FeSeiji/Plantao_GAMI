@@ -15,6 +15,7 @@ import {
   MAX_TEXTO,
   RECIBOS,
   Recibo,
+  anestesistasDe,
   cpfValido,
   formatarCpf,
   formatarValor,
@@ -61,6 +62,7 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
 
   const [data, setData] = useState(hojeLocal())
   const [anestesistaId, setAnestesistaId] = useState("")
+  const [segundoAnestesistaId, setSegundoAnestesistaId] = useState("")
   const [escalado, setEscalado] = useState<boolean | null>(null)
   const [cirurgiao, setCirurgiao] = useState("")
   const [pacienteNome, setPacienteNome] = useState("")
@@ -84,6 +86,7 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
   function preencher(c: CasoFora) {
     setData(c.data)
     setAnestesistaId(c.anestesista.id)
+    setSegundoAnestesistaId(c.segundoAnestesista?.id ?? "")
     setEscalado(c.escalado)
     setCirurgiao(c.cirurgiao)
     setPacienteNome(c.paciente_nome)
@@ -146,6 +149,7 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
     e.preventDefault()
     setError("")
     if (!anestesistaId) return setError("Escolha o anestesista.")
+    if (segundoAnestesistaId === anestesistaId) return setError("Escolha dois anestesistas diferentes.")
     if (escalado === null) return setError("Informe se o anestesista estava escalado.")
     if (!cpfValido(pacienteCpf)) return setError("CPF do paciente inválido.")
 
@@ -154,6 +158,7 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
       const corpo = {
         data,
         anestesista_id: anestesistaId,
+        segundo_anestesista_id: segundoAnestesistaId || null,
         escalado,
         cirurgiao: cirurgiao.trim(),
         paciente_nome: pacienteNome.trim(),
@@ -207,8 +212,8 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
     return c.ativo && nome.includes(termoCirurgiao) && nome !== termoCirurgiao
   })
   // Médico que deixou de ser anestesista continua aparecendo no caso antigo
-  const opcoesAnestesista =
-    caso && !anestesistas.some((a) => a.id === caso.anestesista.id) ? [caso.anestesista, ...anestesistas] : anestesistas
+  const antigos = caso ? anestesistasDe(caso).filter((p) => !anestesistas.some((a) => a.id === p.id)) : []
+  const opcoesAnestesista = [...antigos, ...anestesistas]
 
   const formulario = (
     <div className="space-y-4">
@@ -245,25 +250,48 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
         </div>
       </div>
 
-      <div>
-        <label htmlFor="casoAnestesista" className={LABEL_CLASS}>
-          Anestesista
-        </label>
-        <select
-          id="casoAnestesista"
-          required
-          value={anestesistaId}
-          onChange={(e) => setAnestesistaId(e.target.value)}
-          className={INPUT_CLASS}
-        >
-          <option value="">Escolher</option>
-          {opcoesAnestesista.map((a) => (
-            <option key={a.id} value={a.id}>
-              {nomeDe(a)}
-              {a.sigla ? ` (${a.sigla})` : ""}
-            </option>
-          ))}
-        </select>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label htmlFor="casoAnestesista" className={LABEL_CLASS}>
+            Anestesista
+          </label>
+          <select
+            id="casoAnestesista"
+            required
+            value={anestesistaId}
+            onChange={(e) => setAnestesistaId(e.target.value)}
+            className={INPUT_CLASS}
+          >
+            <option value="">Escolher</option>
+            {opcoesAnestesista.map((a) => (
+              <option key={a.id} value={a.id}>
+                {nomeDe(a)}
+                {a.sigla ? ` (${a.sigla})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="casoSegundoAnestesista" className={LABEL_CLASS}>
+            2º anestesista <span className="font-normal text-gray-400">(opcional)</span>
+          </label>
+          <select
+            id="casoSegundoAnestesista"
+            value={segundoAnestesistaId}
+            onChange={(e) => setSegundoAnestesistaId(e.target.value)}
+            className={INPUT_CLASS}
+          >
+            <option value="">Nenhum</option>
+            {opcoesAnestesista
+              .filter((a) => a.id !== anestesistaId)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {nomeDe(a)}
+                  {a.sigla ? ` (${a.sigla})` : ""}
+                </option>
+              ))}
+          </select>
+        </div>
       </div>
 
       <div>
@@ -433,10 +461,14 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-sm">
       <Campo rotulo="Data">{formatarData(caso.data)}</Campo>
       <Campo rotulo="Escalado">{caso.escalado ? "Sim" : "Não"}</Campo>
-      <Campo rotulo="Anestesista" largo>
-        <span className="flex items-center gap-2">
-          <SiglaBadge sigla={caso.anestesista.sigla} size="sm" />
-          {nomeDe(caso.anestesista)}
+      <Campo rotulo={caso.segundoAnestesista ? "Anestesistas" : "Anestesista"} largo>
+        <span className="flex flex-col gap-1.5">
+          {anestesistasDe(caso).map((a) => (
+            <span key={a.id} className="flex items-center gap-2">
+              <SiglaBadge sigla={a.sigla} size="sm" />
+              {nomeDe(a)}
+            </span>
+          ))}
         </span>
       </Campo>
       <Campo rotulo="Cirurgião" largo>

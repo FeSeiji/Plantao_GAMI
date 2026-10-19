@@ -200,7 +200,7 @@ async function main() {
 
   await ok(supabase.from('casos_fora').insert([
     { data: diaRelativo(-2), anestesista_id: ana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', cirurgiao_id: cirurgioes[0].id, paciente_nome: 'Maria da Silva', paciente_cpf: cpfValido('123456789'), cirurgia: 'Colecistectomia', hospital_id: hospitais[0].id, recibo: 'gami', valor: 1200, criado_por: escritorio },
-    { data: diaRelativo(-5), anestesista_id: igor.id, escalado: true, cirurgiao: 'Dra. Lívia Prado', paciente_nome: 'José Santos', paciente_cpf: cpfValido('987654321'), cirurgia: 'Artroscopia de joelho', hospital_id: hospitais[1].id, recibo: 'sem_recibo', criado_por: escritorio },
+    { data: diaRelativo(-5), anestesista_id: igor.id, segundo_anestesista_id: bruno.id, escalado: true, cirurgiao: 'Dra. Lívia Prado', paciente_nome: 'José Santos', paciente_cpf: cpfValido('987654321'), cirurgia: 'Artroscopia de joelho', hospital_id: hospitais[1].id, recibo: 'sem_recibo', criado_por: escritorio },
     { data: diaRelativo(-9), anestesista_id: juliana.id, escalado: false, cirurgiao: 'Dr. Paulo Viana', cirurgiao_id: cirurgioes[0].id, paciente_nome: 'Ana Pereira', paciente_cpf: cpfValido('111444777'), cirurgia: 'Herniorrafia', valor: 850.5, comentarios: 'Paciente particular', criado_por: juliana.id },
   ]), 'casos fora')
 
