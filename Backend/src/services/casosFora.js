@@ -2,7 +2,9 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const CAMPOS = 'id, data, anestesista_id, escalado, cirurgiao, cirurgiao_id, paciente_nome, paciente_cpf, cirurgia, hospital_id, recibo, valor, comentarios, criado_por, criado_em, atualizado_por, atualizado_em'
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const CAMPOS = 'id, data, anestesista_id, segundo_anestesista_id, escalado, cirurgiao, cirurgiao_id, paciente_nome, paciente_cpf, cirurgia, hospital_id, recibo, valor, comentarios, criado_por, criado_em, atualizado_por, atualizado_em'
 
 // Casos fora do período, já com anestesista, hospital e autores preenchidos.
 // Usado pela tela de casos fora e pelo BM Financeiro.
@@ -16,13 +18,18 @@ async function listarCasosFora({ inicio, fim, anestesista_id } = {}) {
 
   if (inicio) query = query.gte('data', inicio)
   if (fim) query = query.lte('data', fim)
-  if (anestesista_id) query = query.eq('anestesista_id', anestesista_id)
+  // O médico pode estar no caso como primeiro ou segundo anestesista. O id vai dentro do texto do filtro,
+  // então precisa ser um uuid de verdade (uma vírgula mudaria o filtro)
+  if (anestesista_id) {
+    if (!UUID_REGEX.test(anestesista_id)) throw new Error('anestesista_id inválido')
+    query = query.or(`anestesista_id.eq.${anestesista_id},segundo_anestesista_id.eq.${anestesista_id}`)
+  }
 
   const { data, error } = await query
   if (error) throw error
 
   const [perfis, hospitais, cirurgioes] = await Promise.all([
-    buscarPerfis(data.flatMap(c => [c.anestesista_id, c.criado_por, c.atualizado_por])),
+    buscarPerfis(data.flatMap(c => [c.anestesista_id, c.segundo_anestesista_id, c.criado_por, c.atualizado_por])),
     buscarCadastro('hospitais', data.map(c => c.hospital_id)),
     buscarCadastro('cirurgioes', data.map(c => c.cirurgiao_id)),
   ])
@@ -43,6 +50,7 @@ async function listarCasosFora({ inicio, fim, anestesista_id } = {}) {
     valor: c.valor == null ? null : Number(c.valor),
     comentarios: c.comentarios,
     anestesista: pessoa(c.anestesista_id),
+    segundoAnestesista: pessoa(c.segundo_anestesista_id),
     criadoPor: pessoa(c.criado_por),
     criadoEm: c.criado_em,
     atualizadoPor: pessoa(c.atualizado_por),

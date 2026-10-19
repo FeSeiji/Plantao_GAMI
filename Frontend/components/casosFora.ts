@@ -29,12 +29,17 @@ export type CasoFora = {
   valor: number | null
   comentarios: string | null
   anestesista: Pessoa
+  // Opcional: o caso tem no máximo dois anestesistas
+  segundoAnestesista: Pessoa | null
   criadoPor: Pessoa
   criadoEm: string
   atualizadoPor: Pessoa | null
   atualizadoEm: string | null
   podeEditar?: boolean
 }
+
+// Os anestesistas do caso, na ordem: o primeiro e, se houver, o segundo
+export const anestesistasDe = (c: CasoFora) => (c.segundoAnestesista ? [c.anestesista, c.segundoAnestesista] : [c.anestesista])
 
 export const rotuloRecibo = (recibo: Recibo | null) => RECIBOS.find((r) => r.valor === recibo)?.rotulo ?? ""
 

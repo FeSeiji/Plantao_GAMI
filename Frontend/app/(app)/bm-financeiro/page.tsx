@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import { apiFetch } from "../../../components/sessao"
 import { formatarPontos } from "../../../components/trocaPorHoras"
-import { CasoFora, formatarCpf, formatarValor, rotuloRecibo } from "../../../components/casosFora"
+import { CasoFora, anestesistasDe, formatarCpf, formatarValor, rotuloRecibo } from "../../../components/casosFora"
 
 // Administradores e técnicos — mesma lista do backend em routes/bmFinanceiro.js
 const ROLES_BM_FINANCEIRO = ["admin", "tecnico"]
@@ -122,8 +122,9 @@ async function exportarExcel(resumo: Resumo, mesReferencia: Date) {
     abaCasos.addRow({
       // Meia-noite UTC: o Excel mostra o mesmo dia, sem deslocar pelo fuso
       data: new Date(`${c.data}T00:00:00Z`),
-      sigla: c.anestesista.sigla,
-      anestesista: c.anestesista.nome ?? c.anestesista.email,
+      // Caso com dois anestesistas: os dois na mesma linha (o valor é do caso, não se repete)
+      sigla: anestesistasDe(c).map((a) => a.sigla).filter(Boolean).join(" / "),
+      anestesista: anestesistasDe(c).map((a) => a.nome ?? a.email).join(" e "),
       escalado: c.escalado ? "Sim" : "Não",
       cirurgiao: c.cirurgiao,
       paciente: c.paciente_nome,
@@ -318,7 +319,7 @@ export default function BmFinanceiroPage() {
   const termo = normalizar(busca.trim())
   const plantonistas = (resumo?.plantonistas ?? []).filter((l) => correspondeBusca(l, termo))
   const socios = (resumo?.socios ?? []).filter((l) => correspondeBusca(l, termo))
-  const casosFora = (resumo?.casosFora ?? []).filter((c) => correspondeBusca(c.anestesista, termo))
+  const casosFora = (resumo?.casosFora ?? []).filter((c) => anestesistasDe(c).some((a) => correspondeBusca(a, termo)))
   const linhas = aba === "plantonista" ? plantonistas : socios
   const total =
     aba === "plantonista"
@@ -493,9 +494,16 @@ function TabelaCasosFora({ casos, loading, busca }: { casos: CasoFora[]; loading
               </td>
               <td className="px-4 py-3 max-w-0 w-full sm:max-w-none sm:w-auto">
                 <div className="flex items-center gap-2">
-                  <SiglaBadge sigla={c.anestesista.sigla} size="sm" />
+                  {/* Siglas sobrepostas, uma por anestesista do caso */}
+                  <div className="flex shrink-0 -space-x-1.5">
+                    {anestesistasDe(c).map((a) => (
+                      <span key={a.id} className="rounded-full ring-2 ring-white">
+                        <SiglaBadge sigla={a.sigla} size="sm" />
+                      </span>
+                    ))}
+                  </div>
                   <div className="min-w-0">
-                    <p className="text-gray-800 truncate">{c.anestesista.nome ?? c.anestesista.email ?? "—"}</p>
+                    <p className="text-gray-800 truncate">{anestesistasDe(c).map((a) => a.nome ?? a.email ?? "—").join(" e ")}</p>
                     {/* No celular o paciente aparece aqui, já que a coluna fica escondida */}
                     <p className="text-xs text-gray-500 truncate sm:hidden">{c.paciente_nome}</p>
                   </div>
