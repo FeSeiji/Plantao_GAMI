@@ -2,6 +2,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit')
 
 // Contadores em memória: zeram quando o servidor reinicia, o que basta com uma única instância no Render.
 
+const TRINTA_SEG = 30 * 1000
 const QUINZE_MIN = 15 * 60 * 1000
 const UMA_HORA = 60 * 60 * 1000
 
@@ -24,19 +25,19 @@ function limitador({ janela, limite, mensagem, ...opcoes }) {
 
 // Login: só as tentativas erradas contam
 exports.limiteLoginPorConta = limitador({
-  janela: QUINZE_MIN,
+  janela: TRINTA_SEG,
   limite: 5,
   keyGenerator: porIpEEmail,
   skipSuccessfulRequests: true,
-  mensagem: 'Muitas tentativas de login. Aguarde 15 minutos e tente de novo.',
+  mensagem: 'Muitas tentativas de login. Aguarde 30 segundos e tente de novo.',
 })
 
 // Teto por IP, para quem testa muitos e-mails diferentes
 exports.limiteLoginPorIp = limitador({
-  janela: QUINZE_MIN,
+  janela: TRINTA_SEG,
   limite: 30,
   skipSuccessfulRequests: true,
-  mensagem: 'Muitas tentativas de login. Aguarde 15 minutos e tente de novo.',
+  mensagem: 'Muitas tentativas de login. Aguarde 30 segundos e tente de novo.',
 })
 
 exports.limiteEsqueciSenha = limitador({
