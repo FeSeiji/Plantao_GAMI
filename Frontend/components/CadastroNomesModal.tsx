@@ -3,11 +3,18 @@
 import React, { useEffect, useState } from "react"
 import { INPUT_CLASS } from "./UsuarioModal"
 import { apiFetch } from "./sessao"
-import { Hospital } from "./casosFora"
+import { ItemCadastro } from "./casosFora"
 
 type Props = {
+  // "Hospitais", "Cirurgiões"
+  titulo: string
+  // "hospital", "cirurgião": entra nos textos ("Nome do novo hospital")
+  singular: string
+  // Rota da API: "/hospitais", "/cirurgioes"
+  caminho: string
+  descricao: string
   onClose: () => void
-  // Avisa a tela quando algo mudou (nome de hospital aparece na lista de casos)
+  // Avisa a tela quando algo mudou (o nome aparece nos casos)
   onChanged: () => void
 }
 
@@ -26,12 +33,12 @@ async function chamarApi(caminho: string, metodo = "GET", body?: unknown) {
   return result
 }
 
-const ordenar = (lista: Hospital[]) => [...lista].sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? "", "pt-BR"))
+const ordenar = (lista: ItemCadastro[]) => [...lista].sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? "", "pt-BR"))
 
-// Cadastro de hospitais dos casos fora (só a gestão). Desativar tira o hospital do dropdown
-// dos novos casos; os casos antigos continuam com ele.
-export default function HospitaisModal({ onClose, onChanged }: Props) {
-  const [hospitais, setHospitais] = useState<Hospital[]>([])
+// Cadastro de uma lista de nomes dos casos fora (hospitais, cirurgiões). Desativar tira o nome
+// da lista dos novos casos; os casos antigos continuam com ele.
+export default function CadastroNomesModal({ titulo, singular, caminho, descricao, onClose, onChanged }: Props) {
+  const [itens, setItens] = useState<ItemCadastro[]>([])
   const [carregando, setCarregando] = useState(true)
   const [novoNome, setNovoNome] = useState("")
   const [editandoId, setEditandoId] = useState<string | null>(null)
@@ -40,11 +47,11 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    chamarApi("/hospitais")
-      .then((lista) => setHospitais(ordenar(lista)))
+    chamarApi(caminho)
+      .then((lista) => setItens(ordenar(lista)))
       .catch((err) => setError(err.message))
       .finally(() => setCarregando(false))
-  }, [])
+  }, [caminho])
 
   useEffect(() => {
     const overflowAnterior = document.body.style.overflow
@@ -76,16 +83,16 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
     e.preventDefault()
     if (!novoNome.trim()) return
     executar(async () => {
-      const criado: Hospital = await chamarApi("/hospitais", "POST", { nome: novoNome.trim() })
-      setHospitais((prev) => ordenar([...prev, criado]))
+      const criado: ItemCadastro = await chamarApi(caminho, "POST", { nome: novoNome.trim() })
+      setItens((prev) => ordenar([...prev, criado]))
       setNovoNome("")
     })
   }
 
   function atualizar(id: string, alteracoes: { nome?: string; ativo?: boolean }) {
     executar(async () => {
-      const atualizado: Hospital = await chamarApi(`/hospitais/${id}`, "PATCH", alteracoes)
-      setHospitais((prev) => ordenar(prev.map((h) => (h.id === id ? atualizado : h))))
+      const atualizado: ItemCadastro = await chamarApi(`${caminho}/${id}`, "PATCH", alteracoes)
+      setItens((prev) => ordenar(prev.map((item) => (item.id === id ? atualizado : item))))
       setEditandoId(null)
     })
   }
@@ -97,8 +104,8 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-full flex flex-col">
         <div className="shrink-0 flex items-start justify-between px-6 sm:px-8 pt-6 pb-2">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">Hospitais</h1>
-            <p className="text-gray-400 text-sm mt-1">Os hospitais desativados saem da lista dos novos casos.</p>
+            <h1 className="text-xl font-bold text-gray-800">{titulo}</h1>
+            <p className="text-gray-400 text-sm mt-1">{descricao}</p>
           </div>
           <button onClick={onClose} aria-label="Fechar" className="text-gray-400 hover:text-gray-600 p-1 -mr-1">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -114,8 +121,8 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
             value={novoNome}
             onChange={(e) => setNovoNome(e.target.value)}
             maxLength={100}
-            placeholder="Nome do novo hospital"
-            aria-label="Nome do novo hospital"
+            placeholder={`Nome do novo ${singular}`}
+            aria-label={`Nome do novo ${singular}`}
             className={INPUT_CLASS}
           />
           <button
@@ -131,14 +138,14 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
 
         <ul className="flex-1 min-h-0 overflow-y-auto px-6 sm:px-8 pb-6 divide-y divide-gray-100">
           {carregando && <li className="py-3 text-sm text-gray-400">Carregando...</li>}
-          {!carregando && hospitais.length === 0 && <li className="py-3 text-sm text-gray-400">Nenhum hospital cadastrado.</li>}
-          {hospitais.map((h) =>
-            editandoId === h.id ? (
-              <li key={h.id} className="py-2">
+          {!carregando && itens.length === 0 && <li className="py-3 text-sm text-gray-400">Nenhum {singular} cadastrado.</li>}
+          {itens.map((item) =>
+            editandoId === item.id ? (
+              <li key={item.id} className="py-2">
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    if (nomeEditado.trim()) atualizar(h.id, { nome: nomeEditado.trim() })
+                    if (nomeEditado.trim()) atualizar(item.id, { nome: nomeEditado.trim() })
                   }}
                   className="flex gap-2"
                 >
@@ -148,7 +155,7 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
                     value={nomeEditado}
                     onChange={(e) => setNomeEditado(e.target.value)}
                     maxLength={100}
-                    aria-label="Novo nome do hospital"
+                    aria-label={`Novo nome do ${singular}`}
                     className={INPUT_CLASS}
                   />
                   <button
@@ -168,15 +175,15 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
                 </form>
               </li>
             ) : (
-              <li key={h.id} className="flex items-center gap-3 py-2.5">
-                <span className={`flex-1 min-w-0 truncate text-sm ${h.ativo ? "text-gray-800" : "text-gray-400 line-through"}`}>
-                  {h.nome}
+              <li key={item.id} className="flex items-center gap-3 py-2.5">
+                <span className={`flex-1 min-w-0 truncate text-sm ${item.ativo ? "text-gray-800" : "text-gray-400 line-through"}`}>
+                  {item.nome}
                 </span>
                 <button
                   type="button"
                   onClick={() => {
-                    setEditandoId(h.id)
-                    setNomeEditado(h.nome ?? "")
+                    setEditandoId(item.id)
+                    setNomeEditado(item.nome ?? "")
                   }}
                   disabled={ocupado}
                   className="text-xs font-medium text-brand-700 hover:text-brand-800 disabled:opacity-50"
@@ -185,13 +192,13 @@ export default function HospitaisModal({ onClose, onChanged }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => atualizar(h.id, { ativo: !h.ativo })}
+                  onClick={() => atualizar(item.id, { ativo: !item.ativo })}
                   disabled={ocupado}
                   className={`text-xs font-medium disabled:opacity-50 ${
-                    h.ativo ? "text-red-600 hover:text-red-700" : "text-green-700 hover:text-green-800"
+                    item.ativo ? "text-red-600 hover:text-red-700" : "text-green-700 hover:text-green-800"
                   }`}
                 >
-                  {h.ativo ? "Desativar" : "Reativar"}
+                  {item.ativo ? "Desativar" : "Reativar"}
                 </button>
               </li>
             ),

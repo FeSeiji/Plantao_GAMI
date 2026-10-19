@@ -39,6 +39,7 @@ app.use('/afastamentos', require('./routes/afastamentos'))
 app.use('/fichas', require('./routes/fichas'))
 app.use('/casos-fora', require('./routes/casosFora'))
 app.use('/hospitais', require('./routes/hospitais'))
+app.use('/cirurgioes', require('./routes/cirurgioes'))
 
 // Toda resposta é JSON, inclusive erro: a tela faz res.json() e, com o HTML padrão do Express,
 // mostrava "Unexpected token <"

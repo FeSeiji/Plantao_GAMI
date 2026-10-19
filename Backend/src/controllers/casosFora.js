@@ -49,7 +49,7 @@ exports.criar = async (req, res) => {
 exports.atualizar = async (req, res) => {
   const { data: atual, error: atualError } = await supabase
     .from('casos_fora')
-    .select('id, criado_por, hospital_id')
+    .select('id, criado_por, hospital_id, cirurgiao_id')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -61,7 +61,7 @@ exports.atualizar = async (req, res) => {
 
   let campos
   try {
-    campos = await validarCampos(req.body, atual.hospital_id)
+    campos = await validarCampos(req.body, atual)
   } catch (err) {
     return res.status(400).json({ error: err.message })
   }
@@ -93,8 +93,8 @@ exports.remover = async (req, res) => {
   return res.status(204).send()
 }
 
-// hospitalAtual: na edição, o caso pode continuar num hospital que a gestão desativou depois
-async function validarCampos(body, hospitalAtual = null) {
+// atual: na edição, o caso pode continuar num hospital ou cirurgião que foi desativado depois
+async function validarCampos(body, atual = {}) {
   const {
     data, anestesista_id, escalado, cirurgiao, paciente_nome, paciente_cpf, cirurgia,
     hospital_id, recibo, valor, comentarios,
@@ -133,8 +133,10 @@ async function validarCampos(body, hospitalAtual = null) {
       .maybeSingle()
     if (error) throw error
     if (!hospital) throw new Error('Hospital não encontrado')
-    if (!hospital.ativo && hospital.id !== hospitalAtual) throw new Error('Esse hospital foi desativado')
+    if (!hospital.ativo && hospital.id !== atual.hospital_id) throw new Error('Esse hospital foi desativado')
   }
+
+  const cirurgiaoDaLista = await buscarCirurgiao(textos.cirurgiao, atual.cirurgiao_id)
 
   if (!anestesista_id) throw new Error('anestesista_id é obrigatório')
   const { data: auth, error } = await supabase.auth.admin.getUserById(anestesista_id)
@@ -148,12 +150,24 @@ async function validarCampos(body, hospitalAtual = null) {
     anestesista_id,
     escalado,
     ...textos,
+    // Nome da lista liga o caso ao cirurgião (e fica escrito como na lista); nome de fora fica só como texto
+    cirurgiao: cirurgiaoDaLista?.nome ?? textos.cirurgiao,
+    cirurgiao_id: cirurgiaoDaLista?.id ?? null,
     paciente_cpf: cpf,
     hospital_id: hospital_id || null,
     recibo: recibo ?? null,
     valor: valorNormalizado,
     comentarios: String(comentarios ?? '').trim().slice(0, MAX_COMENTARIOS) || null,
   }
+}
+
+// Cirurgião da lista com o mesmo nome, sem diferenciar maiúsculas. Desativado só vale para o caso que já o usava.
+// A lista é curta, então a comparação é feita aqui e não no banco.
+async function buscarCirurgiao(nome, cirurgiaoAtual) {
+  const { data, error } = await supabase.from('cirurgioes').select('id, nome, ativo')
+  if (error) throw error
+  const chave = nome.toLocaleLowerCase('pt-BR')
+  return data.find(c => c.nome.toLocaleLowerCase('pt-BR') === chave && (c.ativo || c.id === cirurgiaoAtual)) ?? null
 }
 
 function textoObrigatorio(valor, rotulo) {

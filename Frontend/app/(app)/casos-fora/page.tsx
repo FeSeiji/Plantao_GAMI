@@ -4,13 +4,29 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import CasoForaModal from "../../../components/CasoForaModal"
-import HospitaisModal from "../../../components/HospitaisModal"
+import CadastroNomesModal from "../../../components/CadastroNomesModal"
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
 import { CasoFora, formatarValor } from "../../../components/casosFora"
 import { apiFetch } from "../../../components/sessao"
 
 // Quem registra casos — mesma lista do requireRole em Backend/src/routes/casosFora.js
 const ROLES_CRIAR_CASO = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
+
+// Listas da tela: hospitais a gestão cadastra; cirurgiões, só o escritório e o técnico (Backend/src/routes/cirurgioes.js)
+const CADASTROS = {
+  hospitais: {
+    titulo: "Hospitais",
+    singular: "hospital",
+    caminho: "/hospitais",
+    descricao: "Os hospitais desativados saem da lista dos novos casos.",
+  },
+  cirurgioes: {
+    titulo: "Cirurgiões",
+    singular: "cirurgião",
+    caminho: "/cirurgioes",
+    descricao: "Os cirurgiões desativados saem das sugestões dos novos casos.",
+  },
+}
 
 const FILTRO_CLASS =
   "border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
@@ -34,12 +50,13 @@ export default function CasosForaPage() {
   const [error, setError] = useState("")
   const [podeCriar, setPodeCriar] = useState(false)
   const [ehGestao, setEhGestao] = useState(false)
+  const [podeCadastrarCirurgioes, setPodeCadastrarCirurgioes] = useState(false)
   const [inicio, setInicio] = useState(() => diasAtras(30))
   const [fim, setFim] = useState("")
   const [buscaAnestesista, setBuscaAnestesista] = useState("")
   // undefined = modal fechado, null = novo caso
   const [selecionado, setSelecionado] = useState<CasoFora | null | undefined>(undefined)
-  const [hospitaisAberto, setHospitaisAberto] = useState(false)
+  const [cadastroAberto, setCadastroAberto] = useState<keyof typeof CADASTROS | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem("token")) {
@@ -50,9 +67,11 @@ export default function CasosForaPage() {
       const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
       setPodeCriar(roles.some((r) => ROLES_CRIAR_CASO.includes(r)))
       setEhGestao(roles.some((r) => ROLES_EDICAO.includes(r)))
+      setPodeCadastrarCirurgioes(roles.some((r) => ["escritorio", "tecnico"].includes(r)))
     } catch {
       setPodeCriar(false)
       setEhGestao(false)
+      setPodeCadastrarCirurgioes(false)
     }
   }, [router])
 
@@ -93,13 +112,21 @@ export default function CasosForaPage() {
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-xl font-bold text-gray-800">Casos fora</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {ehGestao && (
             <button
-              onClick={() => setHospitaisAberto(true)}
+              onClick={() => setCadastroAberto("hospitais")}
               className="shrink-0 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
             >
               Hospitais
+            </button>
+          )}
+          {podeCadastrarCirurgioes && (
+            <button
+              onClick={() => setCadastroAberto("cirurgioes")}
+              className="shrink-0 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Cirurgiões
             </button>
           )}
           {podeCriar && (
@@ -191,7 +218,9 @@ export default function CasosForaPage() {
       {selecionado !== undefined && (
         <CasoForaModal caso={selecionado} onClose={() => setSelecionado(undefined)} onSaved={carregar} />
       )}
-      {hospitaisAberto && <HospitaisModal onClose={() => setHospitaisAberto(false)} onChanged={carregar} />}
+      {cadastroAberto && (
+        <CadastroNomesModal {...CADASTROS[cadastroAberto]} onClose={() => setCadastroAberto(null)} onChanged={carregar} />
+      )}
     </main>
   )
 }
