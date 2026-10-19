@@ -8,7 +8,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 // Caso fora: cirurgia feita por um anestesista fora da escala (antigo Google Forms "Casos Fora - GAMI").
 // Todos os usuários logados veem; edita e exclui quem criou ou a gestão (escritório, técnico e admin).
-const RECIBOS = ['gami', 'pmp', 'sem_recibo', 'pessoal']
+// gami aparece como "GAMI/ADDS" e sem_recibo como "Sem nota fiscal" (PMP e Pessoal saíram em 2026-10-19)
+const RECIBOS = ['gami', 'sem_recibo']
 const MAX_TEXTO = 200
 const MAX_COMENTARIOS = 2000
 const MAX_VALOR = 99999999.99

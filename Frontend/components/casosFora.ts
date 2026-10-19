@@ -1,13 +1,11 @@
 // Caso fora — mesmas regras de Backend/src/controllers/casosFora.js
 import { Pessoa } from "./fichas"
 
-export type Recibo = "gami" | "pmp" | "sem_recibo" | "pessoal"
+export type Recibo = "gami" | "sem_recibo"
 
 export const RECIBOS: { valor: Recibo; rotulo: string }[] = [
-  { valor: "gami", rotulo: "GAMI" },
-  { valor: "pmp", rotulo: "PMP" },
-  { valor: "sem_recibo", rotulo: "Sem recibo" },
-  { valor: "pessoal", rotulo: "Pessoal" },
+  { valor: "gami", rotulo: "GAMI/ADDS" },
+  { valor: "sem_recibo", rotulo: "Sem nota fiscal" },
 ]
 
 export const MAX_TEXTO = 200
