@@ -41,6 +41,10 @@ export type Afastamento = {
 
 export const afastamentoPendente = (a?: Afastamento | null) => a?.status === "pendente"
 
+// Férias aprovadas: a vaga não troca de mãos; outro médico cobre o turno inteiro e os dois recebem os pontos
+// (cobertura de férias). Congresso vai ter uma regra própria
+export const deFerias = (a?: Afastamento | null) => a?.tipo === "ferias" && !afastamentoPendente(a)
+
 export const TIPOS_AFASTAMENTO = [
   { valor: "ferias", rotulo: "Férias" },
   { valor: "congresso", rotulo: "Congresso" },

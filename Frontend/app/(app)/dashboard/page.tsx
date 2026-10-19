@@ -34,9 +34,10 @@ type PlantaoResumo = {
   meuPapel: {
     coordenador: boolean
     posicao: number | null
-    // Troca por horas: eu cubro parte da vaga de alguém, ou alguém cobre parte da minha
-    cobrindo: { titular: Pessoa; horaInicio: string; horaFim: string } | null
-    coberto: { por: Pessoa; horaInicio: string; horaFim: string } | null
+    // Troca por horas: eu cubro parte da vaga de alguém, ou alguém cobre parte da minha.
+    // ferias: cobertura de férias (o turno inteiro; o titular de férias continua na vaga)
+    cobrindo: { titular: Pessoa; horaInicio: string; horaFim: string; ferias?: boolean } | null
+    coberto: { por: Pessoa; horaInicio: string; horaFim: string; ferias?: boolean } | null
   }
   usuarios: (Pessoa & { coordenador: boolean; posicao: number | null })[]
 }
@@ -53,6 +54,7 @@ type Troca = {
   respondenteId: string
   horaInicio?: string | null
   horaFim?: string | null
+  coberturaFerias?: boolean
 }
 
 type Resumo = {
@@ -123,6 +125,8 @@ function quandoComeca(p: PlantaoResumo, agora: Resumo["agora"]) {
 
 function descreverPapel(p: PlantaoResumo) {
   const { cobrindo, coberto } = p.meuPapel
+  if (cobrindo?.ferias) return `Você cobre as férias de ${nomeDe(cobrindo.titular)}`
+  if (coberto?.ferias) return `${nomeDe(coberto.por)} cobre a sua vaga durante as férias`
   if (cobrindo) return `Você cobre ${nomeDe(cobrindo.titular)} das ${formatarIntervalo(cobrindo.horaInicio, cobrindo.horaFim).replace("–", " às ")}`
   if (coberto) return `${nomeDe(coberto.por)} cobre ${formatarIntervalo(coberto.horaInicio, coberto.horaFim)} da sua vaga`
   if (p.meuPapel.coordenador) return "Você é o coordenador"
@@ -201,10 +205,15 @@ function DescricaoTroca({ troca, perspectiva }: { troca: Troca; perspectiva: "pa
           {p.titulo} · {formatarData(p.data)} · {formatarHorario(p)}
         </p>
       )}
-      {troca.horaInicio && troca.horaFim && (
-        <p className="text-xs font-medium text-sky-700">
-          Troca por horas: só {formatarIntervalo(troca.horaInicio, troca.horaFim)}
-        </p>
+      {troca.coberturaFerias ? (
+        <p className="text-xs font-medium text-sky-700">Cobertura de férias: turno inteiro</p>
+      ) : (
+        troca.horaInicio &&
+        troca.horaFim && (
+          <p className="text-xs font-medium text-sky-700">
+            Troca por horas: só {formatarIntervalo(troca.horaInicio, troca.horaFim)}
+          </p>
+        )
       )}
       {perspectiva === "paraMim" && (
         <p className="text-xs text-gray-400">Pedido por {nomeDe(troca.solicitadoPor)}</p>
@@ -471,11 +480,15 @@ export default function DashboardPage() {
                         <p className="text-sm font-medium text-gray-800 truncate">{p.titulo}</p>
                         <p className="text-xs text-gray-500">
                           {formatarHorario(p)} ·{" "}
-                          {p.meuPapel.cobrindo
-                            ? `Cobrindo ${formatarIntervalo(p.meuPapel.cobrindo.horaInicio, p.meuPapel.cobrindo.horaFim)} · `
-                            : p.meuPapel.coberto
-                              ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
-                              : ""}
+                          {p.meuPapel.cobrindo?.ferias
+                            ? `Cobrindo férias de ${nomeDe(p.meuPapel.cobrindo.titular)} · `
+                            : p.meuPapel.coberto?.ferias
+                              ? `Coberto por ${nomeDe(p.meuPapel.coberto.por)} · `
+                              : p.meuPapel.cobrindo
+                                ? `Cobrindo ${formatarIntervalo(p.meuPapel.cobrindo.horaInicio, p.meuPapel.cobrindo.horaFim)} · `
+                                : p.meuPapel.coberto
+                                  ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
+                                  : ""}
                           {rotuloTurno(p.turno)}
                           {p.meuPapel.posicao != null && ` · ${descreverPosicao(p.data, p.meuPapel.posicao).replace(/ do (diurno|noturno)$/, "")}`}
                         </p>

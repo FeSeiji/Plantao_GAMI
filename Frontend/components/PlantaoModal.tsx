@@ -11,6 +11,7 @@ import {
   AvisoAfastamento,
   AvisoIndisponivel,
   afastamentoPendente,
+  deFerias,
   rotuloAfastamento,
 } from "./disponibilidade";
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal";
@@ -47,17 +48,20 @@ type TrocaPendente = {
   solicitadoPor: Pessoa;
   // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
   respondenteId?: string;
-  // Preenchidos na troca por horas
+  // Preenchidos na troca por horas (na cobertura de férias, o turno inteiro)
   horaInicio?: string | null;
   horaFim?: string | null;
+  coberturaFerias?: boolean;
 };
 
-// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo
+// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo.
+// Cobertura de férias (ferias): "usuario" cobre o turno inteiro e o titular de férias continua na vaga
 type Cobertura = {
   id: string;
   usuario: Pessoa;
   horaInicio: string;
   horaFim: string;
+  ferias?: boolean;
 };
 
 type TrocaHistorico = {
@@ -71,6 +75,7 @@ type TrocaHistorico = {
   solicitadoPor: Pessoa;
   horaInicio?: string | null;
   horaFim?: string | null;
+  coberturaFerias?: boolean;
 };
 
 type RemocaoHistorico = {
@@ -206,6 +211,8 @@ export default function PlantaoModal({
       : undefined;
   const horarioTrocando =
     trocandoPosicao != null ? horarioDaVaga(plantao.data, trocandoPosicao) : null;
+  // Titular de férias: o painel pede uma cobertura do turno inteiro, não uma troca
+  const trocandoFerias = deFerias(usuarioTrocando?.afastamento);
   // Troca por horas: o intervalo escolhido na linha do tempo do painel de troca
   const intervaloTroca =
     trocaParcial && horaParcial && horarioTrocando
@@ -427,6 +434,7 @@ export default function PlantaoModal({
                   respondenteId: result.respondenteId,
                   horaInicio: result.horaInicio,
                   horaFim: result.horaFim,
+                  coberturaFerias: result.coberturaFerias,
                 },
               }
             : u,
@@ -445,8 +453,14 @@ export default function PlantaoModal({
 
   function desfazerCobertura(posicao: number, cobertura: Cobertura) {
     setConfirmacao({
-      titulo: "Desfazer troca por horas?",
-      mensagem: (
+      titulo: cobertura.ferias ? "Desfazer cobertura de férias?" : "Desfazer troca por horas?",
+      mensagem: cobertura.ferias ? (
+        <p>
+          {nomeDe(cobertura.usuario)} deixa de cobrir a vaga e não recebe mais os
+          pontos dela. O titular continua na vaga, de férias, e a vaga fica sem
+          cobertura.
+        </p>
+      ) : (
         <p>
           {nomeDe(cobertura.usuario)} deixa de cobrir{" "}
           {formatarIntervalo(cobertura.horaInicio, cobertura.horaFim)} e a vaga
@@ -465,7 +479,7 @@ export default function PlantaoModal({
           );
           if (!res.ok) {
             const result = await res.json().catch(() => ({}));
-            throw new Error(result.error ?? "Não foi possível desfazer a troca por horas.");
+            throw new Error(result.error ?? "Não foi possível desfazer a cobertura.");
           }
           setSelecionados((prev) =>
             prev.map((u) => (u.posicao === posicao ? { ...u, cobertura: null } : u)),
@@ -474,7 +488,7 @@ export default function PlantaoModal({
           onUpdated();
         } catch (err) {
           setError(
-            err instanceof Error ? err.message : "Não foi possível desfazer a troca por horas.",
+            err instanceof Error ? err.message : "Não foi possível desfazer a cobertura.",
           );
         }
       },
@@ -487,10 +501,12 @@ export default function PlantaoModal({
       titulo: "Cancelar pedido de troca?",
       mensagem: (
         <p>
-          O pedido para {nomeDe(pendente.usuarioEntrada)} entrar
-          {pendente.horaInicio && pendente.horaFim
-            ? ` das ${formatarIntervalo(pendente.horaInicio, pendente.horaFim).replace("–", " às ")}`
-            : ""}{" "}
+          O pedido para {nomeDe(pendente.usuarioEntrada)}
+          {pendente.coberturaFerias
+            ? " cobrir as férias"
+            : pendente.horaInicio && pendente.horaFim
+              ? ` entrar das ${formatarIntervalo(pendente.horaInicio, pendente.horaFim).replace("–", " às ")}`
+              : " entrar"}{" "}
           é cancelado e a vaga fica livre para outro pedido.
         </p>
       ),
@@ -552,7 +568,7 @@ export default function PlantaoModal({
         prev.map((u) => {
           if (u.posicao !== posicao) return u;
           if (!aceitar) return { ...u, trocaPendente: null };
-          // Troca por horas: a vaga continua do titular, agora com a cobertura
+          // Troca por horas e cobertura de férias: a vaga continua do titular, agora com a cobertura
           if (result.horaInicio) {
             return {
               ...u,
@@ -562,6 +578,7 @@ export default function PlantaoModal({
                 usuario: result.usuarioEntrada,
                 horaInicio: result.horaInicio,
                 horaFim: result.horaFim,
+                ferias: result.coberturaFerias,
               },
             };
           }
@@ -887,10 +904,15 @@ export default function PlantaoModal({
     const acoes: AcaoMenu[] = [];
     const ehMinhaVaga = u.id === meuId;
     const podePedirVaga = podeGerirEquipe || ehMinhaVaga || !noTurno(meuId, turnoDaPosicao(posicao));
-    // Com troca por horas valendo, a vaga não aceita outra troca até a gestão desfazê-la
+    // Com troca por horas (ou cobertura de férias) valendo, a vaga não aceita outra troca até a gestão desfazê-la.
+    // Titular de férias não sai da vaga: em vez de trocar, alguém cobre o turno inteiro
+    const ferias = deFerias(u.afastamento);
     if (!pendente && !u.cobertura && podePedirVaga)
       acoes.push({
-        rotulo: podeGerirEquipe || ehMinhaVaga ? "Trocar" : "Pedir a vaga",
+        rotulo:
+          podeGerirEquipe || ehMinhaVaga
+            ? ferias ? "Pedir cobertura" : "Trocar"
+            : ferias ? "Cobrir a vaga" : "Pedir a vaga",
         onClick: () => abrirTroca(posicao),
       });
     if (pendente && (podeGerirEquipe || pendente.solicitadoPor.id === meuId))
@@ -902,7 +924,7 @@ export default function PlantaoModal({
     if (editavel && podeGerirEquipe && u.cobertura) {
       const cobertura = u.cobertura;
       acoes.push({
-        rotulo: "Desfazer troca por horas",
+        rotulo: cobertura.ferias ? "Desfazer cobertura" : "Desfazer troca por horas",
         perigo: true,
         onClick: () => desfazerCobertura(posicao, cobertura),
       });
@@ -971,15 +993,18 @@ export default function PlantaoModal({
             )}
             {u.cobertura && (
               <span className="block">
-                {nomeDe(u.cobertura.usuario)} cobre{" "}
-                {formatarIntervalo(u.cobertura.horaInicio, u.cobertura.horaFim)}
+                {u.cobertura.ferias
+                  ? `Coberto por ${nomeDe(u.cobertura.usuario)}`
+                  : `${nomeDe(u.cobertura.usuario)} cobre ${formatarIntervalo(u.cobertura.horaInicio, u.cobertura.horaFim)}`}
               </span>
             )}
             {pendente && (
               <span className="block">
-                {pendente.horaInicio && pendente.horaFim
-                  ? `${formatarIntervalo(pendente.horaInicio, pendente.horaFim)}: `
-                  : ""}
+                {pendente.coberturaFerias
+                  ? "Cobertura: "
+                  : pendente.horaInicio && pendente.horaFim
+                    ? `${formatarIntervalo(pendente.horaInicio, pendente.horaFim)}: `
+                    : ""}
                 {souRespondente
                   ? pendente.respondenteId === u.id
                     ? `${nomeDe(pendente.usuarioEntrada)} pediu sua vaga: aguardando seu aceite`
@@ -1112,7 +1137,13 @@ export default function PlantaoModal({
           htmlFor="buscaTroca"
           className="text-xs font-semibold text-brand-700"
         >
-          {pedindoVagaParaMim ? "Pedir a vaga de" : "Substituir"}{" "}
+          {trocandoFerias
+            ? pedindoVagaParaMim
+              ? "Cobrir as férias de"
+              : "Cobertura das férias de"
+            : pedindoVagaParaMim
+              ? "Pedir a vaga de"
+              : "Substituir"}{" "}
           {nomeDe(usuarioTrocando)} ({descreverPosicao(plantao.data, trocandoPosicao!)})
         </label>
         <button
@@ -1123,18 +1154,50 @@ export default function PlantaoModal({
           Cancelar
         </button>
       </div>
-      <SeletorTrocaPorHoras
-        horaInicio={horarioTrocando.hora_inicio}
-        horaFim={horarioTrocando.hora_fim}
-        lado={trocaParcial}
-        corte={horaParcial}
-        nomeTitular={nomeDe(usuarioTrocando)}
-        onChange={(lado, corte) => {
-          setTrocaParcial(lado);
-          setHoraParcial(corte);
-        }}
-      />
-      {pedindoVagaParaMim ? (
+      {trocandoFerias ? (
+        <p className="text-xs text-gray-500 mb-2">
+          {nomeDe(usuarioTrocando)} continua na vaga. Quem cobrir faz o turno
+          inteiro e os dois recebem os pontos da vaga.
+        </p>
+      ) : (
+        <SeletorTrocaPorHoras
+          horaInicio={horarioTrocando.hora_inicio}
+          horaFim={horarioTrocando.hora_fim}
+          lado={trocaParcial}
+          corte={horaParcial}
+          nomeTitular={nomeDe(usuarioTrocando)}
+          onChange={(lado, corte) => {
+            setTrocaParcial(lado);
+            setHoraParcial(corte);
+          }}
+        />
+      )}
+      {pedindoVagaParaMim && trocandoFerias ? (
+        <button
+          type="button"
+          onClick={() =>
+            setConfirmacao({
+              titulo: "Cobrir a vaga?",
+              mensagem: (
+                <p>
+                  Você cobre a vaga de{" "}
+                  <span className="font-semibold">
+                    {nomeDe(usuarioTrocando)}
+                  </span>
+                  , que está de férias. Os dois recebem os pontos da vaga. A
+                  cobertura só vale depois que {nomeDe(usuarioTrocando)} aceitar.
+                </p>
+              ),
+              rotuloConfirmar: "Cobrir a vaga",
+              acao: () =>
+                solicitarTroca(trocandoPosicao!, { id: meuId ?? "" }, null),
+            })
+          }
+          className="w-full bg-brand-700 hover:bg-brand-800 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
+        >
+          Cobrir esta vaga
+        </button>
+      ) : pedindoVagaParaMim ? (
         <button
           type="button"
           onClick={() =>
@@ -1171,7 +1234,7 @@ export default function PlantaoModal({
         type="text"
         value={buscaTroca}
         onChange={(e) => setBuscaTroca(e.target.value)}
-        placeholder="Buscar médico para substituir"
+        placeholder={trocandoFerias ? "Buscar médico para cobrir" : "Buscar médico para substituir"}
         autoComplete="off"
         className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
       />
@@ -1190,7 +1253,23 @@ export default function PlantaoModal({
                 key={r.id}
                 type="button"
                 onClick={() =>
-                  setConfirmacao({
+                  setConfirmacao(trocandoFerias ? {
+                    titulo: "Pedir cobertura?",
+                    mensagem: (
+                      <p>
+                        <span className="font-semibold">{nomeDe(r)}</span>{" "}
+                        cobre a vaga de{" "}
+                        <span className="font-semibold">
+                          {nomeDe(usuarioTrocando)}
+                        </span>
+                        , que está de férias e continua na vaga. Os dois recebem
+                        os pontos. A cobertura só vale depois que{" "}
+                        {nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.
+                      </p>
+                    ),
+                    rotuloConfirmar: "Pedir cobertura",
+                    acao: () => solicitarTroca(trocandoPosicao!, r, null),
+                  } : {
                     titulo: "Solicitar troca?",
                     mensagem: (
                       <p>
@@ -1619,16 +1698,28 @@ export default function PlantaoModal({
                       <span className="font-semibold">
                         {nomeDe(t.solicitadoPor)}
                       </span>{" "}
-                      solicitou trocar{" "}
+                      {t.coberturaFerias ? "pediu que " : "solicitou trocar "}
+                      {t.coberturaFerias && (
+                        <>
+                          <span className="font-semibold">
+                            {nomeDe(t.usuarioEntrada)}
+                          </span>{" "}
+                          cobrisse as férias de{" "}
+                        </>
+                      )}
                       <span className="font-semibold">
                         {nomeDe(t.usuarioSaida)}
                       </span>
                       {t.posicao != null && ` (${descreverPosicao(plantao.data, t.posicao)})`}{" "}
-                      por{" "}
-                      <span className="font-semibold">
-                        {nomeDe(t.usuarioEntrada)}
-                      </span>{" "}
-                      {t.horaInicio && t.horaFim
+                      {!t.coberturaFerias && (
+                        <>
+                          por{" "}
+                          <span className="font-semibold">
+                            {nomeDe(t.usuarioEntrada)}
+                          </span>{" "}
+                        </>
+                      )}
+                      {t.horaInicio && t.horaFim && !t.coberturaFerias
                         ? `(${formatarIntervalo(t.horaInicio, t.horaFim)}) `
                         : ""}
                       em {new Date(t.solicitadoEm).toLocaleString("pt-BR")}

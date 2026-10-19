@@ -7,6 +7,8 @@ const { horarioDaVaga, ehVagaDeCoordenador } = require('./posicoes')
 // Troca por horas ("cobertura"): uma troca de plantao_trocas com hora_inicio/hora_fim.
 // Depois de aceita, a vaga continua do titular (usuario_saida) e o convidado (usuario_entrada)
 // cobre só esse intervalo. Troca sem horário é a troca da vaga inteira.
+// Cobertura de férias (cobertura_ferias): o mesmo registro com o turno inteiro; o titular de férias continua
+// com a vaga inteira e quem cobre também recebe a vaga inteira.
 // "vaga" abaixo é o horário da vaga: { data, hora_inicio, hora_fim } do turno dela (horarioDaVaga).
 
 function paraMinutos(hora) {
@@ -68,7 +70,7 @@ async function buscarCoberturas(plantaoIds) {
   if (ids.length === 0) return []
   const { data, error } = await supabase
     .from('plantao_trocas')
-    .select('id, plantao_id, posicao, usuario_saida, usuario_entrada, hora_inicio, hora_fim')
+    .select('id, plantao_id, posicao, usuario_saida, usuario_entrada, hora_inicio, hora_fim, cobertura_ferias')
     .in('plantao_id', ids)
     .eq('status', 'aceita')
     .not('hora_inicio', 'is', null)
@@ -77,6 +79,7 @@ async function buscarCoberturas(plantaoIds) {
 }
 
 // Quem fez quanto de cada vaga do plantão: o titular fica com o que sobra e quem cobre com o intervalo.
+// Na cobertura de férias os dois ficam com a vaga inteira (fracao 1).
 // Retorna [{ usuario_id, posicao, coordenador, fracao, minutos }] — fracao de 0 a 1 da vaga inteira,
 // usada para ratear horas (plantonista) e pontos da posição (sócio).
 function repartirPlantao(plantao, membros, coberturas) {
@@ -87,6 +90,11 @@ function repartirPlantao(plantao, membros, coberturas) {
     const base = { posicao: m.posicao, coordenador: ehVagaDeCoordenador(m.posicao) }
     if (!c) {
       partes.push({ ...base, usuario_id: m.usuario_id, fracao: 1, minutos: total })
+      continue
+    }
+    if (c.cobertura_ferias) {
+      partes.push({ ...base, usuario_id: m.usuario_id, fracao: 1, minutos: total })
+      partes.push({ ...base, usuario_id: c.usuario_entrada, fracao: 1, minutos: total })
       continue
     }
     const coberto = duracaoDaCobertura(c.hora_inicio, c.hora_fim)

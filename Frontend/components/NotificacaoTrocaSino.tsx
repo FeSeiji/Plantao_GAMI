@@ -20,9 +20,10 @@ type TrocaPendente = {
   solicitadoPor: Pessoa
   // Quem precisa aceitar: o substituto ou, se ele mesmo pediu a vaga, o titular
   respondenteId: string
-  // Preenchidos na troca por horas
+  // Preenchidos na troca por horas (na cobertura de férias, o turno inteiro)
   horaInicio?: string | null
   horaFim?: string | null
+  coberturaFerias?: boolean
   plantao: {
     id: string
     titulo: string
@@ -343,7 +344,19 @@ export default function NotificacaoTrocaSino() {
               {pendentes.map((t) => (
                 <li key={t.id} className="px-4 py-3">
                   <p className="text-sm text-gray-700">
-                    {t.respondenteId === t.usuarioSaida.id ? (
+                    {t.coberturaFerias ? (
+                      t.respondenteId === t.usuarioSaida.id ? (
+                        <>
+                          <span className="font-semibold">{t.usuarioEntrada.nome ?? t.usuarioEntrada.email}</span> quer
+                          cobrir a sua vaga durante as férias
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold">{t.solicitadoPor.nome ?? t.solicitadoPor.email}</span> pediu que
+                          você cubra as férias de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span>
+                        </>
+                      )
+                    ) : t.respondenteId === t.usuarioSaida.id ? (
                       <>
                         <span className="font-semibold">{t.usuarioEntrada.nome ?? t.usuarioEntrada.email}</span> pediu a
                         sua vaga
@@ -354,7 +367,7 @@ export default function NotificacaoTrocaSino() {
                         você no lugar de <span className="font-semibold">{t.usuarioSaida.nome ?? t.usuarioSaida.email}</span>
                       </>
                     )}
-                    {t.horaInicio && t.horaFim && (
+                    {t.horaInicio && t.horaFim && !t.coberturaFerias && (
                       <> só das <span className="font-semibold">{formatarIntervalo(t.horaInicio, t.horaFim).replace("–", " às ")}</span></>
                     )}{" "}
                     no plantão <span className="font-semibold">{t.plantao.titulo}</span>.
