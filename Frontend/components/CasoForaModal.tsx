@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import SiglaBadge from "./SiglaBadge"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { INPUT_CLASS, ROLES_ANESTESISTA } from "./UsuarioModal"
@@ -31,6 +31,8 @@ type Props = {
 const LABEL_CLASS = "block text-sm font-medium text-gray-700 mb-1"
 
 const nomeDe = (p: Pessoa) => p.nome ?? p.email ?? p.id
+
+const semAcento = (texto: string) => texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
 
 function hojeLocal() {
   return new Date().toLocaleDateString("en-CA")
@@ -72,6 +74,8 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
   const [anestesistas, setAnestesistas] = useState<Pessoa[]>([])
   const [hospitais, setHospitais] = useState<Hospital[]>([])
   const [cirurgioes, setCirurgioes] = useState<Cirurgiao[]>([])
+  const [sugestoesAbertas, setSugestoesAbertas] = useState(false)
+  const sugestoesRef = useRef<HTMLUListElement>(null)
 
   const [error, setError] = useState("")
   const [salvando, setSalvando] = useState(false)
@@ -124,6 +128,11 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
       })
       .catch((err) => setError(err.message))
   }, [editando])
+
+  // No celular o teclado encolhe o modal: rola até a lista de sugestões para ela não ficar escondida
+  useEffect(() => {
+    if (sugestoesAbertas) sugestoesRef.current?.scrollIntoView({ block: "nearest" })
+  }, [sugestoesAbertas, viewport?.altura])
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -191,6 +200,12 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
 
   // Hospital desativado depois do registro continua aparecendo no caso que já o usava
   const opcoesHospital = hospitais.filter((h) => h.ativo || h.id === hospitalId)
+  // Sugestões de cirurgião: os ativos que contêm o que foi digitado, sem diferenciar acento nem maiúsculas
+  const termoCirurgiao = semAcento(cirurgiao.trim())
+  const sugestoesCirurgiao = cirurgioes.filter((c) => {
+    const nome = semAcento(c.nome ?? "")
+    return c.ativo && nome.includes(termoCirurgiao) && nome !== termoCirurgiao
+  })
   // Médico que deixou de ser anestesista continua aparecendo no caso antigo
   const opcoesAnestesista =
     caso && !anestesistas.some((a) => a.id === caso.anestesista.id) ? [caso.anestesista, ...anestesistas] : anestesistas
@@ -255,26 +270,48 @@ export default function CasoForaModal({ caso, onClose, onSaved }: Props) {
         <label htmlFor="casoCirurgiao" className={LABEL_CLASS}>
           Cirurgião
         </label>
-        {/* list + datalist: o navegador sugere os nomes da lista enquanto digita, mas aceita qualquer nome.
-            Quem liga o caso ao cirurgião da lista é o backend, comparando o nome */}
+        {/* Sugestões feitas aqui e não com <datalist>: no celular a lista nativa aparecia fora do lugar
+            (o modal é deslocado para caber acima do teclado). Aceita qualquer nome; quem liga o caso
+            ao cirurgião da lista é o backend, comparando o nome */}
         <input
           id="casoCirurgiao"
           type="text"
           required
-          list="casoCirurgiaoSugestoes"
           autoComplete="off"
           maxLength={MAX_TEXTO}
           value={cirurgiao}
-          onChange={(e) => setCirurgiao(e.target.value)}
+          onChange={(e) => {
+            setCirurgiao(e.target.value)
+            setSugestoesAbertas(true)
+          }}
+          onFocus={() => setSugestoesAbertas(true)}
+          onBlur={() => setSugestoesAbertas(false)}
           className={INPUT_CLASS}
         />
-        <datalist id="casoCirurgiaoSugestoes">
-          {cirurgioes
-            .filter((c) => c.ativo)
-            .map((c) => (
-              <option key={c.id} value={c.nome ?? ""} />
+        {sugestoesAbertas && sugestoesCirurgiao.length > 0 && (
+          // preventDefault no mousedown: o toque na lista não tira o foco do campo, senão o onBlur
+          // fecharia a lista antes do clique na sugestão
+          <ul
+            ref={sugestoesRef}
+            onMouseDown={(e) => e.preventDefault()}
+            className="mt-1 max-h-48 overflow-y-auto overscroll-contain border border-gray-200 rounded-lg divide-y divide-gray-100"
+          >
+            {sugestoesCirurgiao.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCirurgiao(c.nome ?? "")
+                    setSugestoesAbertas(false)
+                  }}
+                  className="w-full text-left px-3 py-2.5 text-sm text-gray-800 hover:bg-gray-50 active:bg-gray-100"
+                >
+                  {c.nome}
+                </button>
+              </li>
             ))}
-        </datalist>
+          </ul>
+        )}
         <p className="text-xs text-gray-400 mt-1">Escolha da lista ou digite o nome, se ele não estiver nela.</p>
       </div>
 
