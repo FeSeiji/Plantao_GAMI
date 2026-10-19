@@ -3,12 +3,13 @@
 import React, { useEffect, useState } from "react"
 import ConfirmacaoModal, { Confirmacao } from "./ConfirmacaoModal"
 import { INPUT_CLASS } from "./UsuarioModal"
-import { TIPOS_AFASTAMENTO } from "./disponibilidade"
+import { TIPOS_AFASTAMENTO, TIPOS_CONGRESSO, TipoCongresso, rotuloTipoCongresso } from "./disponibilidade"
 import { apiFetch } from "./sessao"
 
 type AfastamentoProprio = {
   id: string
   tipo: "ferias" | "congresso"
+  congresso_tipo: TipoCongresso | null
   data_inicio: string
   data_fim: string
   observacao: string | null
@@ -54,6 +55,7 @@ export default function AfastamentosPerfil() {
   const [carregando, setCarregando] = useState(true)
 
   const [tipo, setTipo] = useState<"ferias" | "congresso">("ferias")
+  const [congressoTipo, setCongressoTipo] = useState<TipoCongresso | "">("")
   const [inicio, setInicio] = useState("")
   const [fim, setFim] = useState("")
   const [observacao, setObservacao] = useState("")
@@ -61,6 +63,8 @@ export default function AfastamentosPerfil() {
   const [error, setError] = useState("")
   const [salvando, setSalvando] = useState(false)
   const [afetados, setAfetados] = useState<PlantaoAfetado[]>([])
+  // Tipo do pedido que gerou o aviso dos plantões afetados (congresso não tira o médico da escala)
+  const [afetadosCongresso, setAfetadosCongresso] = useState<TipoCongresso | null>(null)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
 
   useEffect(() => {
@@ -78,11 +82,16 @@ export default function AfastamentosPerfil() {
     e.preventDefault()
     setError("")
     setAfetados([])
+    if (tipo === "congresso" && !congressoTipo) {
+      setError("Escolha se você vai como palestrante ou congressista.")
+      return
+    }
     setSalvando(true)
 
     try {
       const res = await chamarApi("/afastamentos", "POST", {
         tipo,
+        congresso_tipo: tipo === "congresso" ? congressoTipo : null,
         data_inicio: inicio,
         data_fim: fim,
         observacao: observacao || null,
@@ -97,9 +106,11 @@ export default function AfastamentosPerfil() {
       const { plantoesAfetados, ...criado } = result
       setAfastamentos((prev) => [...prev, criado].sort((a, b) => a.data_inicio.localeCompare(b.data_inicio)))
       setAfetados(plantoesAfetados ?? [])
+      setAfetadosCongresso(criado.tipo === "congresso" ? criado.congresso_tipo : null)
       setInicio("")
       setFim("")
       setObservacao("")
+      setCongressoTipo("")
     } catch {
       setError("Não foi possível conectar ao servidor.")
     } finally {
@@ -124,6 +135,19 @@ export default function AfastamentosPerfil() {
     }
   }
 
+  // Congresso sem tipo (cadastrado antes dos tipos) ou ainda pendente: o próprio médico escolhe
+  async function definirTipoCongresso(id: string, novo: TipoCongresso) {
+    setError("")
+    try {
+      const res = await chamarApi(`/afastamentos/${id}/tipo-congresso`, "PATCH", { congresso_tipo: novo })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error ?? "Não foi possível salvar o tipo.")
+      setAfastamentos((prev) => prev.map((a) => (a.id === id ? { ...a, congresso_tipo: result.congresso_tipo } : a)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar o tipo.")
+    }
+  }
+
   const rotuloTipo = (t: string) => TIPOS_AFASTAMENTO.find((x) => x.valor === t)?.rotulo ?? t
 
   return (
@@ -131,7 +155,8 @@ export default function AfastamentosPerfil() {
       <h2 className="font-semibold text-gray-800">Férias e congressos</h2>
       <p className="text-sm text-gray-500 mt-1 mb-5">
         O pedido vai para a gestão aprovar. Depois de aprovado, você não poderá ser escalado nesses dias, e os plantões em que
-        já estiver no período ficam marcados para a gestão resolver.
+        já estiver no período ficam marcados para a gestão resolver. No congresso você continua nesses plantões, recebendo
+        80% da vaga como palestrante ou 60% como congressista.
       </p>
 
       {carregando ? (
@@ -150,6 +175,26 @@ export default function AfastamentosPerfil() {
                   {formatarData(a.data_inicio)}
                   {a.data_fim !== a.data_inicio && ` a ${formatarData(a.data_fim)}`}
                 </p>
+                {a.tipo === "congresso" &&
+                  (!a.congresso_tipo || a.status === "pendente" ? (
+                    <select
+                      aria-label="Tipo do congresso"
+                      value={a.congresso_tipo ?? ""}
+                      onChange={(e) => definirTipoCongresso(a.id, e.target.value as TipoCongresso)}
+                      className={`mt-1 text-xs border rounded-md px-1.5 py-0.5 bg-white ${
+                        a.congresso_tipo ? "border-gray-300 text-gray-700" : "border-amber-300 text-amber-800"
+                      }`}
+                    >
+                      {!a.congresso_tipo && <option value="">Definir tipo</option>}
+                      {TIPOS_CONGRESSO.map((t) => (
+                        <option key={t.valor} value={t.valor}>
+                          {t.rotulo} ({t.desconto})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-xs text-gray-600">{rotuloTipoCongresso(a.congresso_tipo)}</p>
+                  ))}
                 {a.observacao && <p className="text-xs text-gray-500 truncate">{a.observacao}</p>}
               </div>
               <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full ${ROTULO_STATUS[a.status].classe}`}>
@@ -197,6 +242,34 @@ export default function AfastamentosPerfil() {
             </button>
           ))}
         </div>
+
+        {tipo === "congresso" && (
+          <div>
+            <p className="block text-sm font-medium text-gray-700 mb-1">Você vai como</p>
+            <div role="radiogroup" aria-label="Tipo do congresso" className="grid grid-cols-2 gap-2">
+              {TIPOS_CONGRESSO.map((t) => (
+                <button
+                  key={t.valor}
+                  type="button"
+                  role="radio"
+                  aria-checked={congressoTipo === t.valor}
+                  onClick={() => {
+                    setCongressoTipo(t.valor)
+                    setError("")
+                  }}
+                  className={`border rounded-lg py-2 text-sm font-semibold transition-colors ${
+                    congressoTipo === t.valor
+                      ? "border-brand-700 bg-brand-50 text-brand-800"
+                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {t.rotulo}
+                  <span className="block text-xs font-normal text-gray-500">recebe {t.valor === "palestrante" ? "80%" : "60%"} da vaga</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -261,7 +334,9 @@ export default function AfastamentosPerfil() {
               ))}
             </ul>
             <p className="mt-1 text-xs text-amber-800">
-              Se a gestão aprovar, esses plantões ficam marcados como indisponível para ela resolver.
+              {afetadosCongresso
+                ? `Se a gestão aprovar, você continua nesses plantões e recebe ${afetadosCongresso === "palestrante" ? "80%" : "60%"} da vaga.`
+                : "Se a gestão aprovar, esses plantões ficam marcados como indisponível para ela resolver."}
             </p>
           </div>
         )}

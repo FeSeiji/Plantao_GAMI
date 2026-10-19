@@ -8,6 +8,7 @@ const {
 const { buscarCoberturas, repartirPlantao, duracaoDaVaga, duracaoDaCobertura } = require('../services/coberturas')
 const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { contaComoSocio } = require('../services/usuarios')
+const { buscarAfastamentosNoPeriodo, fatorDoDia } = require('../services/afastamentos')
 
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
@@ -119,11 +120,14 @@ exports.resumo = async (req, res) => {
     .filter(Boolean)
   const porData = (a, b) => (a.data + a.hora_inicio).localeCompare(b.data + b.hora_inicio)
 
-  // Partes das minhas vagas que outra pessoa cobre
-  let coberturasDasMinhas
+  // Partes das minhas vagas que outra pessoa cobre, e meus congressos do mês (descontam na vaga)
+  let coberturasDasMinhas, meusAfastamentos
   try {
-    coberturasDasMinhas = (await buscarCoberturas([...janela.data, ...proximos.data].map(p => p.id)))
-      .filter(c => c.usuario_saida === eu)
+    [coberturasDasMinhas, meusAfastamentos] = await Promise.all([
+      buscarCoberturas([...janela.data, ...proximos.data].map(p => p.id)),
+      buscarAfastamentosNoPeriodo([eu], inicioMes, fimMes),
+    ])
+    coberturasDasMinhas = coberturasDasMinhas.filter(c => c.usuario_saida === eu)
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -149,15 +153,16 @@ exports.resumo = async (req, res) => {
     // Na cobertura de férias, quem cobre e quem está de férias ficam com a vaga inteira
     const total = duracaoDaVaga(p)
     const outro = p.cobertura ? null : coberturaDaMinhaVaga(p)
-    const minutos = p.cobertura
+    const minutos = (p.cobertura
       ? duracaoDaCobertura(p.cobertura.hora_inicio, p.cobertura.hora_fim)
       : total - (outro && !outro.cobertura_ferias ? duracaoDaCobertura(outro.hora_inicio, outro.hora_fim) : 0)
+    ) * fatorDoDia(meusAfastamentos, eu, p.data)
     if (souSocio) {
       meuMes.socio.plantoes += 1
       meuMes.socio.pontos += pontosDaPosicao(p.eu[0]?.posicao) * (minutos / total)
     } else {
       meuMes.plantonista.plantoes += 1
-      meuMes.plantonista.minutos += minutos
+      meuMes.plantonista.minutos += Math.round(minutos)
     }
   }
   meuMes.socio.pontos = Math.round(meuMes.socio.pontos * 100) / 100
@@ -215,9 +220,16 @@ exports.gestao = async (req, res) => {
   if (erro) return res.status(500).json({ error: erro.error.message })
   trocas.data = trocas.data.filter(t => !trocaVencida(t, t.plantoes?.data))
 
-  let coberturas
+  let coberturas, afastamentos
   try {
-    coberturas = await buscarCoberturas(plantoes.data.map(p => p.id))
+    [coberturas, afastamentos] = await Promise.all([
+      buscarCoberturas(plantoes.data.map(p => p.id)),
+      buscarAfastamentosNoPeriodo(
+        plantoes.data.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
+        mesAnterior.inicio,
+        mesAtual.fim,
+      ),
+    ])
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -241,8 +253,8 @@ exports.gestao = async (req, res) => {
 
   // 9 e 10. Resumo e ranking do mês, separando sócio e plantonista pelo cargo
   const roles = new Map(auth.data.users.map(u => [u.id, u.app_metadata?.roles ?? []]))
-  const resumoAtual = resumirMes(plantoes.data, mesAtual, coberturas, roles)
-  const resumoAnterior = resumirMes(plantoes.data, mesAnterior, coberturas, roles)
+  const resumoAtual = resumirMes(plantoes.data, mesAtual, coberturas, roles, afastamentos)
+  const resumoAnterior = resumirMes(plantoes.data, mesAnterior, coberturas, roles, afastamentos)
 
   // 11. Equipe cadastrada
   const porRole = {}
@@ -300,8 +312,8 @@ function problemaDeCobertura(p) {
 }
 
 // Mesmas regras do BM Financeiro: quem tem o cargo de sócio soma pontos pela vaga e quem é só plantonista
-// soma horas; troca por horas rateada
-function resumirMes(plantoes, { inicio, fim }, coberturas, roles) {
+// soma horas; troca por horas rateada e congresso com desconto
+function resumirMes(plantoes, { inicio, fim }, coberturas, roles, afastamentos) {
   const horas = new Map()
   const pontos = new Map()
   const totais = { plantoes: 0, minutos: 0, pontos: 0 }
@@ -309,7 +321,7 @@ function resumirMes(plantoes, { inicio, fim }, coberturas, roles) {
   for (const p of plantoes) {
     if (p.data < inicio || p.data > fim) continue
     totais.plantoes += 1
-    for (const parte of repartirPlantao(p, p.plantao_usuarios, coberturas)) {
+    for (const parte of repartirPlantao(p, p.plantao_usuarios, coberturas, afastamentos)) {
       if (contaComoSocio(roles.get(parte.usuario_id))) {
         const pts = pontosDaPosicao(parte.posicao) * parte.fracao
         pontos.set(parte.usuario_id, (pontos.get(parte.usuario_id) ?? 0) + pts)

@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
-const { TIPOS_AFASTAMENTO, hojeLocal } = require('../services/afastamentos')
+const { TIPOS_AFASTAMENTO, TIPOS_CONGRESSO, hojeLocal } = require('../services/afastamentos')
 const { horarioDaVaga } = require('../services/posicoes')
 const { ehGestao } = require('../middleware/auth')
 
@@ -13,7 +13,7 @@ function dataValida(data) {
   return DATA_REGEX.test(data ?? '') && !isNaN(new Date(`${data}T00:00:00Z`).getTime())
 }
 
-const CAMPOS = 'id, tipo, data_inicio, data_fim, observacao, status'
+const CAMPOS = 'id, tipo, congresso_tipo, data_inicio, data_fim, observacao, status'
 
 // Afastamentos atuais e futuros do próprio médico (os que já terminaram ficam de fora).
 // Inclui os recusados, para ele saber da resposta da gestão.
@@ -49,10 +49,14 @@ exports.criar = async (req, res) => {
     return res.status(403).json({ error: 'Apenas anestesistas cadastram férias ou congressos' })
   }
 
-  const { tipo, data_inicio, data_fim, observacao } = req.body
+  const { tipo, congresso_tipo, data_inicio, data_fim, observacao } = req.body
 
   if (!TIPOS_AFASTAMENTO.includes(tipo)) {
     return res.status(400).json({ error: "tipo deve ser 'ferias' ou 'congresso'" })
+  }
+  // Congresso precisa do tipo, que define quanto da vaga o médico recebe (palestrante 80%, congressista 60%)
+  if (tipo === 'congresso' && !TIPOS_CONGRESSO.includes(congresso_tipo)) {
+    return res.status(400).json({ error: 'Informe se você vai ao congresso como palestrante ou congressista' })
   }
   if (!dataValida(data_inicio) || !dataValida(data_fim)) {
     return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórias (AAAA-MM-DD)' })
@@ -83,7 +87,15 @@ exports.criar = async (req, res) => {
   const { data: criado, error } = await supabase
     .from('afastamentos')
     // Nasce pendente: só bloqueia a escala depois que a gestão aprovar
-    .insert({ usuario_id: req.user.id, tipo, data_inicio, data_fim, observacao: obs || null, status: 'pendente' })
+    .insert({
+      usuario_id: req.user.id,
+      tipo,
+      congresso_tipo: tipo === 'congresso' ? congresso_tipo : null,
+      data_inicio,
+      data_fim,
+      observacao: obs || null,
+      status: 'pendente',
+    })
     .select(CAMPOS)
     .single()
 
@@ -105,6 +117,42 @@ exports.criar = async (req, res) => {
     .sort((a, b) => (a.data + a.hora_inicio).localeCompare(b.data + b.hora_inicio))
 
   return res.status(201).json({ ...criado, plantoesAfetados })
+}
+
+// Tipo do congresso (palestrante ou congressista). Os congressos cadastrados antes dos tipos ficaram sem:
+// o próprio médico define enquanto estiver sem tipo ou pendente; a gestão define ou muda a qualquer momento
+exports.definirTipoCongresso = async (req, res) => {
+  const { congresso_tipo } = req.body ?? {}
+  if (!TIPOS_CONGRESSO.includes(congresso_tipo)) {
+    return res.status(400).json({ error: "congresso_tipo deve ser 'palestrante' ou 'congressista'" })
+  }
+
+  const { data: afastamento, error: buscaError } = await supabase
+    .from('afastamentos')
+    .select('id, usuario_id, tipo, congresso_tipo, status')
+    .eq('id', req.params.id)
+    .maybeSingle()
+
+  if (buscaError) return res.status(500).json({ error: buscaError.message })
+
+  const gestao = ehGestao(req.user)
+  if (!afastamento || (!gestao && afastamento.usuario_id !== req.user.id)) {
+    return res.status(404).json({ error: 'Afastamento não encontrado' })
+  }
+  if (afastamento.tipo !== 'congresso') return res.status(400).json({ error: 'Só congresso tem tipo' })
+  if (!gestao && afastamento.congresso_tipo && afastamento.status !== 'pendente') {
+    return res.status(403).json({ error: 'Congresso já aprovado: peça à gestão para mudar o tipo' })
+  }
+
+  const { data, error } = await supabase
+    .from('afastamentos')
+    .update({ congresso_tipo })
+    .eq('id', afastamento.id)
+    .select(CAMPOS)
+    .single()
+
+  if (error) return res.status(400).json({ error: error.message })
+  return res.json(data)
 }
 
 // O médico apaga o próprio pedido pendente ou recusado; um aprovado só a gestão remove
@@ -135,7 +183,7 @@ exports.remover = async (req, res) => {
 exports.listarPendentes = async (req, res) => {
   const { data, error } = await supabase
     .from('afastamentos')
-    .select('id, usuario_id, tipo, data_inicio, data_fim, observacao')
+    .select('id, usuario_id, tipo, congresso_tipo, data_inicio, data_fim, observacao')
     .eq('status', 'pendente')
     .gte('data_fim', hojeLocal())
     .order('data_inicio', { ascending: true })

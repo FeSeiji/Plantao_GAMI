@@ -4,6 +4,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { pontosDaPosicao } = require('../services/posicoes')
 const { buscarCoberturas, repartirPlantao } = require('../services/coberturas')
+const { buscarAfastamentosNoPeriodo } = require('../services/afastamentos')
 const { buscarRolesDosUsuarios, contaComoSocio } = require('../services/usuarios')
 const { listarCasosFora } = require('../services/casosFora')
 
@@ -11,6 +12,7 @@ const { listarCasosFora } = require('../services/casosFora')
 // O plantão não tem tipo: quem tem o cargo de sócio conta pontos pela vaga e quem é só plantonista conta horas.
 // O noturno conta no mês em que o plantão começa.
 // Troca por horas: horas e pontos da vaga são divididos na proporção das horas de cada um.
+// Congresso aprovado: o médico recebe só a parte do tipo (palestrante 80%, congressista 60%).
 // Os casos fora do mês vêm listados um a um, do mais antigo para o mais recente.
 exports.resumoMensal = async (req, res) => {
   const { mes } = req.query
@@ -31,12 +33,13 @@ exports.resumoMensal = async (req, res) => {
 
   if (error) return res.status(400).json({ error: error.message })
 
-  let coberturas, roles, casosFora
+  let coberturas, roles, casosFora, afastamentos
   try {
-    [coberturas, roles, casosFora] = await Promise.all([
+    [coberturas, roles, casosFora, afastamentos] = await Promise.all([
       buscarCoberturas(plantoes.map(p => p.id)),
       buscarRolesDosUsuarios(),
       listarCasosFora({ inicio, fim }),
+      buscarAfastamentosNoPeriodo(plantoes.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)), inicio, fim),
     ])
   } catch (err) {
     return res.status(500).json({ error: err.message })
@@ -47,7 +50,7 @@ exports.resumoMensal = async (req, res) => {
 
   // Cada vaga ocupada (ou o pedaço dela, na troca por horas) conta como um plantão de quem a fez
   for (const plantao of plantoes) {
-    for (const { usuario_id, posicao, fracao, minutos } of repartirPlantao(plantao, plantao.plantao_usuarios, coberturas)) {
+    for (const { usuario_id, posicao, fracao, minutos } of repartirPlantao(plantao, plantao.plantao_usuarios, coberturas, afastamentos)) {
       if (contaComoSocio(roles.get(usuario_id))) {
         const acc = socios.get(usuario_id) ?? { plantoes: 0, pontos: 0 }
         acc.plantoes += 1

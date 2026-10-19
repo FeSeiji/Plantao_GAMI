@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { apiFetch } from "./sessao"
 import { formatarIntervalo } from "./trocaPorHoras"
 import { descreverPosicao } from "./posicoes"
+import { TipoCongresso, rotuloTipoCongresso } from "./disponibilidade"
 
 type Pessoa = {
   id: string
@@ -37,6 +38,7 @@ type TrocaPendente = {
 type AfastamentoPendente = {
   id: string
   tipo: "ferias" | "congresso"
+  congresso_tipo: TipoCongresso | null
   data_inicio: string
   data_fim: string
   observacao: string | null
@@ -304,7 +306,13 @@ export default function NotificacaoTrocaSino() {
                   <li key={a.id} className="px-4 py-3">
                     <p className="text-sm text-gray-700">
                       <span className="font-semibold">{a.usuario.nome ?? a.usuario.email}</span> pediu{" "}
-                      {a.tipo === "ferias" ? "férias" : "congresso"} de {formatarData(a.data_inicio)}
+                      {a.tipo === "ferias"
+                        ? "férias"
+                        : a.congresso_tipo
+                          ? `congresso como ${rotuloTipoCongresso(a.congresso_tipo).toLowerCase()}`
+                          : "congresso (sem tipo)"}{" "}
+                      de{" "}
+                      {formatarData(a.data_inicio)}
                       {a.data_fim !== a.data_inicio && ` a ${formatarData(a.data_fim)}`}.
                     </p>
                     {a.observacao && <p className="text-xs text-gray-400 mt-1">{a.observacao}</p>}
