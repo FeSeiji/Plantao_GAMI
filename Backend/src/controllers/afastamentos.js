@@ -8,6 +8,7 @@ const { ehGestao } = require('../middleware/auth')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const DATA_REGEX = /^\d{4}-\d{2}-\d{2}$/
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function dataValida(data) {
   return DATA_REGEX.test(data ?? '') && !isNaN(new Date(`${data}T00:00:00Z`).getTime())
@@ -86,20 +87,38 @@ exports.listarDoUsuario = async (req, res) => {
   return res.json(data)
 }
 
+// O médico pede o próprio período: nasce pendente (a gestão aprova) e só de hoje em diante
 exports.criar = async (req, res) => {
   const roles = req.user.app_metadata?.roles ?? []
   if (!roles.some(r => ROLES_ANESTESISTA.includes(r))) {
     return res.status(403).json({ error: 'Apenas anestesistas cadastram férias ou congressos' })
   }
+  return cadastrar(req, res, req.user.id, { pelaGestao: false })
+}
 
-  const { tipo, congresso_tipo, data_inicio, data_fim, observacao } = req.body
+// A gestão cadastra o período de qualquer médico: já nasce aprovado e pode ser no passado
+// (para lançar umas férias esquecidas e o BM daquele mês sair certo)
+exports.criarParaMedico = async (req, res) => {
+  // Id fora do formato faz o Supabase lançar erro em vez de devolver "não encontrado"
+  if (!UUID_REGEX.test(req.params.usuarioId)) return res.status(404).json({ error: 'Médico não encontrado' })
+  const { data: auth, error } = await supabase.auth.admin.getUserById(req.params.usuarioId)
+  if (error || !auth?.user) return res.status(404).json({ error: 'Médico não encontrado' })
+  if (!(auth.user.app_metadata?.roles ?? []).some(r => ROLES_ANESTESISTA.includes(r))) {
+    return res.status(400).json({ error: 'Férias e congressos são só para médicos (sócios e plantonistas)' })
+  }
+  return cadastrar(req, res, auth.user.id, { pelaGestao: true })
+}
+
+async function cadastrar(req, res, usuarioId, { pelaGestao }) {
+  const { tipo, congresso_tipo, data_inicio, data_fim, observacao } = req.body ?? {}
 
   if (!TIPOS_AFASTAMENTO.includes(tipo)) {
     return res.status(400).json({ error: "tipo deve ser 'ferias' ou 'congresso'" })
   }
   // Congresso precisa do tipo, que define quanto da vaga o médico recebe (palestrante 80%, congressista 60%)
   if (tipo === 'congresso' && !TIPOS_CONGRESSO.includes(congresso_tipo)) {
-    return res.status(400).json({ error: 'Informe se você vai ao congresso como palestrante ou congressista' })
+    const quem = pelaGestao ? 'o médico vai' : 'você vai'
+    return res.status(400).json({ error: `Informe se ${quem} ao congresso como palestrante ou congressista` })
   }
   if (!dataValida(data_inicio) || !dataValida(data_fim)) {
     return res.status(400).json({ error: 'data_inicio e data_fim são obrigatórias (AAAA-MM-DD)' })
@@ -107,7 +126,7 @@ exports.criar = async (req, res) => {
   if (data_fim < data_inicio) {
     return res.status(400).json({ error: 'A data final não pode ser antes da inicial' })
   }
-  if (data_fim < hojeLocal()) {
+  if (!pelaGestao && data_fim < hojeLocal()) {
     return res.status(400).json({ error: 'O período já terminou' })
   }
 
@@ -116,7 +135,7 @@ exports.criar = async (req, res) => {
   const { data: sobrepostos, error: sobreError } = await supabase
     .from('afastamentos')
     .select('id')
-    .eq('usuario_id', req.user.id)
+    .eq('usuario_id', usuarioId)
     .neq('status', 'recusado')
     .lte('data_inicio', data_fim)
     .gte('data_fim', data_inicio)
@@ -124,20 +143,24 @@ exports.criar = async (req, res) => {
 
   if (sobreError) return res.status(500).json({ error: sobreError.message })
   if (sobrepostos.length > 0) {
-    return res.status(409).json({ error: 'Já existe um afastamento seu que cobre parte desse período' })
+    const erro = pelaGestao
+      ? 'Esse médico já tem férias ou congresso em parte desse período'
+      : 'Já existe um afastamento seu que cobre parte desse período'
+    return res.status(409).json({ error: erro })
   }
 
   const { data: criado, error } = await supabase
     .from('afastamentos')
-    // Nasce pendente: só bloqueia a escala depois que a gestão aprovar
+    // Pedido do médico nasce pendente: só bloqueia a escala depois que a gestão aprovar
     .insert({
-      usuario_id: req.user.id,
+      usuario_id: usuarioId,
       tipo,
       congresso_tipo: tipo === 'congresso' ? congresso_tipo : null,
       data_inicio,
       data_fim,
       observacao: obs || null,
-      status: 'pendente',
+      status: pelaGestao ? 'aprovado' : 'pendente',
+      ...(pelaGestao ? { respondido_por: req.user.id, respondido_em: new Date().toISOString() } : {}),
     })
     .select(CAMPOS)
     .single()
@@ -149,7 +172,7 @@ exports.criar = async (req, res) => {
   const { data: escalas, error: escalasError } = await supabase
     .from('plantao_usuarios')
     .select('posicao, plantoes!inner(id, titulo, data)')
-    .eq('usuario_id', req.user.id)
+    .eq('usuario_id', usuarioId)
     .gte('plantoes.data', data_inicio)
     .lte('plantoes.data', data_fim)
 

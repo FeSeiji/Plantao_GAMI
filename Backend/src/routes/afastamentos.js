@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
 const {
-  listarMeus, listarDoUsuario, listarPendentes, listarTodos, criar, remover, responder, definirTipoCongresso,
+  listarMeus, listarDoUsuario, listarPendentes, listarTodos, criar, criarParaMedico, remover, responder, definirTipoCongresso,
 } = require('../controllers/afastamentos')
 
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
@@ -12,6 +12,8 @@ router.get('/', gestao, listarTodos)
 router.get('/me', listarMeus)
 router.get('/pendentes', gestao, listarPendentes)
 router.get('/usuario/:usuarioId', gestao, listarDoUsuario)
+// A gestão cadastra para qualquer médico: já aprovado, e pode ser no passado
+router.post('/usuario/:usuarioId', gestao, criarParaMedico)
 router.post('/', criar)
 router.patch('/:id/aprovar', gestao, responder(true))
 router.patch('/:id/recusar', gestao, responder(false))

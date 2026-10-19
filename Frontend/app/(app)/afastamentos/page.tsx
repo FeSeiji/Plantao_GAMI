@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoModal"
+import NovoAfastamentoModal from "../../../components/NovoAfastamentoModal"
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino"
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
 import { TIPOS_CONGRESSO, TipoCongresso } from "../../../components/disponibilidade"
@@ -80,6 +81,7 @@ export default function AfastamentosPage() {
   const [error, setError] = useState("")
   const [ocupado, setOcupado] = useState<string | null>(null)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
+  const [novoAberto, setNovoAberto] = useState(false)
 
   const [inicio, setInicio] = useState(hojeLocal)
   const [fim, setFim] = useState("")
@@ -250,7 +252,15 @@ export default function AfastamentosPage() {
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <h1 className="text-xl font-bold text-gray-800 mb-4">Férias e congressos</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h1 className="text-xl font-bold text-gray-800">Férias e congressos</h1>
+        <button
+          onClick={() => setNovoAberto(true)}
+          className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+        >
+          + Novo período
+        </button>
+      </div>
 
       <div className="flex flex-wrap items-end gap-3 mb-6">
         <div>
@@ -382,6 +392,7 @@ export default function AfastamentosPage() {
       </div>
 
       {confirmacao && <ConfirmacaoModal confirmacao={confirmacao} onClose={() => setConfirmacao(null)} />}
+      {novoAberto && <NovoAfastamentoModal onClose={() => setNovoAberto(false)} onSaved={carregar} />}
     </main>
   )
 }
