@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { ROLES_GESTAO } from "./UsuarioModal"
+import { ROLES_EDICAO, ROLES_GESTAO } from "./UsuarioModal"
 import { limparSessao } from "./sessao"
 
 // Administradores e técnicos — mesma lista do backend em routes/bmFinanceiro.js
@@ -18,6 +18,8 @@ const NAV_ITEMS = [
   { label: "Fichas anestésicas", href: "/fichas" },
   { label: "Casos fora", href: "/casos-fora" },
   { label: "Usuários", href: "/usuarios", roles: ROLES_GESTAO },
+  // Escritório, admin e técnico — mesma lista do requireRole em routes/afastamentos.js
+  { label: "Férias e congressos", href: "/afastamentos", roles: ROLES_EDICAO },
   { label: "BM Financeiro", href: "/bm-financeiro", roles: ROLES_BM_FINANCEIRO },
 ]
 

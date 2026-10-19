@@ -155,8 +155,7 @@ export default function AfastamentosPerfil() {
       <h2 className="font-semibold text-gray-800">Férias e congressos</h2>
       <p className="text-sm text-gray-500 mt-1 mb-5">
         O pedido vai para a gestão aprovar. Depois de aprovado, você não poderá ser escalado nesses dias, e os plantões em que
-        já estiver no período ficam marcados para a gestão resolver. No congresso você continua nesses plantões, recebendo
-        80% da vaga como palestrante ou 60% como congressista.
+        já estiver no período ficam marcados para a gestão resolver. No congresso você continua nesses plantões.
       </p>
 
       {carregando ? (
@@ -188,7 +187,7 @@ export default function AfastamentosPerfil() {
                       {!a.congresso_tipo && <option value="">Definir tipo</option>}
                       {TIPOS_CONGRESSO.map((t) => (
                         <option key={t.valor} value={t.valor}>
-                          {t.rotulo} ({t.desconto})
+                          {t.rotulo}
                         </option>
                       ))}
                     </select>
@@ -264,7 +263,6 @@ export default function AfastamentosPerfil() {
                   }`}
                 >
                   {t.rotulo}
-                  <span className="block text-xs font-normal text-gray-500">recebe {t.valor === "palestrante" ? "80%" : "60%"} da vaga</span>
                 </button>
               ))}
             </div>
@@ -335,7 +333,7 @@ export default function AfastamentosPerfil() {
             </ul>
             <p className="mt-1 text-xs text-amber-800">
               {afetadosCongresso
-                ? `Se a gestão aprovar, você continua nesses plantões e recebe ${afetadosCongresso === "palestrante" ? "80%" : "60%"} da vaga.`
+                ? "Se a gestão aprovar, você continua nesses plantões."
                 : "Se a gestão aprovar, esses plantões ficam marcados como indisponível para ela resolver."}
             </p>
           </div>

@@ -29,6 +29,49 @@ exports.listarMeus = async (req, res) => {
   return res.json(data)
 }
 
+const STATUS_AFASTAMENTO = ['pendente', 'aprovado', 'recusado']
+
+// Tela "Férias e congressos" da gestão: todos os médicos, com o nome de cada um.
+// Sem período, vêm os atuais e futuros; com inicio/fim, os que tocam esse intervalo.
+// Sem status, vêm os aprovados e os pendentes (os recusados só quando pedidos)
+exports.listarTodos = async (req, res) => {
+  const { inicio, fim, tipo, status } = req.query
+
+  if ((inicio && !dataValida(inicio)) || (fim && !dataValida(fim))) {
+    return res.status(400).json({ error: 'inicio e fim devem estar no formato AAAA-MM-DD' })
+  }
+  if (tipo && !TIPOS_AFASTAMENTO.includes(tipo)) {
+    return res.status(400).json({ error: "tipo deve ser 'ferias' ou 'congresso'" })
+  }
+  if (status && !STATUS_AFASTAMENTO.includes(status)) {
+    return res.status(400).json({ error: "status deve ser 'pendente', 'aprovado' ou 'recusado'" })
+  }
+
+  let query = supabase
+    .from('afastamentos')
+    .select(`usuario_id, ${CAMPOS}`)
+    .in('status', status ? [status] : ['aprovado', 'pendente'])
+    .gte('data_fim', inicio || hojeLocal())
+    .order('data_inicio', { ascending: true })
+    .limit(1000)
+
+  if (fim) query = query.lte('data_inicio', fim)
+  if (tipo) query = query.eq('tipo', tipo)
+
+  const { data, error } = await query
+  if (error) return res.status(500).json({ error: error.message })
+
+  const ids = [...new Set(data.map(a => a.usuario_id))]
+  const { data: perfis, error: perfisError } = ids.length
+    ? await supabase.from('profiles').select('id, nome, email, sigla').in('id', ids)
+    : { data: [], error: null }
+
+  if (perfisError) return res.status(500).json({ error: perfisError.message })
+
+  const porId = new Map(perfis.map(p => [p.id, p]))
+  return res.json(data.map(({ usuario_id, ...a }) => ({ ...a, usuario: porId.get(usuario_id) ?? { id: usuario_id } })))
+}
+
 // Gestão (escritório/admin/técnico) consulta os afastamentos atuais e futuros de um médico
 exports.listarDoUsuario = async (req, res) => {
   const { data, error } = await supabase

@@ -418,7 +418,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                             {!a.congresso_tipo && <option value="">Definir tipo</option>}
                             {TIPOS_CONGRESSO.map((t) => (
                               <option key={t.valor} value={t.valor}>
-                                {t.rotulo} ({t.desconto})
+                                {t.rotulo}
                               </option>
                             ))}
                           </select>

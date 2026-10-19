@@ -41,18 +41,17 @@ export type Afastamento = {
   status?: "pendente" | "aprovado"
 }
 
-// Congresso: o médico continua na escala e recebe só parte da vaga — mesmos fatores do backend
-// (FATOR_CONGRESSO em Backend/src/services/afastamentos.js)
+// Congresso: o médico continua na escala e recebe só parte da vaga (FATOR_CONGRESSO em
+// Backend/src/services/afastamentos.js). A tela mostra só o nome do tipo, nunca a porcentagem
 export type TipoCongresso = "palestrante" | "congressista"
-export const TIPOS_CONGRESSO: { valor: TipoCongresso; rotulo: string; desconto: string }[] = [
-  { valor: "palestrante", rotulo: "Palestrante", desconto: "−20%" },
-  { valor: "congressista", rotulo: "Congressista", desconto: "−40%" },
+export const TIPOS_CONGRESSO: { valor: TipoCongresso; rotulo: string }[] = [
+  { valor: "palestrante", rotulo: "Palestrante" },
+  { valor: "congressista", rotulo: "Congressista" },
 ]
 
-// "Palestrante (−20%)", ou o aviso para quem ainda não definiu
+// "Palestrante", ou o aviso para quem ainda não definiu
 export function rotuloTipoCongresso(tipo?: TipoCongresso | null) {
-  const t = TIPOS_CONGRESSO.find((x) => x.valor === tipo)
-  return t ? `${t.rotulo} (${t.desconto})` : "definir tipo"
+  return TIPOS_CONGRESSO.find((x) => x.valor === tipo)?.rotulo ?? "definir tipo"
 }
 
 export const afastamentoPendente = (a?: Afastamento | null) => a?.status === "pendente"
@@ -77,7 +76,7 @@ export function rotuloAfastamento(a: Afastamento) {
 }
 
 // Aviso na vaga do plantão (linha do modal e título da sigla no calendário).
-// Congresso aprovado não tira o médico da escala: mostra o tipo, que define o desconto
+// Congresso aprovado não tira o médico da escala: mostra o tipo (palestrante ou congressista)
 export function avisoAfastamento(a: Afastamento) {
   if (afastamentoPendente(a)) return `Pedido de ${rotuloAfastamento(a)} aguardando aprovação`
   if (a.tipo === "congresso") return `Congresso ${rotuloAfastamento(a).replace("congresso ", "")}: ${rotuloTipoCongresso(a.congresso_tipo)}`
