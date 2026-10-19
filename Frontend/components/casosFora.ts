@@ -13,7 +13,7 @@ export const RECIBOS: { valor: Recibo; rotulo: string }[] = [
 export const MAX_TEXTO = 200
 export const MAX_COMENTARIOS = 2000
 
-// Item das listas cadastradas pela gestão (hospitais) e pelo escritório (cirurgiões)
+// Item das listas cadastradas pela gestão (hospitais) e pelo escritório e técnico (cirurgiões)
 export type ItemCadastro = { id: string; nome: string | null; ativo: boolean }
 export type Hospital = ItemCadastro
 export type Cirurgiao = ItemCadastro

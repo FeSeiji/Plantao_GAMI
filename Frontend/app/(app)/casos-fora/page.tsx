@@ -12,7 +12,7 @@ import { apiFetch } from "../../../components/sessao"
 // Quem registra casos — mesma lista do requireRole em Backend/src/routes/casosFora.js
 const ROLES_CRIAR_CASO = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
 
-// Listas da tela: hospitais a gestão cadastra; cirurgiões, só o escritório (Backend/src/routes/cirurgioes.js)
+// Listas da tela: hospitais a gestão cadastra; cirurgiões, só o escritório e o técnico (Backend/src/routes/cirurgioes.js)
 const CADASTROS = {
   hospitais: {
     titulo: "Hospitais",
@@ -50,7 +50,7 @@ export default function CasosForaPage() {
   const [error, setError] = useState("")
   const [podeCriar, setPodeCriar] = useState(false)
   const [ehGestao, setEhGestao] = useState(false)
-  const [ehEscritorio, setEhEscritorio] = useState(false)
+  const [podeCadastrarCirurgioes, setPodeCadastrarCirurgioes] = useState(false)
   const [inicio, setInicio] = useState(() => diasAtras(30))
   const [fim, setFim] = useState("")
   const [buscaAnestesista, setBuscaAnestesista] = useState("")
@@ -67,11 +67,11 @@ export default function CasosForaPage() {
       const roles: string[] = JSON.parse(localStorage.getItem("roles") ?? "[]")
       setPodeCriar(roles.some((r) => ROLES_CRIAR_CASO.includes(r)))
       setEhGestao(roles.some((r) => ROLES_EDICAO.includes(r)))
-      setEhEscritorio(roles.includes("escritorio"))
+      setPodeCadastrarCirurgioes(roles.some((r) => ["escritorio", "tecnico"].includes(r)))
     } catch {
       setPodeCriar(false)
       setEhGestao(false)
-      setEhEscritorio(false)
+      setPodeCadastrarCirurgioes(false)
     }
   }, [router])
 
@@ -121,7 +121,7 @@ export default function CasosForaPage() {
               Hospitais
             </button>
           )}
-          {ehEscritorio && (
+          {podeCadastrarCirurgioes && (
             <button
               onClick={() => setCadastroAberto("cirurgioes")}
               className="shrink-0 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
