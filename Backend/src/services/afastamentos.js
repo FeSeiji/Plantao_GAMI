@@ -50,6 +50,12 @@ async function usuariosAfastados(usuarioIds, data) {
   return resultado
 }
 
+// Férias aprovadas nessa data. Na vaga de quem está de férias não há troca: outro médico cobre o turno inteiro
+// e os dois recebem os pontos (cobertura de férias). Congresso vai ter uma regra própria
+async function estaDeFerias(usuarioId, data) {
+  return (await usuariosAfastados([usuarioId], data)).get(usuarioId)?.tipo === 'ferias'
+}
+
 module.exports = {
   TIPOS_AFASTAMENTO,
   ROTULO_TIPO,
@@ -57,4 +63,5 @@ module.exports = {
   buscarAfastamentosNoPeriodo,
   afastamentoEm,
   usuariosAfastados,
+  estaDeFerias,
 }

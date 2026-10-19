@@ -84,11 +84,11 @@ exports.resumo = async (req, res) => {
       .eq('solicitado_por', eu)
       .eq('status', 'pendente')
       .order('solicitado_em', { ascending: false }),
-    // Trocas por horas em que eu cubro parte da vaga de alguém
+    // Trocas por horas (e coberturas de férias) em que eu cubro a vaga de alguém
     supabase
       .from('plantao_trocas')
       .select(
-        'id, posicao, usuario_saida, hora_inicio, hora_fim, ' +
+        'id, posicao, usuario_saida, hora_inicio, hora_fim, cobertura_ferias, ' +
         'plantoes!inner(id, titulo, data, plantao_usuarios(usuario_id, posicao))'
       )
       .eq('usuario_entrada', eu)
@@ -113,7 +113,7 @@ exports.resumo = async (req, res) => {
       return {
         ...daVaga(c.plantoes, c.posicao),
         eu: [slot],
-        cobertura: { titular: c.usuario_saida, hora_inicio: c.hora_inicio, hora_fim: c.hora_fim },
+        cobertura: { titular: c.usuario_saida, hora_inicio: c.hora_inicio, hora_fim: c.hora_fim, ferias: c.cobertura_ferias },
       }
     })
     .filter(Boolean)
@@ -145,12 +145,13 @@ exports.resumo = async (req, res) => {
     socio: { plantoes: 0, pontos: 0 },
   }
   for (const p of doMes) {
-    // Fração da vaga que é minha: o intervalo que cubro, ou o que sobra quando alguém cobre parte da minha vaga
+    // Fração da vaga que é minha: o intervalo que cubro, ou o que sobra quando alguém cobre parte da minha vaga.
+    // Na cobertura de férias, quem cobre e quem está de férias ficam com a vaga inteira
     const total = duracaoDaVaga(p)
     const outro = p.cobertura ? null : coberturaDaMinhaVaga(p)
     const minutos = p.cobertura
       ? duracaoDaCobertura(p.cobertura.hora_inicio, p.cobertura.hora_fim)
-      : total - (outro ? duracaoDaCobertura(outro.hora_inicio, outro.hora_fim) : 0)
+      : total - (outro && !outro.cobertura_ferias ? duracaoDaCobertura(outro.hora_inicio, outro.hora_fim) : 0)
     if (souSocio) {
       meuMes.socio.plantoes += 1
       meuMes.socio.pontos += pontosDaPosicao(p.eu[0]?.posicao) * (minutos / total)
@@ -364,13 +365,19 @@ function formatPlantao(row, perfis, agoraMin, coberturaDaMinhaVaga = null) {
       coordenador: ehVagaDeCoordenador(eu[0]?.posicao),
       posicao: eu[0]?.posicao ?? null,
       cobrindo: cobertura
-        ? { titular: perfis.get(cobertura.titular) ?? { id: cobertura.titular }, horaInicio: cobertura.hora_inicio, horaFim: cobertura.hora_fim }
+        ? {
+            titular: perfis.get(cobertura.titular) ?? { id: cobertura.titular },
+            horaInicio: cobertura.hora_inicio,
+            horaFim: cobertura.hora_fim,
+            ferias: cobertura.ferias,
+          }
         : null,
       coberto: coberturaDaMinhaVaga
         ? {
             por: perfis.get(coberturaDaMinhaVaga.usuario_entrada) ?? { id: coberturaDaMinhaVaga.usuario_entrada },
             horaInicio: coberturaDaMinhaVaga.hora_inicio,
             horaFim: coberturaDaMinhaVaga.hora_fim,
+            ferias: coberturaDaMinhaVaga.cobertura_ferias,
           }
         : null,
     },
@@ -403,6 +410,7 @@ function formatTroca(row, perfis) {
     respondenteId: respondenteDaTroca(row),
     horaInicio: row.hora_inicio ?? null,
     horaFim: row.hora_fim ?? null,
+    coberturaFerias: row.cobertura_ferias ?? false,
   }
 }
 

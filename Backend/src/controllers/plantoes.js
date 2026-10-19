@@ -2,7 +2,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados } = require('../services/afastamentos')
+const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados, estaDeFerias } = require('../services/afastamentos')
 
 const { ehGestao } = require('../middleware/auth')
 const {
@@ -400,7 +400,8 @@ exports.addUsuarios = async (req, res) => {
 }
 
 // A troca é de uma vaga (posicao): quem está nela sai e usuario_entrada entra.
-// Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo)
+// Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo).
+// Titular de férias aprovadas: vira cobertura de férias (ele continua na vaga e o convidado cobre o turno inteiro)
 exports.criarTroca = async (req, res) => {
   const { posicao, usuario_entrada, hora_inicio = null, hora_fim = null } = req.body
   const parcial = hora_inicio != null || hora_fim != null
@@ -433,8 +434,16 @@ exports.criarTroca = async (req, res) => {
     return res.status(403).json({ error: 'Você só pode pedir a troca da sua vaga ou pedir a vaga de alguém para você' })
   }
 
+  let coberturaFerias
+  try {
+    coberturaFerias = await estaDeFerias(usuario_saida, plantao.data)
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+
   const horario = horarioDaVaga(plantao, posicao)
   if (parcial) {
+    if (coberturaFerias) return res.status(400).json({ error: 'Esse médico está de férias: a cobertura é da vaga inteira' })
     const erroIntervalo = validarIntervalo(horario, hora_inicio, hora_fim)
     if (erroIntervalo) return res.status(400).json({ error: erroIntervalo })
   }
@@ -445,9 +454,11 @@ exports.criarTroca = async (req, res) => {
       return res.status(400).json({ error: 'usuario_entrada precisa ser um médico ativo (anestesita_socio ou anestesita_plantonista)' })
     }
 
-    // Uma vaga tem no máximo uma troca por horas valendo; com ela ativa, nem a troca inteira é aceita
-    if ((await buscarCoberturas([plantao.id])).some(c => c.posicao === posicao)) {
-      return res.status(400).json({ error: 'Essa vaga já tem uma troca por horas valendo. A gestão precisa cancelá-la antes.' })
+    // Uma vaga tem no máximo uma troca por horas (ou cobertura de férias) valendo; com ela ativa, nem a troca inteira é aceita
+    const coberturaAtual = (await buscarCoberturas([plantao.id])).find(c => c.posicao === posicao)
+    if (coberturaAtual) {
+      const qual = coberturaAtual.cobertura_ferias ? 'uma cobertura de férias' : 'uma troca por horas'
+      return res.status(400).json({ error: `Essa vaga já tem ${qual} valendo. A gestão precisa cancelá-la antes.` })
     }
 
     // O convidado precisa estar livre no horário da vaga (na troca por horas, só no intervalo que vai cobrir).
@@ -472,8 +483,10 @@ exports.criarTroca = async (req, res) => {
       usuario_saida,
       usuario_entrada,
       solicitado_por: req.user.id,
-      hora_inicio: parcial ? hora_inicio : null,
-      hora_fim: parcial ? hora_fim : null,
+      // A cobertura de férias guarda o turno inteiro: assim quem cobre conta como ocupado nesse horário
+      hora_inicio: coberturaFerias ? horario.hora_inicio : parcial ? hora_inicio : null,
+      hora_fim: coberturaFerias ? horario.hora_fim : parcial ? hora_fim : null,
+      cobertura_ferias: coberturaFerias,
     })
     .select()
     .single()
@@ -623,7 +636,12 @@ exports.responderTroca = (aceitar) => async (req, res) => {
       }
 
       if (troca.hora_inicio && (await buscarCoberturas([troca.plantao_id])).some(c => c.posicao === troca.posicao)) {
-        return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas valendo' })
+        return res.status(409).json({ error: 'Essa vaga já tem outra troca por horas ou cobertura de férias valendo' })
+      }
+
+      // As férias podem ter sido canceladas enquanto o pedido esperava
+      if (troca.cobertura_ferias && !(await estaDeFerias(troca.usuario_saida, plantao.data))) {
+        return res.status(409).json({ error: 'O titular não está mais de férias nesse dia. Peça uma troca normal.' })
       }
     } catch (err) {
       return res.status(500).json({ error: err.message })
@@ -642,7 +660,7 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   if (error) return res.status(400).json({ error: error.message })
   if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
 
-  // Troca por horas não mexe na vaga: ela continua do titular e a troca aceita é a cobertura
+  // Troca por horas (e cobertura de férias) não mexe na vaga: ela continua do titular e a troca aceita é a cobertura
   if (aceitar && !troca.hora_inicio) {
     const { data: linhasAtualizadas, error: swapError } = await supabase
       .from('plantao_usuarios')
@@ -1046,6 +1064,7 @@ async function buscarTrocasPendentesPorSlot(plantaoIds) {
       respondenteId: respondenteDaTroca(t),
       horaInicio: t.hora_inicio,
       horaFim: t.hora_fim,
+      coberturaFerias: t.cobertura_ferias,
     },
   ]))
 }
@@ -1062,6 +1081,7 @@ async function buscarCoberturasPorSlot(plantaoIds) {
       usuario: perfis.get(c.usuario_entrada) ?? { id: c.usuario_entrada },
       horaInicio: c.hora_inicio,
       horaFim: c.hora_fim,
+      ferias: c.cobertura_ferias,
     },
   ]))
 }
@@ -1080,6 +1100,7 @@ function formatTroca(row, perfis) {
     respondenteId: respondenteDaTroca(row),
     horaInicio: row.hora_inicio ?? null,
     horaFim: row.hora_fim ?? null,
+    coberturaFerias: row.cobertura_ferias ?? false,
   }
 }
 

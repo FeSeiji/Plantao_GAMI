@@ -16,12 +16,14 @@ export type TrocaPendente = {
   horaFim?: string | null
 }
 
-// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo
+// Troca por horas aceita: a vaga continua do titular e "usuario" cobre o intervalo.
+// Cobertura de férias (ferias): "usuario" cobre o turno inteiro e o titular de férias continua na vaga
 export type Cobertura = {
   id: string
   usuario: { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
   horaInicio: string
   horaFim: string
+  ferias?: boolean
 }
 
 export type Usuario = {
@@ -59,7 +61,7 @@ export function doTurno(plantao: Plantao, turno: Turno) {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, a sigla de quem cobre a troca por horas
+// "!" de afastamento aprovado ou "?" de pedido pendente, a sigla de quem cobre (troca por horas ou férias)
 // e a posição na fila ou na equipe.
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 // data: o dia do plantão, porque o nome da vaga muda no fim de semana
@@ -86,7 +88,9 @@ export function BadgeComMarcador({
               : `Indisponível: ${rotuloAfastamento(usuario.afastamento)}`),
           usuario.trocaPendente && "Troca pendente de aceite",
           usuario.cobertura &&
-            `${usuario.cobertura.usuario.nome ?? usuario.cobertura.usuario.email} cobre ${formatarIntervalo(usuario.cobertura.horaInicio, usuario.cobertura.horaFim)}`,
+            (usuario.cobertura.ferias
+              ? `Coberto por ${usuario.cobertura.usuario.nome ?? usuario.cobertura.usuario.email}`
+              : `${usuario.cobertura.usuario.nome ?? usuario.cobertura.usuario.email} cobre ${formatarIntervalo(usuario.cobertura.horaInicio, usuario.cobertura.horaFim)}`),
         ]
           .filter(Boolean)
           .join(" · ") || undefined

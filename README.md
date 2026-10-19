@@ -215,7 +215,7 @@ Regras de escala:
 
 No modal do plantão, os participantes aparecem em **lista**, uma por turno, com uma linha por vaga: a vaga ("Coord.", "2º", "Interm."), a sigla, o nome e, embaixo, avisos como troca pendente, troca por horas ou férias. As ações de cada médico (trocar, remover) ficam no botão **⋯**, e uma vaga livre mostra **+ Adicionar**. Quem vira coordenador é definido mudando o médico de vaga — inclusive entre o diurno e o noturno. Mudar posições: a gestão e os médicos escalados no plantão. O modal também mostra o histórico de trocas, remoções e mudanças de vaga.
 
-O calendário tem visões de **semana** (uma linha por turno) e **mês**, com uma **cor por turno** (âmbar = diurno, índigo = noturno). Cada sigla tem indicadores: anel roxo do coordenador, ponto laranja de troca pendente, "!" de afastamento aprovado, "?" de pedido pendente e a sigla de quem cobre a troca por horas. No celular, a semana mostra os dias empilhados.
+O calendário tem visões de **semana** (uma linha por turno) e **mês**, com uma **cor por turno** (âmbar = diurno, índigo = noturno). Cada sigla tem indicadores: anel roxo do coordenador, ponto laranja de troca pendente, "!" de afastamento aprovado, "?" de pedido pendente e a sigla de quem cobre (troca por horas ou férias). No celular, a semana mostra os dias empilhados.
 
 ### Pedido de vaga livre
 No modal do plantão, o médico (sócio ou plantonista) vê **Pedir esta vaga** nas vagas livres, até o turno começar e se ainda não estiver naquele turno. O pedido fica pendente até a **gestão aprovar ou recusar**, pelo sino de notificações ou na própria vaga no modal.
@@ -231,7 +231,8 @@ A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as
 ### Trocas de plantão
 - **Troca da vaga inteira:** substituir o médico de uma vaga cria uma **solicitação de troca**. Ela só vale depois do aceite: de quem entra ou, quando o substituto pede a vaga para si, de quem sai. Enquanto isso, o titular continua no plantão.
 - **Troca por horas:** o substituto cobre só parte da vaga (do início até um horário, ou de um horário até o fim). A vaga continua do titular, e as horas e pontos são divididos no BM.
-- Quem pediu (ou a gestão) pode cancelar um pedido pendente. A gestão também pode desfazer uma troca por horas já aceita.
+- **Cobertura de férias:** a vaga de quem está de **férias aprovadas** não é trocada. Em vez de "Trocar", aparece "Pedir cobertura" (ou "Cobrir a vaga", para outro médico): quem cobre faz o turno inteiro, o titular continua na vaga (com o aviso vermelho) e **os dois recebem os pontos/horas inteiros** da vaga. Mesmo fluxo de aceite da troca; não existe cobertura parcial. Congresso ainda segue a troca normal.
+- Quem pediu (ou a gestão) pode cancelar um pedido pendente. A gestão também pode desfazer uma troca por horas ou cobertura de férias já aceita.
 - O sino de notificações mostra as trocas aguardando o aceite do usuário logado.
 
 ### Meu perfil
