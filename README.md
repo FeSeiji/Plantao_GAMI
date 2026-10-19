@@ -239,7 +239,7 @@ A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as
 Acessado pelo menu da sigla (canto superior). Cada usuário edita nome, sigla, telefone, data de nascimento e CRM, e troca a própria senha. E-mail e funções só a gestão altera. Anestesistas também têm:
 - **Dias disponíveis** — dias da semana em que preferem trabalhar. Quem monta o plantão ainda pode escalá-lo em outro dia, mas a busca mostra um aviso.
 - **Férias e congressos** — o médico pede o período (data inicial a final) e a **gestão aprova ou recusa**. Aprovado, ele não pode ser escalado nesses dias: na busca aparece desabilitado, com o motivo. Se já estiver escalado, o plantão ganha um indicador vermelho no calendário e no modal, para a gestão resolver.
-  - A gestão (escritório, admin e técnico) vê os períodos de **todos os médicos** na tela **Férias e congressos** (menu lateral): filtros de período, tipo, status e médico, e ali mesmo aprova ou recusa pedidos, remove períodos e define o tipo do congresso.
+  - A gestão (escritório, admin e técnico) vê os períodos de **todos os médicos** na tela **Férias e congressos** (menu lateral): filtros de período, tipo, status e médico, e ali mesmo aprova ou recusa pedidos, remove períodos e define o tipo do congresso. Pelo **+ Novo período**, a gestão cadastra férias ou congresso de qualquer médico: já entra aprovado e pode ser no passado.
   - **Congresso** tem dois tipos, escolhidos no pedido: **palestrante** (recebe 80% da vaga) e **congressista** (60%). Quem já estava escalado continua nos plantões do período e recebe só essa parte dos pontos/horas (BM e dashboard). Os congressos cadastrados antes dos tipos aparecem como "definir tipo" e não descontam até alguém escolher: o médico (enquanto não tem tipo ou está pendente) ou a gestão (a qualquer momento, no modal do usuário).
 
 Plantões que viram a noite contam pelo dia em que começam.
@@ -351,6 +351,7 @@ Authorization: Bearer <access_token>
 | `POST` | `/afastamentos` | Pede férias ou congresso (só anestesistas) — fica pendente até a gestão aprovar |
 | `DELETE` | `/afastamentos/:id` | Remove um período (o próprio médico, enquanto não for aprovado; a gestão, qualquer um) |
 | `GET` | `/afastamentos/pendentes` | Pedidos aguardando aprovação (gestão) |
+| `POST` | `/afastamentos/usuario/:usuarioId` | A gestão cadastra férias ou congresso de um médico — já aprovado, e pode ser no passado |
 | `GET` | `/afastamentos/usuario/:usuarioId` | Períodos atuais e futuros de um médico (gestão) |
 | `PATCH` | `/afastamentos/:id/aprovar` | Aprova o pedido (gestão) |
 | `PATCH` | `/afastamentos/:id/recusar` | Recusa o pedido (gestão) |
