@@ -7,8 +7,8 @@ import { apiFetch } from "../../../components/sessao"
 import { formatarPontos } from "../../../components/trocaPorHoras"
 import { CasoFora, formatarCpf, formatarValor, rotuloRecibo } from "../../../components/casosFora"
 
-// Só administradores — mesma lista do backend em routes/bmFinanceiro.js
-const ROLES_BM_FINANCEIRO = ["admin"]
+// Administradores e técnicos — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "tecnico"]
 
 type Aba = "plantonista" | "socio" | "casos_fora"
 

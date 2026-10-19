@@ -640,8 +640,8 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
-              {/* O BM Financeiro é só dos administradores */}
-              {roles.includes("admin") && (
+              {/* O BM Financeiro é dos administradores e técnicos */}
+              {(roles.includes("admin") || roles.includes("tecnico")) && (
                 <Link href="/bm-financeiro" className="inline-block mt-4 text-xs font-semibold text-brand-700 hover:text-brand-900">
                   Ver BM Financeiro →
                 </Link>
