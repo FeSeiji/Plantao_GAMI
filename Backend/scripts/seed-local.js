@@ -98,7 +98,7 @@ async function main() {
 
   // Plantões: um por dia, do 1º dia do mês passado ao último do mês que vem.
   // A fila gira 5 médicos por dia; 8 no diurno (vagas 1–8), 5 no noturno (9–13) e 1 de folga.
-  // Fim de semana com o diurno menor (vagas 7 e 8 vazias); dois dias sem plantão no mês que vem.
+  // Fim de semana com o diurno menor (vaga 7 vazia; a 8 não existe no fim de semana); dois dias sem plantão no mês que vem.
   const hoje = new Date()
   const inicio = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)
   const fim = new Date(hoje.getFullYear(), hoje.getMonth() + 2, 0)

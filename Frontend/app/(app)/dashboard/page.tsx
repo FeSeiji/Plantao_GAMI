@@ -127,7 +127,8 @@ function descreverPapel(p: PlantaoResumo) {
   if (coberto) return `${nomeDe(coberto.por)} cobre ${formatarIntervalo(coberto.horaInicio, coberto.horaFim)} da sua vaga`
   if (p.meuPapel.coordenador) return "Você é o coordenador"
   if (p.meuPapel.posicao == null) return rotuloTurno(p.turno)
-  const vaga = descreverPosicao(p.meuPapel.posicao)
+  const vaga = descreverPosicao(p.data, p.meuPapel.posicao)
+  if (vaga === "manhã") return "Você está na manhã"
   return `Você é o ${vaga === "intermediário" ? "intermediário do noturno" : vaga}`
 }
 
@@ -476,7 +477,7 @@ export default function DashboardPage() {
                               ? `Parcial (${nomeDe(p.meuPapel.coberto.por)} cobre ${formatarIntervalo(p.meuPapel.coberto.horaInicio, p.meuPapel.coberto.horaFim)}) · `
                               : ""}
                           {rotuloTurno(p.turno)}
-                          {p.meuPapel.posicao != null && ` · ${descreverPosicao(p.meuPapel.posicao).replace(/ do (diurno|noturno)$/, "")}`}
+                          {p.meuPapel.posicao != null && ` · ${descreverPosicao(p.data, p.meuPapel.posicao).replace(/ do (diurno|noturno)$/, "")}`}
                         </p>
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}

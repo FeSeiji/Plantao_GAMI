@@ -8,10 +8,9 @@ import { useViewportVisivel } from "./useViewportVisivel"
 import {
   TURNOS,
   Turno,
-  VAGAS,
   descreverPosicao,
   ehVagaDeCoordenador,
-  formatarTurno,
+  formatarTurnoDoDia,
   horarioDaVaga,
   rotuloPosicaoAbreviado,
   turnoDaPosicao,
@@ -196,13 +195,13 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
   const resultadosLivres = resultados.filter((u) => !turnoBusca || !noTurno(u.id, turnoBusca))
 
   function celulasDoTurno(turno: Turno): CelulaGrade[] {
-    return vagasDoTurno(turno).map((p): CelulaGrade => {
+    return vagasDoTurno(turno, data, fila.map((f) => f.posicao)).map((p): CelulaGrade => {
       const f = fila.find((item) => item.posicao === p)
       if (!f) {
         return {
           tipo: "vazia",
           chave: `posicao-${p}`,
-          rotulo: rotuloPosicaoAbreviado(p),
+          rotulo: rotuloPosicaoAbreviado(data, p),
           texto: "Vaga livre",
           ativa: adicionando?.posicao === p,
           onClick: () => abrirBusca({ posicao: p }),
@@ -228,16 +227,16 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
         >
           {TURNOS.map((t) => (
             <optgroup key={t.valor} label={t.rotulo}>
-              {VAGAS.filter((v) => v.turno === t.valor).map((v) => (
+              {vagasDoTurno(t.valor, data, [f.posicao]).map((p) => (
                 <option
-                  key={v.posicao}
-                  value={v.posicao}
+                  key={p}
+                  value={p}
                   disabled={
-                    v.posicao !== f.posicao &&
-                    (fila.some((o) => o.posicao === v.posicao) || noTurno(f.usuario.id, t.valor, f.posicao))
+                    p !== f.posicao &&
+                    (fila.some((o) => o.posicao === p) || noTurno(f.usuario.id, t.valor, f.posicao))
                   }
                 >
-                  {rotuloPosicaoAbreviado(v.posicao)}
+                  {rotuloPosicaoAbreviado(data, p)}
                 </option>
               ))}
             </optgroup>
@@ -248,7 +247,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     }
   }
 
-  const rotuloBusca = adicionando ? `Adicionar: ${descreverPosicao(adicionando.posicao)}` : ""
+  const rotuloBusca = adicionando ? `Adicionar: ${descreverPosicao(data, adicionando.posicao)}` : ""
 
   return (
     <div
@@ -324,7 +323,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
               {TURNOS.map((t) => (
                 <div key={t.valor}>
                   <p className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.rotulo} <span className="font-normal text-gray-400">· {formatarTurno(t.valor)}</span>
+                    {t.rotulo} <span className="font-normal text-gray-400">· {formatarTurnoDoDia(t.valor, data)}</span>
                   </p>
                   <GradeParticipantes celulas={celulasDoTurno(t.valor)} />
                   {/* A busca aparece logo abaixo da lista do turno da vaga que a abriu */}

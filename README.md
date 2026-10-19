@@ -197,6 +197,15 @@ Segue a escala anual do cliente: **um plantão por dia**, com as vagas do diurno
 | Diurno | 7h–19h | Coordenador (1), Coordenador (2), 2º a 7º (3 a 8) |
 | Noturno | 19h–7h do dia seguinte | Intermediário (9), 1º (10), 1º (11), 2º (12), 3º (13) |
 
+No **sábado e no domingo** (pela data do plantão: o noturno de domingo para segunda conta, o de sexta não) algumas vagas mudam:
+
+| Turno | Vagas (posição) no fim de semana |
+|-------|----------------------------------|
+| Diurno | Coordenador (1), Coordenador (2), **Manhã 7h–13h** (3), 1º a 4º (4 a 7). A vaga 8 não existe. |
+| Noturno | Intermediário (9), 1º a 4º (10 a 13) |
+
+A manhã tem horário próprio: conta 6h no BM e no dashboard, libera o médico às 13h e limita a troca por horas a 7h–13h. Os pontos de cada vaga não mudam no fim de semana.
+
 Regras de escala:
 - Qualquer médico (sócio ou plantonista) entra em qualquer vaga. O coordenador **não é obrigatório** (o plantão precisa de pelo menos um médico); o dashboard da gestão avisa quando o diurno está sem coordenador.
 - O mesmo médico pode estar no **diurno e no noturno** do mesmo dia (os turnos só se encostam às 19h), mas não em duas vagas do mesmo turno.
@@ -217,7 +226,7 @@ No modal do plantão, o médico (sócio ou plantonista) vê **Pedir esta vaga** 
 - Pedidos e respostas aparecem no histórico do plantão.
 
 ### Meu plantão
-A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as suas vagas destacadas. Clicar em qualquer célula de um dia abre o plantão. Para sócios, plantonistas, técnicos e escritório.
+A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as suas vagas destacadas. No sábado e no domingo, a célula mostra o nome da vaga quando ele muda (Manhã, 1º–4º), e a vaga 8 fica cinza. Clicar em qualquer célula de um dia abre o plantão. Para sócios, plantonistas, técnicos e escritório.
 
 ### Trocas de plantão
 - **Troca da vaga inteira:** substituir o médico de uma vaga cria uma **solicitação de troca**. Ela só vale depois do aceite: de quem entra ou, quando o substituto pede a vaga para si, de quem sai. Enquanto isso, o titular continua no plantão.

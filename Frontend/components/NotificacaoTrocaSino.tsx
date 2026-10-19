@@ -259,7 +259,7 @@ export default function NotificacaoTrocaSino() {
                   <li key={p.id} className="px-4 py-3">
                     <p className="text-sm text-gray-700">
                       <span className="font-semibold">{p.usuario.nome ?? p.usuario.email}</span> pediu a vaga de{" "}
-                      {descreverPosicao(p.posicao)} no plantão <span className="font-semibold">{p.plantao.titulo}</span>.
+                      {descreverPosicao(p.plantao.data, p.posicao)} no plantão <span className="font-semibold">{p.plantao.titulo}</span>.
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
                       {formatarData(p.plantao.data)} · {p.plantao.hora_inicio.slice(0, 5)}-{p.plantao.hora_fim.slice(0, 5)}
