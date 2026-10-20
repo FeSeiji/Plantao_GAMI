@@ -65,7 +65,11 @@ type Resumo = {
   trocasSolicitadas: Troca[]
   meuMes: {
     mes: string
-    plantonista: { plantoes: number; minutos: number }
+    // O plantonista conta plantões por categoria (fração na troca por horas e no congresso)
+    plantonista: {
+      plantoes: number
+      categorias: { diurno: number; noturno: number; diurno_fds: number; noturno_fds: number }
+    }
     socio: { plantoes: number; pontos: number }
   }
 }
@@ -82,9 +86,10 @@ type Gestao = {
   alertas: { problema: string; plantao: PlantaoGeral }[]
   trocasPendentes: { total: number; maisAntiga: Troca | null }
   mes: {
-    atual: { mes: string; plantoes: number; minutos: number; pontos: number }
-    anterior: { mes: string; plantoes: number; minutos: number; pontos: number }
-    topHoras: (Pessoa & { minutos: number })[]
+    // plantoesPlantonistas: plantões feitos por plantonistas (fração na troca por horas e no congresso)
+    atual: { mes: string; plantoes: number; plantoesPlantonistas: number; pontos: number }
+    anterior: { mes: string; plantoes: number; plantoesPlantonistas: number; pontos: number }
+    topPlantonistas: (Pessoa & { plantoes: number })[]
     topPontos: (Pessoa & { pontos: number })[]
   }
   equipe: { ativos: number; desativados: number; porRole: Record<string, number> }
@@ -103,11 +108,15 @@ function formatarHorario(p: { hora_inicio: string; hora_fim: string }) {
   return `${p.hora_inicio.slice(0, 5)}–${p.hora_fim.slice(0, 5)}`
 }
 
-function formatarHoras(minutos: number) {
-  const h = Math.floor(minutos / 60)
-  const m = minutos % 60
-  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`
-}
+// Mesmas categorias do BM Financeiro (Backend/src/services/pontuacao.js)
+const CATEGORIAS_PLANTONISTA = [
+  { chave: "diurno", rotulo: "Diurno" },
+  { chave: "noturno", rotulo: "Noturno" },
+  { chave: "diurno_fds", rotulo: "Diurno fim de semana" },
+  { chave: "noturno_fds", rotulo: "Noturno fim de semana" },
+] as const
+
+const somaCategorias = (c: Record<string, number>) => Math.round(Object.values(c).reduce((s, n) => s + n, 0) * 100) / 100
 
 function nomeDe(p: Pessoa) {
   return p.nome ?? p.email ?? "—"
@@ -406,12 +415,19 @@ export default function DashboardPage() {
                 {mostraPlantonista && (
                   <div>
                     <p className="text-2xl font-bold text-gray-800 tabular-nums">
-                      {formatarHoras(mes!.plantonista.minutos)}
+                      {formatarPontos(somaCategorias(mes!.plantonista.categorias))}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      trabalhadas como plantonista · {mes!.plantonista.plantoes}{" "}
-                      {mes!.plantonista.plantoes === 1 ? "plantão" : "plantões"}
-                    </p>
+                    <p className="text-xs text-gray-500">plantões como plantonista</p>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs">
+                      {CATEGORIAS_PLANTONISTA.map((c) => (
+                        <div key={c.chave} className="flex justify-between gap-2">
+                          <dt className="text-gray-500">{c.rotulo}</dt>
+                          <dd className="font-semibold text-gray-800 tabular-nums">
+                            {formatarPontos(mes!.plantonista.categorias[c.chave])}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
                 )}
                 {mostraSocio && (
@@ -614,9 +630,11 @@ export default function DashboardPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-lg font-bold text-gray-800 tabular-nums">{formatarHoras(gestao.mes.atual.minutos)}</p>
-                    <p className="text-xs text-gray-500">de plantonistas</p>
-                    <Variacao atual={gestao.mes.atual.minutos} anterior={gestao.mes.anterior.minutos} />
+                    <p className="text-lg font-bold text-gray-800 tabular-nums">
+                      {formatarPontos(gestao.mes.atual.plantoesPlantonistas)}
+                    </p>
+                    <p className="text-xs text-gray-500">plantões de plantonistas</p>
+                    <Variacao atual={gestao.mes.atual.plantoesPlantonistas} anterior={gestao.mes.anterior.plantoesPlantonistas} />
                   </div>
                   <div>
                     <p className="text-lg font-bold text-gray-800 tabular-nums">{formatarPontos(gestao.mes.atual.pontos)} pts</p>
@@ -632,7 +650,13 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-4">
                 {(
                   [
-                    { rotulo: "Horas", linhas: gestao.mes.topHoras.map((l) => ({ ...l, valor: formatarHoras(l.minutos) })) },
+                    {
+                      rotulo: "Plantonistas",
+                      linhas: gestao.mes.topPlantonistas.map((l) => ({
+                        ...l,
+                        valor: `${formatarPontos(l.plantoes)} ${l.plantoes === 1 ? "plantão" : "plantões"}`,
+                      })),
+                    },
                     { rotulo: "Pontos", linhas: gestao.mes.topPontos.map((l) => ({ ...l, valor: `${formatarPontos(l.pontos)} pts` })) },
                   ] as const
                 ).map((coluna) => (

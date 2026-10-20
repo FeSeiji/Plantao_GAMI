@@ -3,8 +3,9 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const {
-  TURNOS, pontosDaPosicao, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga,
+  TURNOS, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga,
 } = require('../services/posicoes')
+const { pontosDaVaga, categoriaDaVaga, categoriasZeradas, duasCasas } = require('../services/pontuacao')
 const { buscarCoberturas, repartirPlantao, duracaoDaVaga, duracaoDaCobertura } = require('../services/coberturas')
 const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { contaComoSocio } = require('../services/usuarios')
@@ -141,11 +142,11 @@ exports.resumo = async (req, res) => {
   const agenda = [...minhas, ...comoCobertura].sort(porData).filter(p => naoTerminou(p) && p.data <= ultimoDiaAgenda)
   const doMes = [...minhas, ...comoCobertura].filter(p => p.data >= inicioMes && p.data <= fimMes)
 
-  // O plantão não tem tipo: quem tem o cargo de sócio soma pontos e quem é só plantonista soma horas
+  // O plantão não tem tipo: quem tem o cargo de sócio soma pontos e quem é só plantonista soma plantões por categoria
   const souSocio = contaComoSocio(req.user.app_metadata?.roles)
   const meuMes = {
     mes: hoje.slice(0, 7),
-    plantonista: { plantoes: 0, minutos: 0 },
+    plantonista: { plantoes: 0, categorias: categoriasZeradas() },
     socio: { plantoes: 0, pontos: 0 },
   }
   for (const p of doMes) {
@@ -157,15 +158,19 @@ exports.resumo = async (req, res) => {
       ? duracaoDaCobertura(p.cobertura.hora_inicio, p.cobertura.hora_fim)
       : total - (outro && !outro.cobertura_ferias ? duracaoDaCobertura(outro.hora_inicio, outro.hora_fim) : 0)
     ) * fatorDoDia(meusAfastamentos, eu, p.data)
+    const posicao = p.eu[0]?.posicao
     if (souSocio) {
       meuMes.socio.plantoes += 1
-      meuMes.socio.pontos += pontosDaPosicao(p.eu[0]?.posicao) * (minutos / total)
+      meuMes.socio.pontos += pontosDaVaga(p.data, posicao) * (minutos / total)
     } else {
       meuMes.plantonista.plantoes += 1
-      meuMes.plantonista.minutos += Math.round(minutos)
+      meuMes.plantonista.categorias[categoriaDaVaga(p.data, posicao)] += minutos / total
     }
   }
-  meuMes.socio.pontos = Math.round(meuMes.socio.pontos * 100) / 100
+  meuMes.socio.pontos = duasCasas(meuMes.socio.pontos)
+  for (const c of Object.keys(meuMes.plantonista.categorias)) {
+    meuMes.plantonista.categorias[c] = duasCasas(meuMes.plantonista.categorias[c])
+  }
 
   try {
     const perfis = await buscarPerfis([
@@ -272,7 +277,7 @@ exports.gestao = async (req, res) => {
   try {
     const perfis = await buscarPerfis([
       ...[...emAndamento, ...alertas.map(a => a.plantao)].flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
-      ...resumoAtual.topHoras.map(l => l.id),
+      ...resumoAtual.topPlantonistas.map(l => l.id),
       ...resumoAtual.topPontos.map(l => l.id),
       ...trocas.data.slice(0, 1).flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por]),
     ])
@@ -293,7 +298,7 @@ exports.gestao = async (req, res) => {
       mes: {
         atual: { mes: mesAtual.inicio.slice(0, 7), ...resumoAtual.totais },
         anterior: { mes: mesAnterior.inicio.slice(0, 7), ...resumoAnterior.totais },
-        topHoras: resumoAtual.topHoras.map(comPerfil),
+        topPlantonistas: resumoAtual.topPlantonistas.map(comPerfil),
         topPontos: resumoAtual.topPontos.map(comPerfil),
       },
       equipe: { ativos, desativados, porRole },
@@ -312,29 +317,30 @@ function problemaDeCobertura(p) {
 }
 
 // Mesmas regras do BM Financeiro: quem tem o cargo de sócio soma pontos pela vaga e quem é só plantonista
-// soma horas; troca por horas rateada e congresso com desconto
+// soma plantões; troca por horas rateada e congresso com desconto
 function resumirMes(plantoes, { inicio, fim }, coberturas, roles, afastamentos) {
-  const horas = new Map()
+  const plantoesDePlantonista = new Map()
   const pontos = new Map()
-  const totais = { plantoes: 0, minutos: 0, pontos: 0 }
+  const totais = { plantoes: 0, plantoesPlantonistas: 0, pontos: 0 }
 
   for (const p of plantoes) {
     if (p.data < inicio || p.data > fim) continue
     totais.plantoes += 1
     for (const parte of repartirPlantao(p, p.plantao_usuarios, coberturas, afastamentos)) {
       if (contaComoSocio(roles.get(parte.usuario_id))) {
-        const pts = pontosDaPosicao(parte.posicao) * parte.fracao
+        const pts = pontosDaVaga(p.data, parte.posicao) * parte.fracao
         pontos.set(parte.usuario_id, (pontos.get(parte.usuario_id) ?? 0) + pts)
         totais.pontos += pts
       } else {
-        horas.set(parte.usuario_id, (horas.get(parte.usuario_id) ?? 0) + parte.minutos)
-        totais.minutos += parte.minutos
+        plantoesDePlantonista.set(parte.usuario_id, (plantoesDePlantonista.get(parte.usuario_id) ?? 0) + parte.fracao)
+        totais.plantoesPlantonistas += parte.fracao
       }
     }
   }
-  const duasCasas = n => Math.round(n * 100) / 100
   totais.pontos = duasCasas(totais.pontos)
+  totais.plantoesPlantonistas = duasCasas(totais.plantoesPlantonistas)
   for (const [id, v] of pontos) pontos.set(id, duasCasas(v))
+  for (const [id, v] of plantoesDePlantonista) plantoesDePlantonista.set(id, duasCasas(v))
 
   const top = (mapa, campo) =>
     [...mapa.entries()]
@@ -342,7 +348,7 @@ function resumirMes(plantoes, { inicio, fim }, coberturas, roles, afastamentos) 
       .slice(0, TOP_N)
       .map(([id, valor]) => ({ id, [campo]: valor }))
 
-  return { totais, topHoras: top(horas, 'minutos'), topPontos: top(pontos, 'pontos') }
+  return { totais, topPlantonistas: top(plantoesDePlantonista, 'plantoes'), topPontos: top(pontos, 'pontos') }
 }
 
 // Render roda em UTC; os plantões são cadastrados no horário do hospital

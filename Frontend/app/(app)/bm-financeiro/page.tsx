@@ -17,13 +17,31 @@ type LinhaBase = {
   nome: string | null
   email: string | null
   sigla: string | null
-  plantoes: number
+}
+
+type LinhaSocio = LinhaBase & { plantoes: number; pontos: number }
+
+// Categorias do plantonista — mesmas de Backend/src/services/pontuacao.js.
+// Sexta à noite conta como noturno de fim de semana; a manhã de sábado e domingo, como diurno de fim de semana
+const CATEGORIAS = [
+  { chave: "diurno", rotulo: "Diurno" },
+  { chave: "noturno", rotulo: "Noturno" },
+  { chave: "diurno_fds", rotulo: "Diurno fim de semana" },
+  { chave: "noturno_fds", rotulo: "Noturno fim de semana" },
+] as const
+
+type Categoria = (typeof CATEGORIAS)[number]["chave"]
+
+type LinhaPlantonista = LinhaBase & {
+  // Plantões em cada categoria (a fração na troca por horas e no congresso) e a soma deles
+  categorias: Record<Categoria, number>
+  total: number
 }
 
 type Resumo = {
   mes: string
-  plantonistas: (LinhaBase & { minutos: number })[]
-  socios: (LinhaBase & { pontos: number })[]
+  plantonistas: LinhaPlantonista[]
+  socios: LinhaSocio[]
   casosFora: CasoFora[]
 }
 
@@ -49,32 +67,20 @@ function correspondeBusca(linha: { nome?: string | null; email?: string | null; 
   return [linha.nome, linha.email, linha.sigla].some((campo) => campo && normalizar(campo).includes(termo))
 }
 
-function formatarHoras(minutos: number) {
-  const h = Math.floor(minutos / 60)
-  const m = minutos % 60
-  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`
-}
-
 // Gera um .xlsx com uma aba por tipo; exceljs só é baixado quando alguém exporta
 async function exportarExcel(resumo: Resumo, mesReferencia: Date) {
   const { Workbook } = await import("exceljs")
   const workbook = new Workbook()
   const rotuloMes = mesReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
 
-  function adicionarAba(
-    nome: string,
-    colunaValor: { header: string; key: string; numFmt?: string },
-    linhas: (LinhaBase & Record<string, unknown>)[],
-    extra?: { header: string; key: string }
-  ) {
+  // Uma aba com sigla, nome e e-mail seguidos das colunas de valor, e a linha de total somando cada uma
+  function adicionarAba(nome: string, colunas: { header: string; key: string }[], linhas: Record<string, unknown>[]) {
     const aba = workbook.addWorksheet(nome)
     aba.columns = [
       { header: "Sigla", key: "sigla", width: 8 },
       { header: "Nome", key: "nome", width: 32 },
       { header: "E-mail", key: "email", width: 32 },
-      { header: "Plantões", key: "plantoes", width: 10 },
-      { header: colunaValor.header, key: colunaValor.key, width: 14, style: { numFmt: colunaValor.numFmt } },
-      ...(extra ? [{ header: extra.header, key: extra.key, width: 12 }] : []),
+      ...colunas.map((c) => ({ ...c, width: 14 })),
     ]
     aba.getRow(1).font = { bold: true }
     aba.views = [{ state: "frozen", ySplit: 1 }]
@@ -82,23 +88,28 @@ async function exportarExcel(resumo: Resumo, mesReferencia: Date) {
 
     if (linhas.length > 0) {
       const ultima = linhas.length + 1
-      const letraValor = aba.getColumn(colunaValor.key).letter
-      const total = aba.addRow({
-        nome: "Total",
-        plantoes: { formula: `SUM(D2:D${ultima})` },
-        [colunaValor.key]: { formula: `SUM(${letraValor}2:${letraValor}${ultima})` },
-      })
+      const soma = (chave: string) => {
+        const letra = aba.getColumn(chave).letter
+        return { formula: `SUM(${letra}2:${letra}${ultima})` }
+      }
+      const total = aba.addRow({ nome: "Total", ...Object.fromEntries(colunas.map((c) => [c.key, soma(c.key)])) })
       total.font = { bold: true }
     }
   }
 
   adicionarAba(
     "Plantonista",
-    { header: "Horas", key: "horas", numFmt: "0.00" },
-    resumo.plantonistas.map((l) => ({ ...l, horas: l.minutos / 60, horasFormatadas: formatarHoras(l.minutos) })),
-    { header: "Horas (hh:mm)", key: "horasFormatadas" }
+    [...CATEGORIAS.map((c) => ({ header: c.rotulo, key: c.chave })), { header: "Total", key: "total" }],
+    resumo.plantonistas.map((l) => ({ ...l, ...l.categorias })),
   )
-  adicionarAba("Sócio", { header: "Pontos", key: "pontos" }, resumo.socios)
+  adicionarAba(
+    "Sócio",
+    [
+      { header: "Plantões", key: "plantoes" },
+      { header: "Pontos", key: "pontos" },
+    ],
+    resumo.socios,
+  )
 
   // Casos fora: um por linha, com todos os campos do registro
   const abaCasos = workbook.addWorksheet("Casos fora")
@@ -320,11 +331,6 @@ export default function BmFinanceiroPage() {
   const plantonistas = (resumo?.plantonistas ?? []).filter((l) => correspondeBusca(l, termo))
   const socios = (resumo?.socios ?? []).filter((l) => correspondeBusca(l, termo))
   const casosFora = (resumo?.casosFora ?? []).filter((c) => anestesistasDe(c).some((a) => correspondeBusca(a, termo)))
-  const linhas = aba === "plantonista" ? plantonistas : socios
-  const total =
-    aba === "plantonista"
-      ? formatarHoras(plantonistas.reduce((s, l) => s + l.minutos, 0))
-      : `${formatarPontos(socios.reduce((s, l) => s + l.pontos, 0))} pts`
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -409,6 +415,8 @@ export default function BmFinanceiroPage() {
 
       {aba === "casos_fora" ? (
         <TabelaCasosFora casos={casosFora} loading={loading} busca={termo ? busca.trim() : ""} />
+      ) : aba === "plantonista" ? (
+        <TabelaPlantonistasPorCategoria linhas={plantonistas} loading={loading} busca={termo ? busca.trim() : ""} />
       ) : (
         <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
           <table className="w-full text-sm">
@@ -416,11 +424,11 @@ export default function BmFinanceiroPage() {
               <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
                 <th className="px-4 py-3">Médico</th>
                 <th className="px-4 py-3 text-right whitespace-nowrap">Plantões</th>
-                <th className="px-4 py-3 text-right whitespace-nowrap">{aba === "plantonista" ? "Horas" : "Pontos"}</th>
+                <th className="px-4 py-3 text-right whitespace-nowrap">Pontos</th>
               </tr>
             </thead>
             <tbody>
-              {linhas.map((l) => (
+              {socios.map((l) => (
                 <tr key={l.id} className="border-b border-gray-100 last:border-0">
                   <td className="px-4 py-3 max-w-0 w-full">
                     <div className="flex items-center gap-3">
@@ -433,27 +441,27 @@ export default function BmFinanceiroPage() {
                   </td>
                   <td className="px-4 py-3 text-right text-gray-700 tabular-nums">{l.plantoes}</td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
-                    {"minutos" in l ? formatarHoras(l.minutos) : `${formatarPontos(l.pontos)} pts`}
+                    {formatarPontos(l.pontos)} pts
                   </td>
                 </tr>
               ))}
 
-              {!loading && linhas.length === 0 && (
+              {!loading && socios.length === 0 && (
                 <tr>
                   <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
                     {termo
                       ? `Nenhum médico encontrado para "${busca.trim()}".`
-                      : `Nenhum ${aba === "plantonista" ? "plantonista" : "sócio"} com plantão neste mês.`}
+                      : "Nenhum sócio com plantão neste mês."}
                   </td>
                 </tr>
               )}
             </tbody>
-            {linhas.length > 0 && (
+            {socios.length > 0 && (
               <tfoot>
                 <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
                   <td className="px-4 py-3">Total</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{linhas.reduce((s, l) => s + l.plantoes, 0)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{total}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{socios.reduce((s, l) => s + l.plantoes, 0)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(socios.reduce((s, l) => s + l.pontos, 0))} pts</td>
                 </tr>
               </tfoot>
             )}
@@ -466,6 +474,79 @@ export default function BmFinanceiroPage() {
 
 function formatarData(data: string) {
   return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
+}
+
+// Plantonistas: quantos plantões em cada categoria (com fração na troca por horas e no congresso)
+function TabelaPlantonistasPorCategoria({
+  linhas,
+  loading,
+  busca,
+}: {
+  linhas: LinhaPlantonista[]
+  loading: boolean
+  busca: string
+}) {
+  const somar = (valor: (l: LinhaPlantonista) => number) => linhas.reduce((s, l) => s + valor(l), 0)
+
+  return (
+    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+            <th className="px-4 py-3">Médico</th>
+            {CATEGORIAS.map((c) => (
+              <th key={c.chave} className="px-3 py-3 text-right">
+                {c.rotulo}
+              </th>
+            ))}
+            <th className="px-4 py-3 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((l) => (
+            <tr key={l.id} className="border-b border-gray-100 last:border-0">
+              <td className="px-4 py-3 min-w-[12rem]">
+                <div className="flex items-center gap-3">
+                  <SiglaBadge sigla={l.sigla} />
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
+                    <p className="text-gray-400 text-xs truncate">{l.email}</p>
+                  </div>
+                </div>
+              </td>
+              {CATEGORIAS.map((c) => (
+                <td key={c.chave} className="px-3 py-3 text-right text-gray-700 tabular-nums">
+                  {formatarPontos(l.categorias[c.chave])}
+                </td>
+              ))}
+              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
+            </tr>
+          ))}
+
+          {!loading && linhas.length === 0 && (
+            <tr>
+              <td colSpan={CATEGORIAS.length + 2} className="px-4 py-8 text-center text-gray-400">
+                {busca ? `Nenhum médico encontrado para "${busca}".` : "Nenhum plantonista com plantão neste mês."}
+              </td>
+            </tr>
+          )}
+        </tbody>
+        {linhas.length > 0 && (
+          <tfoot>
+            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
+              <td className="px-4 py-3">Total</td>
+              {CATEGORIAS.map((c) => (
+                <td key={c.chave} className="px-3 py-3 text-right tabular-nums">
+                  {formatarPontos(somar((l) => l.categorias[c.chave]))}
+                </td>
+              ))}
+              <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  )
 }
 
 // Casos fora do mês, um por linha (o detalhe completo vai na planilha)
