@@ -8,23 +8,22 @@ const TURNOS = {
   noturno: { hora_inicio: '19:00', hora_fim: '07:00' },
 }
 
-// pontos: o que a vaga vale para o sócio no BM (o mesmo no fim de semana)
 // fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto quando muda o horário.
 // Os nomes do fim de semana (Manhã, 1º–4º) ficam só no frontend.
 const VAGAS = [
-  { posicao: 1, turno: 'diurno', coordenador: true, pontos: 7 }, // Coordenador
-  { posicao: 2, turno: 'diurno', coordenador: true, pontos: 7 }, // Coordenador
-  { posicao: 3, turno: 'diurno', pontos: 6, fimDeSemana: { hora_fim: '13:00' } }, // 2º; Manhã no fim de semana
-  { posicao: 4, turno: 'diurno', pontos: 5 }, // 3º; 1º no fim de semana
-  { posicao: 5, turno: 'diurno', pontos: 4 }, // 4º; 2º no fim de semana
-  { posicao: 6, turno: 'diurno', pontos: 3 }, // 5º; 3º no fim de semana
-  { posicao: 7, turno: 'diurno', pontos: 2 }, // 6º; 4º no fim de semana
-  { posicao: 8, turno: 'diurno', pontos: 1, fimDeSemana: false }, // 7º
-  { posicao: 9, turno: 'noturno', pontos: 7 }, // Intermediário
-  { posicao: 10, turno: 'noturno', pontos: 7 }, // 1º
-  { posicao: 11, turno: 'noturno', pontos: 7 }, // 1º; 2º no fim de semana
-  { posicao: 12, turno: 'noturno', pontos: 6 }, // 2º; 3º no fim de semana
-  { posicao: 13, turno: 'noturno', pontos: 5 }, // 3º; 4º no fim de semana
+  { posicao: 1, turno: 'diurno', coordenador: true }, // Coordenador
+  { posicao: 2, turno: 'diurno', coordenador: true }, // Coordenador
+  { posicao: 3, turno: 'diurno', fimDeSemana: { hora_fim: '13:00' } }, // 2º; Manhã no fim de semana
+  { posicao: 4, turno: 'diurno' }, // 3º; 1º no fim de semana
+  { posicao: 5, turno: 'diurno' }, // 4º; 2º no fim de semana
+  { posicao: 6, turno: 'diurno' }, // 5º; 3º no fim de semana
+  { posicao: 7, turno: 'diurno' }, // 6º; 4º no fim de semana
+  { posicao: 8, turno: 'diurno', fimDeSemana: false }, // 7º
+  { posicao: 9, turno: 'noturno' }, // Intermediário
+  { posicao: 10, turno: 'noturno' }, // 1º
+  { posicao: 11, turno: 'noturno' }, // 1º; 2º no fim de semana
+  { posicao: 12, turno: 'noturno' }, // 2º; 3º no fim de semana
+  { posicao: 13, turno: 'noturno' }, // 3º; 4º no fim de semana
 ]
 
 const POSICOES = VAGAS.map(v => v.posicao)
@@ -62,10 +61,6 @@ function horarioDaVaga(plantao, posicao) {
   return { data: plantao.data, ...TURNOS[vaga.turno], ...proprio }
 }
 
-function pontosDaPosicao(posicao) {
-  return vagaDa(posicao)?.pontos ?? 0
-}
-
 // Instante no horário de Brasília (o do hospital), não no do servidor: "2026-10-18 14:05"
 function horaLocal(instante = new Date()) {
   return instante.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 16)
@@ -101,5 +96,4 @@ module.exports = {
   ehVagaDeCoordenador,
   turnoDaPosicao,
   horarioDaVaga,
-  pontosDaPosicao,
 }

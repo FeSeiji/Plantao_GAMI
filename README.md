@@ -43,7 +43,7 @@ Plantão/
 │   │   │   ├── casosFora.js        # Casos fora da escala
 │   │   │   ├── hospitais.js        # Hospitais dos casos fora
 │   │   │   ├── dashboard.js        # Painel pessoal e visão da gestão
-│   │   │   └── bmFinanceiro.js     # Resumo mensal de horas e pontos
+│   │   │   └── bmFinanceiro.js     # Resumo mensal: pontos dos sócios e plantões dos plantonistas
 │   │   ├── services/               # Regras compartilhadas: vagas, conflitos de horário, trocas por horas, afastamentos, usuários
 │   │   ├── middleware/
 │   │   │   ├── auth.js             # Validação do JWT e checagem de roles
@@ -169,7 +169,7 @@ O frontend ficará disponível em `http://localhost:3001` (a porta 3000 é usada
 | Role | Descrição |
 |------|-----------|
 | `anestesita_socio` | Anestesista sócio — entra em qualquer vaga do plantão; no BM conta **pontos** pela vaga |
-| `anestesita_plantonista` | Anestesista plantonista — entra em qualquer vaga do plantão; no BM conta **horas** (se também for sócio, conta pontos) |
+| `anestesita_plantonista` | Anestesista plantonista — entra em qualquer vaga do plantão; no BM conta **plantões por categoria** (se também for sócio, conta pontos) |
 | `tecnico` | Técnico — faz parte da gestão |
 | `escritorio` | Escritório — faz parte da gestão |
 
@@ -204,7 +204,7 @@ No **sábado e no domingo** (pela data do plantão: o noturno de domingo para se
 | Diurno | Coordenador (1), Coordenador (2), **Manhã 7h–13h** (3), 1º a 4º (4 a 7). A vaga 8 não existe. |
 | Noturno | Intermediário (9), 1º a 4º (10 a 13) |
 
-A manhã tem horário próprio: conta 6h no BM e no dashboard, libera o médico às 13h e limita a troca por horas a 7h–13h. Os pontos de cada vaga não mudam no fim de semana.
+A manhã tem horário próprio: libera o médico às 13h e limita a troca por horas a 7h–13h. Os pontos de cada vaga no fim de semana estão na seção do BM Financeiro.
 
 Regras de escala:
 - Qualquer médico (sócio ou plantonista) entra em qualquer vaga. O coordenador **não é obrigatório** (o plantão precisa de pelo menos um médico); o dashboard da gestão avisa quando o diurno está sem coordenador.
@@ -230,8 +230,8 @@ A semana no formato da escala: as vagas nas linhas e os dias nas colunas, com as
 
 ### Trocas de plantão
 - **Troca da vaga inteira:** substituir o médico de uma vaga cria uma **solicitação de troca**. Ela só vale depois do aceite: de quem entra ou, quando o substituto pede a vaga para si, de quem sai. Enquanto isso, o titular continua no plantão.
-- **Troca por horas:** o substituto cobre só parte da vaga (do início até um horário, ou de um horário até o fim). A vaga continua do titular, e as horas e pontos são divididos no BM.
-- **Cobertura de férias:** a vaga de quem está de **férias aprovadas** não é trocada. Em vez de "Trocar", aparece "Pedir cobertura" (ou "Cobrir a vaga", para outro médico): quem cobre faz o turno inteiro, o titular continua na vaga (com o aviso vermelho) e **os dois recebem os pontos/horas inteiros** da vaga. Mesmo fluxo de aceite da troca; não existe cobertura parcial. Congresso ainda segue a troca normal.
+- **Troca por horas:** o substituto cobre só parte da vaga (do início até um horário, ou de um horário até o fim). A vaga continua do titular, e os pontos (ou os plantões do plantonista) são divididos no BM.
+- **Cobertura de férias:** a vaga de quem está de **férias aprovadas** não é trocada. Em vez de "Trocar", aparece "Pedir cobertura" (ou "Cobrir a vaga", para outro médico): quem cobre faz o turno inteiro, o titular continua na vaga (com o aviso vermelho) e **os dois recebem a vaga inteira** no BM (pontos ou plantão). Mesmo fluxo de aceite da troca; não existe cobertura parcial. Congresso ainda segue a troca normal.
 - Quem pediu (ou a gestão) pode cancelar um pedido pendente. A gestão também pode desfazer uma troca por horas ou cobertura de férias já aceita.
 - O sino de notificações mostra as trocas aguardando o aceite do usuário logado.
 
@@ -240,7 +240,7 @@ Acessado pelo menu da sigla (canto superior). Cada usuário edita nome, sigla, t
 - **Dias disponíveis** — dias da semana em que preferem trabalhar. Quem monta o plantão ainda pode escalá-lo em outro dia, mas a busca mostra um aviso.
 - **Férias e congressos** — o médico pede o período (data inicial a final) e a **gestão aprova ou recusa**. Aprovado, ele não pode ser escalado nesses dias: na busca aparece desabilitado, com o motivo. Se já estiver escalado, o plantão ganha um indicador vermelho no calendário e no modal, para a gestão resolver.
   - A gestão (escritório, admin e técnico) vê os períodos de **todos os médicos** na tela **Férias e congressos** (menu lateral): filtros de período, tipo, status e médico, e ali mesmo aprova ou recusa pedidos, remove períodos e define o tipo do congresso. Pelo **+ Novo período**, a gestão cadastra férias ou congresso de qualquer médico: já entra aprovado e pode ser no passado.
-  - **Congresso** tem dois tipos, escolhidos no pedido: **palestrante** (recebe 80% da vaga) e **congressista** (60%). Quem já estava escalado continua nos plantões do período e recebe só essa parte dos pontos/horas (BM e dashboard). Os congressos cadastrados antes dos tipos aparecem como "definir tipo" e não descontam até alguém escolher: o médico (enquanto não tem tipo ou está pendente) ou a gestão (a qualquer momento, no modal do usuário).
+  - **Congresso** tem dois tipos, escolhidos no pedido: **palestrante** (recebe 80% da vaga) e **congressista** (60%). Quem já estava escalado continua nos plantões do período e recebe só essa parte dos pontos (ou do plantão, para o plantonista) no BM e no dashboard. Os congressos cadastrados antes dos tipos aparecem como "definir tipo" e não descontam até alguém escolher: o médico (enquanto não tem tipo ou está pendente) ou a gestão (a qualquer momento, no modal do usuário).
 
 Plantões que viram a noite contam pelo dia em que começam.
 
@@ -260,15 +260,20 @@ Tela para listar, criar e editar usuários, **aprovar cadastros pendentes**, ati
 - **Editar:** gestão (só administradores concedem ou retiram a flag admin)
 
 ### Dashboard
-Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e a vaga), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês em horas/pontos.
+Painel pessoal de cada usuário: próximo plantão (com contagem regressiva e a vaga), agenda dos próximos 7 dias, trocas aguardando o seu aceite (com Aceitar/Recusar), trocas que você pediu e o resumo do seu mês (pontos do sócio; plantões por categoria do plantonista).
 
-Para a gestão, o dashboard também mostra a **visão do hospital**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias por turno (turno sem médico ou diurno sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em horas e pontos e a equipe cadastrada por role.
+Para a gestão, o dashboard também mostra a **visão do hospital**: quem está de plantão agora, alertas de cobertura dos próximos 7 dias por turno (turno sem médico ou diurno sem coordenador), trocas pendentes no sistema, resumo do mês comparado ao anterior, top 5 em plantões (plantonistas) e pontos (sócios) e a equipe cadastrada por role.
 
 ### BM Financeiro
 Resumo mensal por médico, calculado na hora a partir dos plantões (nada é gravado). O plantão não tem tipo: a separação é pelo **cargo** do médico.
-- **Plantonista** (só o cargo de plantonista) — soma das **horas trabalhadas**. O noturno conta inteiro no mês em que o plantão começa.
-- **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**: diurno Coordenador 7, Coordenador 7, 2º 6 … 7º 1; noturno intermediário 7, 1º 7, 1º 7, 2º 6, 3º 5.
-- **Troca por horas:** as horas e os pontos da vaga são divididos na proporção das horas de cada um.
+Regras em `Backend/src/services/pontuacao.js` (tabela do cliente de 19/10/2026), iguais para todos os meses.
+
+- **Plantonista** (só o cargo de plantonista) — **quantos plantões** em cada categoria: diurno, noturno, diurno de fim de semana e noturno de fim de semana. A sexta à noite conta como noturno de fim de semana e a manhã de sábado e domingo como diurno de fim de semana. O noturno conta no mês em que o plantão começa. Antes o plantonista somava horas.
+- **Sócio** (tem o cargo de sócio, mesmo que também seja plantonista) — soma de **pontos pela vaga**:
+  - Segunda a sexta: diurno Coordenador 20, Coordenador 20, 2º 20, 3º 18, 4º 16, 5º 14, 6º 12, 7º 11; noturno Intermediário 12, 1º 26, 1º 26, 2º 18, 3º 8.
+  - Sexta à noite: 2º 23,4 e 3º 10,4 (o resto como na semana).
+  - Sábado e domingo (pela data do plantão): diurno Coordenador 26, Coordenador 26, Manhã 13, 1º 23,4, 2º 20,8, 3º 18,2, 4º 15,6; noturno Intermediário 15,6 (*12 × 1,3, a confirmar com o cliente*), 1º 33,8, 2º 23,4, 3º 10,4, 4º 7.
+- **Troca por horas:** os pontos (e a contagem de plantões do plantonista) são divididos na proporção das horas de cada um.
 
 Tem seletor de mês, busca por médico, aba de **casos fora** e **exportação para Excel**. Acesso: só **administradores** (flag `is_admin`).
 
@@ -391,7 +396,7 @@ Authorization: Bearer <access_token>
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/bm-financeiro?mes=AAAA-MM` | Horas por plantonista, pontos por sócio e os casos fora do mês (só administradores) |
+| `GET` | `/bm-financeiro?mes=AAAA-MM` | Plantões por categoria por plantonista, pontos por sócio e os casos fora do mês (administradores e técnicos) |
 
 ---
 
