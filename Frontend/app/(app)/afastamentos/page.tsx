@@ -9,6 +9,7 @@ import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaS
 import { ROLES_EDICAO } from "../../../components/UsuarioModal"
 import { TIPOS_CONGRESSO, TipoCongresso } from "../../../components/disponibilidade"
 import { apiFetch } from "../../../components/sessao"
+import { exportarFeriasDoAno } from "../../../components/exportarFerias"
 
 // Férias e congressos de todos os médicos: gestão (escritório, admin e técnico) — mesma lista do
 // requireRole em Backend/src/routes/afastamentos.js
@@ -82,6 +83,8 @@ export default function AfastamentosPage() {
   const [ocupado, setOcupado] = useState<string | null>(null)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
   const [novoAberto, setNovoAberto] = useState(false)
+  const [anoExportacao, setAnoExportacao] = useState(() => new Date().getFullYear())
+  const [exportando, setExportando] = useState(false)
 
   const [inicio, setInicio] = useState(hojeLocal)
   const [fim, setFim] = useState("")
@@ -138,6 +141,23 @@ export default function AfastamentosPage() {
       [a.usuario.nome, a.usuario.sigla, a.usuario.email].some((v) => v && semAcento(v).includes(termo)),
     )
   }, [afastamentos, busca])
+
+  // Planilha do ano inteiro no modelo do cliente, só com os períodos aprovados (independe dos filtros da tela)
+  async function exportar() {
+    setError("")
+    setExportando(true)
+    try {
+      const params = new URLSearchParams({ inicio: `${anoExportacao}-01-01`, fim: `${anoExportacao}-12-31`, status: "aprovado" })
+      const res = await chamarApi(`/afastamentos?${params}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível exportar.")
+      await exportarFeriasDoAno(data, anoExportacao)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível exportar.")
+    } finally {
+      setExportando(false)
+    }
+  }
 
   async function executar(id: string, acao: () => Promise<Response>, mensagemErro: string) {
     setError("")
@@ -254,12 +274,39 @@ export default function AfastamentosPage() {
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-xl font-bold text-gray-800">Férias e congressos</h1>
-        <button
-          onClick={() => setNovoAberto(true)}
-          className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-        >
-          + Novo período
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden">
+            <select
+              aria-label="Ano da planilha"
+              value={anoExportacao}
+              onChange={(e) => setAnoExportacao(Number(e.target.value))}
+              className="text-sm text-gray-700 bg-white pl-3 pr-1 py-2 focus:outline-none"
+            >
+              {[-1, 0, 1].map((d) => {
+                const ano = new Date().getFullYear() + d
+                return (
+                  <option key={ano} value={ano}>
+                    {ano}
+                  </option>
+                )
+              })}
+            </select>
+            <button
+              type="button"
+              onClick={exportar}
+              disabled={exportando}
+              className="border-l border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-50 px-3 py-2 transition-colors disabled:opacity-60"
+            >
+              {exportando ? "Exportando..." : "Exportar Excel"}
+            </button>
+          </div>
+          <button
+            onClick={() => setNovoAberto(true)}
+            className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            + Novo período
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 mb-6">
