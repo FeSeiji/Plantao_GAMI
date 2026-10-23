@@ -1,0 +1,40 @@
+const { createClient } = require('@supabase/supabase-js')
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+const CAMPOS_AJUSTE = 'id, usuario_id, pontos, motivo, criado_por, criado_em, atualizado_por, atualizado_em'
+
+// Ajustes manuais de pontos do mês (os excluídos ficam só no histórico) e o histórico deles, do mais recente
+// para o mais antigo. Cada edição traz em `anterior` os pontos e o motivo de antes, para a tela mostrar o que mudou.
+// inicioDoMes: 'AAAA-MM-01'
+async function buscarAjustesDoMes(inicioDoMes) {
+  const [ajustes, historico] = await Promise.all([
+    supabase
+      .from('ajustes_pontos')
+      .select(CAMPOS_AJUSTE)
+      .eq('mes', inicioDoMes)
+      .is('excluido_em', null)
+      .order('criado_em'),
+    supabase
+      .from('ajustes_pontos_historico')
+      .select('id, ajuste_id, acao, usuario_id, pontos, motivo, feito_por, feito_em')
+      .eq('mes', inicioDoMes)
+      .order('feito_em'),
+  ])
+  if (ajustes.error) throw ajustes.error
+  if (historico.error) throw historico.error
+
+  const ultimoDoAjuste = new Map()
+  const eventos = historico.data.map(evento => {
+    const anterior = ultimoDoAjuste.get(evento.ajuste_id)
+    ultimoDoAjuste.set(evento.ajuste_id, evento)
+    return {
+      ...evento,
+      anterior: evento.acao === 'editado' && anterior ? { pontos: anterior.pontos, motivo: anterior.motivo } : null,
+    }
+  })
+
+  return { ajustes: ajustes.data, historico: eventos.reverse() }
+}
+
+module.exports = { CAMPOS_AJUSTE, buscarAjustesDoMes }
