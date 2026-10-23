@@ -6,8 +6,18 @@ import { apiFetch } from "./sessao"
 
 type Medico = { id: string; nome?: string | null; email?: string | null; sigla?: string | null }
 
+// Tipo do ajuste: a linha do BM em que ele cai, como na planilha do cliente
+// (mesma lista de Backend/src/services/ajustesPontos.js)
+export type TipoAjuste = "administrativo" | "reuniao" | "outro"
+export const TIPOS_AJUSTE: { valor: TipoAjuste; rotulo: string }[] = [
+  { valor: "administrativo", rotulo: "Administrativo" },
+  { valor: "reuniao", rotulo: "Reunião" },
+  { valor: "outro", rotulo: "Outro" },
+]
+export const rotuloTipoAjuste = (tipo: TipoAjuste) => TIPOS_AJUSTE.find((t) => t.valor === tipo)?.rotulo ?? tipo
+
 // Ajuste já lançado, na edição: o médico e o mês não mudam (para isso, exclua e lance de novo)
-export type AjusteEditavel = { id: string; pontos: number; motivo: string; medico: Medico }
+export type AjusteEditavel = { id: string; tipo: TipoAjuste; pontos: number; motivo: string; medico: Medico }
 
 type Props = {
   // Mês do BM aberto na tela, 'AAAA-MM'
@@ -40,6 +50,7 @@ function chamarApi(caminho: string, metodo = "GET", body?: unknown) {
 export default function AjustePontosModal({ mes, rotuloMes, ajuste, onClose, onSaved }: Props) {
   const [medicos, setMedicos] = useState<Medico[]>([])
   const [usuarioId, setUsuarioId] = useState(ajuste?.medico.id ?? "")
+  const [tipo, setTipo] = useState<TipoAjuste | "">(ajuste?.tipo ?? "")
   const [sinal, setSinal] = useState<"dar" | "tirar">(ajuste && ajuste.pontos < 0 ? "tirar" : "dar")
   const [quantidade, setQuantidade] = useState(ajuste ? String(Math.abs(ajuste.pontos)).replace(".", ",") : "")
   const [motivo, setMotivo] = useState(ajuste?.motivo ?? "")
@@ -75,6 +86,7 @@ export default function AjustePontosModal({ mes, rotuloMes, ajuste, onClose, onS
     e.preventDefault()
     setError("")
     if (!usuarioId) return setError("Escolha o médico.")
+    if (!tipo) return setError("Escolha o tipo do ajuste.")
     // Aceita vírgula ou ponto como separador decimal
     const valor = Number(quantidade.trim().replace(",", "."))
     if (!Number.isFinite(valor) || valor <= 0) return setError("Informe quantos pontos (maior que zero).")
@@ -84,8 +96,8 @@ export default function AjustePontosModal({ mes, rotuloMes, ajuste, onClose, onS
     setSalvando(true)
     try {
       const res = ajuste
-        ? await chamarApi(`/bm-financeiro/ajustes/${ajuste.id}`, "PATCH", { pontos, motivo: motivo.trim() })
-        : await chamarApi("/bm-financeiro/ajustes", "POST", { usuario_id: usuarioId, mes, pontos, motivo: motivo.trim() })
+        ? await chamarApi(`/bm-financeiro/ajustes/${ajuste.id}`, "PATCH", { tipo, pontos, motivo: motivo.trim() })
+        : await chamarApi("/bm-financeiro/ajustes", "POST", { usuario_id: usuarioId, mes, tipo, pontos, motivo: motivo.trim() })
       const result = await res.json()
       if (!res.ok) throw new Error(result.error ?? "Não foi possível salvar.")
       onSaved()
@@ -147,6 +159,28 @@ export default function AjustePontosModal({ mes, rotuloMes, ajuste, onClose, onS
               )}
             </div>
 
+            <div>
+              <p className={LABEL_CLASS}>Tipo</p>
+              <div role="radiogroup" aria-label="Tipo do ajuste" className="grid grid-cols-3 gap-2">
+                {TIPOS_AJUSTE.map((t) => (
+                  <button
+                    key={t.valor}
+                    type="button"
+                    role="radio"
+                    aria-checked={tipo === t.valor}
+                    onClick={() => setTipo(t.valor)}
+                    className={`border rounded-lg py-2 text-sm font-semibold transition-colors ${
+                      tipo === t.valor
+                        ? "border-brand-700 bg-brand-50 text-brand-800"
+                        : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {t.rotulo}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className={LABEL_CLASS}>Ajuste</p>
@@ -200,7 +234,7 @@ export default function AjustePontosModal({ mes, rotuloMes, ajuste, onClose, onS
                 type="text"
                 required
                 maxLength={200}
-                placeholder="Ex.: Reunião do dia 10, Administrativo"
+                placeholder={tipo === "reuniao" ? "Ex.: Reunião do dia 10" : tipo === "administrativo" ? "Ex.: Escala do mês" : "Ex.: Atraso no plantão"}
                 value={motivo}
                 onChange={(e) => setMotivo(e.target.value)}
                 className={INPUT_CLASS}

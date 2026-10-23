@@ -2,10 +2,10 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const CAMPOS_AJUSTE = 'id, usuario_id, pontos, motivo, criado_por, criado_em, atualizado_por, atualizado_em'
+const CAMPOS_AJUSTE = 'id, usuario_id, tipo, pontos, motivo, criado_por, criado_em, atualizado_por, atualizado_em'
 
 // Ajustes manuais de pontos do mês (os excluídos ficam só no histórico) e o histórico deles, do mais recente
-// para o mais antigo. Cada edição traz em `anterior` os pontos e o motivo de antes, para a tela mostrar o que mudou.
+// para o mais antigo. Cada edição traz em `anterior` o tipo, os pontos e o motivo de antes, para a tela mostrar o que mudou.
 // inicioDoMes: 'AAAA-MM-01'
 async function buscarAjustesDoMes(inicioDoMes) {
   const [ajustes, historico] = await Promise.all([
@@ -17,7 +17,7 @@ async function buscarAjustesDoMes(inicioDoMes) {
       .order('criado_em'),
     supabase
       .from('ajustes_pontos_historico')
-      .select('id, ajuste_id, acao, usuario_id, pontos, motivo, feito_por, feito_em')
+      .select('id, ajuste_id, acao, usuario_id, tipo, pontos, motivo, feito_por, feito_em')
       .eq('mes', inicioDoMes)
       .order('feito_em'),
   ])
@@ -30,11 +30,16 @@ async function buscarAjustesDoMes(inicioDoMes) {
     ultimoDoAjuste.set(evento.ajuste_id, evento)
     return {
       ...evento,
-      anterior: evento.acao === 'editado' && anterior ? { pontos: anterior.pontos, motivo: anterior.motivo } : null,
+      anterior: evento.acao === 'editado' && anterior
+        ? { tipo: anterior.tipo, pontos: anterior.pontos, motivo: anterior.motivo }
+        : null,
     }
   })
 
   return { ajustes: ajustes.data, historico: eventos.reverse() }
 }
 
-module.exports = { CAMPOS_AJUSTE, buscarAjustesDoMes }
+// Tipo do ajuste: a linha em que ele cai no BM (Administrativo e Reunião têm linha própria, como na planilha)
+const TIPOS_AJUSTE = ['administrativo', 'reuniao', 'outro']
+
+module.exports = { CAMPOS_AJUSTE, TIPOS_AJUSTE, buscarAjustesDoMes }
