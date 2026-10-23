@@ -6,9 +6,11 @@ import SiglaBadge from "../../../components/SiglaBadge"
 import { apiFetch } from "../../../components/sessao"
 import { formatarPontos } from "../../../components/trocaPorHoras"
 import { CasoFora, anestesistasDe, formatarCpf, formatarValor, rotuloRecibo } from "../../../components/casosFora"
+import AjustePontosModal, { AjusteEditavel } from "../../../components/AjustePontosModal"
+import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoModal"
 
-// Administradores e técnicos — mesma lista do backend em routes/bmFinanceiro.js
-const ROLES_BM_FINANCEIRO = ["admin", "tecnico"]
+// Administradores, técnicos e sócios — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio"]
 
 type Aba = "plantonista" | "socio" | "casos_fora"
 
@@ -19,7 +21,35 @@ type LinhaBase = {
   sigla: string | null
 }
 
-type LinhaSocio = LinhaBase & { plantoes: number; pontos: number }
+// pontos = pontos dos plantões + ajustes manuais
+type LinhaSocio = LinhaBase & { plantoes: number; pontos_plantoes: number; pontos_ajustes: number; pontos: number }
+
+type Perfil = LinhaBase
+
+// Ajuste manual de pontos de um sócio no mês (lançado por quem tem a flag admin)
+type Ajuste = {
+  id: string
+  pontos: number
+  motivo: string
+  medico: Perfil
+  criado_por: Perfil
+  criado_em: string
+  atualizado_por: Perfil | null
+  atualizado_em: string | null
+}
+
+// Uma criação, edição ou exclusão de ajuste; na edição, anterior traz os pontos e o motivo de antes
+type EventoHistorico = {
+  id: string
+  ajuste_id: string
+  acao: "criado" | "editado" | "excluido"
+  pontos: number
+  motivo: string
+  medico: Perfil
+  feito_por: Perfil
+  feito_em: string
+  anterior: { pontos: number; motivo: string } | null
+}
 
 // Categorias do plantonista — mesmas de Backend/src/services/pontuacao.js.
 // Sexta à noite conta como noturno de fim de semana; a manhã de sábado e domingo, como diurno de fim de semana
@@ -43,6 +73,8 @@ type Resumo = {
   plantonistas: LinhaPlantonista[]
   socios: LinhaSocio[]
   casosFora: CasoFora[]
+  ajustes: Ajuste[]
+  historico: EventoHistorico[]
 }
 
 function lerRoles(): string[] {
@@ -106,9 +138,34 @@ async function exportarExcel(resumo: Resumo, mesReferencia: Date) {
     "Sócio",
     [
       { header: "Plantões", key: "plantoes" },
-      { header: "Pontos", key: "pontos" },
+      { header: "Pontos dos plantões", key: "pontos_plantoes" },
+      { header: "Ajustes", key: "pontos_ajustes" },
+      { header: "Total de pontos", key: "pontos" },
     ],
     resumo.socios,
+  )
+
+  // Ajustes manuais do mês, um por linha, com o motivo e quem lançou
+  const abaAjustes = workbook.addWorksheet("Ajustes de pontos")
+  abaAjustes.columns = [
+    { header: "Sigla", key: "sigla", width: 8 },
+    { header: "Sócio", key: "medico", width: 28 },
+    { header: "Pontos", key: "pontos", width: 10 },
+    { header: "Motivo", key: "motivo", width: 40 },
+    { header: "Lançado por", key: "criado_por", width: 28 },
+    { header: "Lançado em", key: "criado_em", width: 18 },
+  ]
+  abaAjustes.getRow(1).font = { bold: true }
+  abaAjustes.views = [{ state: "frozen", ySplit: 1 }]
+  resumo.ajustes.forEach((a) =>
+    abaAjustes.addRow({
+      sigla: a.medico.sigla ?? "",
+      medico: nomeDoPerfil(a.medico),
+      pontos: a.pontos,
+      motivo: a.motivo,
+      criado_por: nomeDoPerfil(a.criado_por),
+      criado_em: formatarDataHora(a.criado_em),
+    })
   )
 
   // Casos fora: um por linha, com todos os campos do registro
@@ -278,6 +335,13 @@ export default function BmFinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [autorizado, setAutorizado] = useState(false)
   const [exportando, setExportando] = useState(false)
+  // Só quem tem a flag admin dá e tira pontos (o backend confere de novo)
+  const [podeAjustar, setPodeAjustar] = useState(false)
+  // undefined: fechado; null: novo ajuste; um ajuste: editando ele
+  const [ajusteEmEdicao, setAjusteEmEdicao] = useState<AjusteEditavel | null | undefined>(undefined)
+  const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
+  // Muda depois de lançar, editar ou excluir um ajuste, para buscar o BM de novo
+  const [versao, setVersao] = useState(0)
 
   useEffect(() => {
     if (!localStorage.getItem("token")) {
@@ -289,6 +353,7 @@ export default function BmFinanceiroPage() {
       return
     }
     setAutorizado(true)
+    setPodeAjustar(lerRoles().includes("admin"))
   }, [router])
 
   const mes = paraChaveMes(mesReferencia)
@@ -309,7 +374,7 @@ export default function BmFinanceiroPage() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [autorizado, mes])
+  }, [autorizado, mes, versao])
 
   function mudarMes(delta: number) {
     setMesReferencia((atual) => new Date(atual.getFullYear(), atual.getMonth() + delta, 1))
@@ -327,10 +392,41 @@ export default function BmFinanceiroPage() {
     }
   }
 
+  const recarregar = () => setVersao((v) => v + 1)
+
+  function pedirExclusao(ajuste: Ajuste) {
+    setConfirmacao({
+      titulo: "Excluir ajuste",
+      mensagem: (
+        <>
+          Excluir <strong>{formatarAjuste(ajuste.pontos)} pts</strong> de {nomeDoPerfil(ajuste.medico)} ({ajuste.motivo})? A
+          exclusão continua aparecendo no histórico.
+        </>
+      ),
+      rotuloConfirmar: "Excluir",
+      perigo: true,
+      acao: async () => {
+        const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/ajustes/${ajuste.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          setError(data.error ?? "Não foi possível excluir o ajuste.")
+          return
+        }
+        recarregar()
+      },
+    })
+  }
+
   const termo = normalizar(busca.trim())
   const plantonistas = (resumo?.plantonistas ?? []).filter((l) => correspondeBusca(l, termo))
   const socios = (resumo?.socios ?? []).filter((l) => correspondeBusca(l, termo))
   const casosFora = (resumo?.casosFora ?? []).filter((c) => anestesistasDe(c).some((a) => correspondeBusca(a, termo)))
+  const ajustes = (resumo?.ajustes ?? []).filter((a) => correspondeBusca(a.medico, termo))
+  const historico = (resumo?.historico ?? []).filter((h) => correspondeBusca(h.medico, termo))
+  const rotuloMes = mesReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
 
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -418,62 +514,265 @@ export default function BmFinanceiroPage() {
       ) : aba === "plantonista" ? (
         <TabelaPlantonistasPorCategoria linhas={plantonistas} loading={loading} busca={termo ? busca.trim() : ""} />
       ) : (
-        <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-                <th className="px-4 py-3">Médico</th>
-                <th className="px-4 py-3 text-right whitespace-nowrap">Plantões</th>
-                <th className="px-4 py-3 text-right whitespace-nowrap">Pontos</th>
-              </tr>
-            </thead>
-            <tbody>
-              {socios.map((l) => (
-                <tr key={l.id} className="border-b border-gray-100 last:border-0">
-                  <td className="px-4 py-3 max-w-0 w-full">
-                    <div className="flex items-center gap-3">
-                      <SiglaBadge sigla={l.sigla} />
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
-                        <p className="text-gray-400 text-xs truncate">{l.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">{l.plantoes}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
-                    {formatarPontos(l.pontos)} pts
-                  </td>
-                </tr>
-              ))}
-
-              {!loading && socios.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
-                    {termo
-                      ? `Nenhum médico encontrado para "${busca.trim()}".`
-                      : "Nenhum sócio com plantão neste mês."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            {socios.length > 0 && (
-              <tfoot>
-                <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
-                  <td className="px-4 py-3">Total</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{socios.reduce((s, l) => s + l.plantoes, 0)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(socios.reduce((s, l) => s + l.pontos, 0))} pts</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
+        <div className="space-y-6">
+          <TabelaSocios linhas={socios} loading={loading} busca={termo ? busca.trim() : ""} />
+          <SecaoAjustes
+            ajustes={ajustes}
+            historico={historico}
+            loading={loading}
+            busca={termo ? busca.trim() : ""}
+            podeAjustar={podeAjustar}
+            onNovo={() => setAjusteEmEdicao(null)}
+            onEditar={(a) => setAjusteEmEdicao(a)}
+            onExcluir={pedirExclusao}
+          />
         </div>
       )}
+
+      {ajusteEmEdicao !== undefined && (
+        <AjustePontosModal
+          mes={mes}
+          rotuloMes={rotuloMes}
+          ajuste={ajusteEmEdicao ?? undefined}
+          onClose={() => setAjusteEmEdicao(undefined)}
+          onSaved={recarregar}
+        />
+      )}
+      {confirmacao && <ConfirmacaoModal confirmacao={confirmacao} onClose={() => setConfirmacao(null)} />}
     </main>
   )
 }
 
 function formatarData(data: string) {
   return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
+}
+
+function formatarDataHora(iso: string) {
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function nomeDoPerfil(perfil: Perfil) {
+  return perfil.nome ?? perfil.email ?? "—"
+}
+
+// "+5" ou "−3,5", com o sinal de menos tipográfico
+function formatarAjuste(pontos: number) {
+  return `${pontos > 0 ? "+" : "−"}${formatarPontos(Math.abs(pontos))}`
+}
+
+function ValorAjuste({ pontos, className = "" }: { pontos: number; className?: string }) {
+  if (pontos === 0) return <span className={`text-gray-400 ${className}`}>—</span>
+  return (
+    <span className={`tabular-nums whitespace-nowrap ${pontos > 0 ? "text-green-700" : "text-red-600"} ${className}`}>
+      {formatarAjuste(pontos)}
+    </span>
+  )
+}
+
+// Sócios: pontos dos plantões (vaga, troca por horas, férias e congresso já calculados) mais os ajustes manuais
+function TabelaSocios({ linhas, loading, busca }: { linhas: LinhaSocio[]; loading: boolean; busca: string }) {
+  const somar = (valor: (l: LinhaSocio) => number) => linhas.reduce((s, l) => s + valor(l), 0)
+
+  return (
+    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+            <th className="px-4 py-3">Médico</th>
+            <th className="px-3 py-3 text-right whitespace-nowrap hidden sm:table-cell">Plantões</th>
+            <th className="px-3 py-3 text-right">Pontos dos plantões</th>
+            <th className="px-3 py-3 text-right">Ajustes</th>
+            <th className="px-4 py-3 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((l) => (
+            <tr key={l.id} className="border-b border-gray-100 last:border-0">
+              <td className="px-4 py-3 min-w-[12rem]">
+                <div className="flex items-center gap-3">
+                  <SiglaBadge sigla={l.sigla} />
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
+                    <p className="text-gray-400 text-xs truncate">{l.email}</p>
+                  </div>
+                </div>
+              </td>
+              <td className="px-3 py-3 text-right text-gray-700 tabular-nums hidden sm:table-cell">{l.plantoes}</td>
+              <td className="px-3 py-3 text-right text-gray-700 tabular-nums">{formatarPontos(l.pontos_plantoes)}</td>
+              <td className="px-3 py-3 text-right">
+                <ValorAjuste pontos={l.pontos_ajustes} />
+              </td>
+              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
+                {formatarPontos(l.pontos)} pts
+              </td>
+            </tr>
+          ))}
+
+          {!loading && linhas.length === 0 && (
+            <tr>
+              <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                {busca ? `Nenhum médico encontrado para "${busca}".` : "Nenhum sócio com plantão ou ajuste neste mês."}
+              </td>
+            </tr>
+          )}
+        </tbody>
+        {linhas.length > 0 && (
+          <tfoot>
+            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
+              <td className="px-4 py-3">Total</td>
+              <td className="px-3 py-3 text-right tabular-nums hidden sm:table-cell">{somar((l) => l.plantoes)}</td>
+              <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.pontos_plantoes))}</td>
+              <td className="px-3 py-3 text-right">
+                <ValorAjuste pontos={Math.round(somar((l) => l.pontos_ajustes) * 100) / 100} />
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarPontos(somar((l) => l.pontos))} pts</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  )
+}
+
+// Frase do histórico: quem fez o quê, e na edição o que mudou
+function DescricaoEvento({ evento }: { evento: EventoHistorico }) {
+  const quem = <strong className="font-semibold text-gray-800">{nomeDoPerfil(evento.feito_por)}</strong>
+  const medico = <strong className="font-semibold text-gray-800">{nomeDoPerfil(evento.medico)}</strong>
+
+  if (evento.acao === "criado") {
+    return (
+      <>
+        {quem} lançou <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts para {medico}: {evento.motivo}
+      </>
+    )
+  }
+  if (evento.acao === "excluido") {
+    return (
+      <>
+        {quem} excluiu <ValorAjuste pontos={evento.pontos} className="font-semibold line-through" /> pts de {medico} ({evento.motivo})
+      </>
+    )
+  }
+  const { anterior } = evento
+  return (
+    <>
+      {quem} editou o ajuste de {medico}:{" "}
+      {anterior && anterior.pontos !== evento.pontos && (
+        <>
+          <ValorAjuste pontos={anterior.pontos} /> → <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts
+          {anterior.motivo !== evento.motivo ? "; " : ""}
+        </>
+      )}
+      {anterior && anterior.motivo !== evento.motivo && (
+        <>
+          motivo &ldquo;{anterior.motivo}&rdquo; → &ldquo;{evento.motivo}&rdquo;
+        </>
+      )}
+      {!anterior && (
+        <>
+          <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts, {evento.motivo}
+        </>
+      )}
+    </>
+  )
+}
+
+// Ajustes manuais do mês e o histórico deles: todos que veem o BM veem tudo; só o admin lança, edita e exclui
+function SecaoAjustes({
+  ajustes,
+  historico,
+  loading,
+  busca,
+  podeAjustar,
+  onNovo,
+  onEditar,
+  onExcluir,
+}: {
+  ajustes: Ajuste[]
+  historico: EventoHistorico[]
+  loading: boolean
+  busca: string
+  podeAjustar: boolean
+  onNovo: () => void
+  onEditar: (ajuste: Ajuste) => void
+  onExcluir: (ajuste: Ajuste) => void
+}) {
+  return (
+    <section className={`bg-white rounded-xl border border-gray-200 ${loading ? "opacity-60" : ""} transition-opacity`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 border-b border-gray-200">
+        <div>
+          <h2 className="font-semibold text-gray-800">Ajustes de pontos</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Pontos dados ou tirados à mão, com o motivo. Somam ao total do sócio.</p>
+        </div>
+        {podeAjustar && (
+          <button
+            type="button"
+            onClick={onNovo}
+            className="bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            Dar ou tirar pontos
+          </button>
+        )}
+      </div>
+
+      <ul>
+        {ajustes.map((a) => (
+          <li key={a.id} className="flex items-start gap-3 px-4 py-3 border-b border-gray-100 last:border-0">
+            <SiglaBadge sigla={a.medico.sigla} />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-gray-800 truncate">{nomeDoPerfil(a.medico)}</p>
+              <p className="text-sm text-gray-700 break-words">{a.motivo}</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Lançado por {nomeDoPerfil(a.criado_por)} em {formatarDataHora(a.criado_em)}
+                {a.atualizado_por && a.atualizado_em && (
+                  <> · editado por {nomeDoPerfil(a.atualizado_por)} em {formatarDataHora(a.atualizado_em)}</>
+                )}
+              </p>
+              {podeAjustar && (
+                <div className="flex gap-3 mt-1">
+                  <button type="button" onClick={() => onEditar(a)} className="text-xs font-semibold text-brand-700 hover:text-brand-900">
+                    Editar
+                  </button>
+                  <button type="button" onClick={() => onExcluir(a)} className="text-xs font-semibold text-red-600 hover:text-red-800">
+                    Excluir
+                  </button>
+                </div>
+              )}
+            </div>
+            <ValorAjuste pontos={a.pontos} className="font-semibold" />
+          </li>
+        ))}
+
+        {!loading && ajustes.length === 0 && (
+          <li className="px-4 py-6 text-center text-sm text-gray-400">
+            {busca ? `Nenhum ajuste encontrado para "${busca}".` : "Nenhum ajuste neste mês."}
+          </li>
+        )}
+      </ul>
+
+      {historico.length > 0 && (
+        <details className="border-t border-gray-200">
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            Histórico de alterações ({historico.length})
+          </summary>
+          <ol className="px-4 pb-4 space-y-2">
+            {historico.map((h) => (
+              <li key={h.id} className="text-sm text-gray-600">
+                <span className="text-xs text-gray-400 tabular-nums mr-2">{formatarDataHora(h.feito_em)}</span>
+                <DescricaoEvento evento={h} />
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </section>
+  )
 }
 
 // Plantonistas: quantos plantões em cada categoria (com fração na troca por horas e no congresso)
