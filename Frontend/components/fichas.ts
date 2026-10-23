@@ -12,6 +12,13 @@ export const TIPOS_ANESTESIA: { valor: TipoAnestesia; rotulo: string }[] = [
   { valor: "outros", rotulo: "Outros" },
 ]
 
+export type Cobranca = "convenio" | "particular"
+
+export const COBRANCAS: { valor: Cobranca; rotulo: string }[] = [
+  { valor: "convenio", rotulo: "Convênio" },
+  { valor: "particular", rotulo: "Particular" },
+]
+
 export const MAX_FOTOS = 1
 export const MAX_OBSERVACOES = 2000
 export const MAX_ANESTESISTAS = 10
@@ -25,6 +32,7 @@ export type FichaResumo = {
   tipo_anestesia: TipoAnestesia
   tipo_outro: string | null
   observacoes: string | null
+  cobranca: Cobranca | null
   valor: number | null
   anestesistas: Pessoa[]
   qtdFotos: number

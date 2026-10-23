@@ -11,12 +11,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // Edita e exclui quem criou ou a gestão.
 const BUCKET = 'fichas-anestesicas'
 const TIPOS_ANESTESIA = ['raquianestesia', 'duplo_bloqueio', 'geral', 'peridural', 'outros']
+const COBRANCAS = ['convenio', 'particular']
 const MAX_FOTOS = 1
 const MAX_BYTES_FOTO = 3 * 1024 * 1024
 const MIME_FOTO = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 const VALIDADE_LINK_FOTO = 60 * 60 // 1h
 
-const CAMPOS = 'id, data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos, criado_por, criado_em, atualizado_por, atualizado_em'
+const CAMPOS = 'id, data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, cobranca, valor, fotos, criado_por, criado_em, atualizado_por, atualizado_em'
 const MAX_OBSERVACOES = 2000
 const MAX_ANESTESISTAS = 10
 const MAX_VALOR = 99999999.99
@@ -142,7 +143,7 @@ exports.obter = async (req, res) => {
   }
 }
 
-// Corpo: data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor, fotos_novas (data URLs)
+// Corpo: data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, cobranca, valor, fotos_novas (data URLs)
 exports.criar = async (req, res) => {
   let campos
   try {
@@ -152,6 +153,7 @@ exports.criar = async (req, res) => {
   }
 
   const novas = Array.isArray(req.body.fotos_novas) ? req.body.fotos_novas : []
+  if (novas.length === 0) return res.status(400).json({ error: 'Anexe a foto da ficha' })
   if (novas.length > MAX_FOTOS) return res.status(400).json({ error: 'Só é possível anexar uma foto por ficha' })
 
   let enviadas
@@ -199,6 +201,8 @@ exports.atualizar = async (req, res) => {
   const mantidas = (Array.isArray(req.body.fotos_mantidas) ? req.body.fotos_mantidas : [])
     .filter(caminho => atual.fotos.includes(caminho))
   const novas = Array.isArray(req.body.fotos_novas) ? req.body.fotos_novas : []
+  // Ficha antiga sem foto também precisa ganhar uma ao ser editada
+  if (mantidas.length + novas.length === 0) return res.status(400).json({ error: 'Anexe a foto da ficha' })
   if (mantidas.length + novas.length > MAX_FOTOS) {
     return res.status(400).json({ error: 'Só é possível anexar uma foto por ficha' })
   }
@@ -252,7 +256,7 @@ exports.remover = async (req, res) => {
 }
 
 async function validarCampos(body) {
-  const { data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, valor } = body ?? {}
+  const { data, data_fim, hora_inicio, hora_fim, anestesista_ids, tipo_anestesia, tipo_outro, observacoes, cobranca, valor } = body ?? {}
 
   if (!dataValida(data)) throw new Error('data é obrigatória (AAAA-MM-DD)')
   if (!dataValida(data_fim)) throw new Error('data_fim é obrigatória (AAAA-MM-DD)')
@@ -284,6 +288,12 @@ async function validarCampos(body) {
     }
   }
 
+  // Cobrança opcional: convênio ou particular
+  const cobrancaNormalizada = cobranca == null || cobranca === '' ? null : cobranca
+  if (cobrancaNormalizada !== null && !COBRANCAS.includes(cobrancaNormalizada)) {
+    throw new Error('cobranca inválida (convenio ou particular)')
+  }
+
   // Valor em R$, opcional (mesma regra dos casos fora)
   let valorNormalizado = null
   if (valor != null && valor !== '') {
@@ -297,7 +307,7 @@ async function validarCampos(body) {
   const obs = String(observacoes ?? '').trim().slice(0, MAX_OBSERVACOES) || null
   return {
     data, data_fim, hora_inicio, hora_fim, anestesista_ids: ids,
-    tipo_anestesia, tipo_outro: outro, observacoes: obs, valor: valorNormalizado,
+    tipo_anestesia, tipo_outro: outro, observacoes: obs, cobranca: cobrancaNormalizada, valor: valorNormalizado,
   }
 }
 
@@ -351,6 +361,7 @@ function formatar(f, perfis, user) {
     tipo_anestesia: f.tipo_anestesia,
     tipo_outro: f.tipo_outro,
     observacoes: f.observacoes,
+    cobranca: f.cobranca,
     valor: f.valor == null ? null : Number(f.valor),
     anestesistas: f.anestesista_ids.map(pessoa),
     qtdFotos: f.fotos.length,

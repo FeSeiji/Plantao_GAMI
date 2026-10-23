@@ -8,6 +8,8 @@ import { useViewportVisivel } from "./useViewportVisivel"
 import { apiFetch } from "./sessao"
 import { formatarValor } from "./casosFora"
 import {
+  COBRANCAS,
+  Cobranca,
   FichaDetalhe,
   MAX_ANESTESISTAS,
   MAX_FOTOS,
@@ -65,6 +67,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
   const [tipo, setTipo] = useState<TipoAnestesia | null>(null)
   const [tipoOutro, setTipoOutro] = useState("")
   const [observacoes, setObservacoes] = useState("")
+  const [cobranca, setCobranca] = useState<Cobranca | null>(null)
   const [valor, setValor] = useState("")
   const [fotosMantidas, setFotosMantidas] = useState<{ caminho: string; url: string }[]>([])
   const [fotosNovas, setFotosNovas] = useState<string[]>([])
@@ -88,6 +91,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
     setTipo(f.tipo_anestesia)
     setTipoOutro(f.tipo_outro ?? "")
     setObservacoes(f.observacoes ?? "")
+    setCobranca(f.cobranca)
     setValor(f.valor == null ? "" : String(f.valor))
     setFotosMantidas(f.fotos)
     setFotosNovas([])
@@ -187,6 +191,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
     if (anestesistas.length === 0) return setError("Escolha pelo menos um anestesista.")
     if (!tipo) return setError("Escolha o tipo de anestesia.")
     if (tipo === "outros" && !tipoOutro.trim()) return setError("Descreva o tipo de anestesia.")
+    if (totalFotos === 0) return setError("Anexe a foto da ficha.")
     if (dataFim < data) return setError("A data final não pode ser antes da data inicial.")
     if (dataFim === data && horaFim <= horaInicio) {
       return setError("No mesmo dia, a hora de término precisa ser depois da de início. Se passou da meia-noite, ajuste a data final.")
@@ -203,6 +208,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
         tipo_anestesia: tipo,
         tipo_outro: tipo === "outros" ? tipoOutro.trim() : null,
         observacoes: observacoes.trim() || null,
+        cobranca,
         valor: valor === "" ? null : Number(valor),
         fotos_novas: fotosNovas,
         ...(criando ? {} : { fotos_mantidas: fotosMantidas.map((f) => f.caminho) }),
@@ -245,6 +251,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 
   const tipoAtual = somenteLeitura ? f?.tipo_anestesia ?? null : tipo
   const outroAtual = somenteLeitura ? f?.tipo_outro ?? "" : tipoOutro
+  const cobrancaAtual = somenteLeitura ? f?.cobranca ?? null : cobranca
   const anestesistasAtuais = somenteLeitura ? f?.anestesistas ?? [] : anestesistas
   // Quem já está na ficha não aparece de novo na busca
   const resultadosLivres = resultados.filter((r) => !anestesistas.some((a) => a.id === r.id))
@@ -278,7 +285,7 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
             {/* Um ou mais médicos, cada um na sua linha */}
             <CaixaCinza>
               <label htmlFor="fichaBusca" className="block text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-1">
-                Anestesistas
+                Anestesistas{!somenteLeitura && <Obrigatorio />}
               </label>
               <div className="space-y-1.5">
                 {anestesistasAtuais.map((a) => (
@@ -349,14 +356,14 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
           </div>
 
           <CaixaCinza className="space-y-2">
-            <CampoLinha rotulo={<>Data<br />inicial</>} htmlFor="fichaData">
+            <CampoLinha rotulo={<>Data<br />inicial{!somenteLeitura && <Obrigatorio />}</>} htmlFor="fichaData">
               {somenteLeitura ? (
                 <ValorLinha>{f ? formatarData(f.data) : ""}</ValorLinha>
               ) : (
                 <input id="fichaData" type="date" required value={data} onChange={(e) => mudarData(e.target.value)} className={INPUT_LINHA} />
               )}
             </CampoLinha>
-            <CampoLinha rotulo={<>Data<br />final</>} htmlFor="fichaDataFim">
+            <CampoLinha rotulo={<>Data<br />final{!somenteLeitura && <Obrigatorio />}</>} htmlFor="fichaDataFim">
               {somenteLeitura ? (
                 <ValorLinha>{f ? formatarData(f.data_fim) : ""}</ValorLinha>
               ) : (
@@ -366,14 +373,14 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
           </CaixaCinza>
 
           <CaixaCinza className="space-y-2">
-            <CampoLinha rotulo={<>Hora<br />início</>} htmlFor="fichaInicio">
+            <CampoLinha rotulo={<>Hora<br />início{!somenteLeitura && <Obrigatorio />}</>} htmlFor="fichaInicio">
               {somenteLeitura ? (
                 <ValorLinha>{f?.hora_inicio.slice(0, 5)}</ValorLinha>
               ) : (
                 <input id="fichaInicio" type="time" required value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className={INPUT_LINHA} />
               )}
             </CampoLinha>
-            <CampoLinha rotulo={<>Hora<br />término</>} htmlFor="fichaFim">
+            <CampoLinha rotulo={<>Hora<br />término{!somenteLeitura && <Obrigatorio />}</>} htmlFor="fichaFim">
               {somenteLeitura ? (
                 <ValorLinha>{f?.hora_fim.slice(0, 5)}</ValorLinha>
               ) : (
@@ -403,14 +410,16 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
               )}
             </div>
             <p className="text-center text-[10px] font-medium uppercase tracking-wide text-gray-700 mt-2">
-              Foto
+              Foto{!somenteLeitura && <Obrigatorio />}
             </p>
           </div>
 
           {/* Linhas do cartão */}
           <div className="space-y-4">
             <div>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-2">Tipo de anestesia</p>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-2">
+                Tipo de anestesia{!somenteLeitura && <Obrigatorio />}
+              </p>
               {/* Quadradinhos como no papel: marcar um desmarca o outro. Colunas de largura mínima
                   para "RAQUIANESTESIA" caber inteira sem invadir a vizinha */}
               <div
@@ -445,6 +454,21 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
                 )}
               </div>
             )}
+
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700 mb-2">Cobrança</p>
+              {/* Opcional: marcar um desmarca o outro, e tocar no marcado deixa sem cobrança */}
+              <div role="radiogroup" aria-label="Cobrança" className="flex flex-wrap gap-x-6 gap-y-3">
+                {COBRANCAS.map((c) => (
+                  <Quadradinho
+                    key={c.valor}
+                    rotulo={c.rotulo}
+                    marcado={cobrancaAtual === c.valor}
+                    onClick={somenteLeitura ? undefined : () => setCobranca((atual) => (atual === c.valor ? null : c.valor))}
+                  />
+                ))}
+              </div>
+            </div>
 
             <CampoLinha rotulo="Valor (R$)" htmlFor="fichaValor">
               {somenteLeitura ? (
@@ -584,6 +608,15 @@ export default function FichaModal({ fichaId, onClose, onSaved }: Props) {
 // Campo escrito "na linha", como no papel
 const INPUT_LINHA =
   "w-full bg-transparent border-0 border-b border-gray-700 rounded-none px-1 py-0.5 text-base sm:text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-brand-600 focus:ring-0"
+
+// Marca de campo obrigatório, só enquanto a ficha está sendo preenchida
+function Obrigatorio() {
+  return (
+    <span aria-hidden="true" className="text-red-600">
+      {" "}*
+    </span>
+  )
+}
 
 function CaixaCinza({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <div className={`bg-gray-300 px-3 py-2.5 ${className}`}>{children}</div>
