@@ -4,9 +4,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { ehVagaDeCoordenador, turnoJaComecou, horaLocal } = require('./posicoes')
 
-// Esvazia a vaga do membro { id, usuario_id, posicao }. A troca pendente da vaga (e a troca por horas valendo)
+// Esvazia a vaga do membro { id, usuario_id, posicao } no plantão { id, data }. A troca pendente da vaga (e a troca por horas valendo)
 // perde o sentido, mas continua no histórico como cancelada; a remoção fica no histórico do plantão
-async function esvaziarVaga(plantaoId, membro, porId) {
+async function esvaziarVaga(plantao, membro, porId) {
   const { error } = await supabase
     .from('plantao_usuarios')
     .delete()
@@ -17,7 +17,7 @@ async function esvaziarVaga(plantaoId, membro, porId) {
   const { error: trocaError } = await supabase
     .from('plantao_trocas')
     .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
-    .eq('plantao_id', plantaoId)
+    .eq('plantao_id', plantao.id)
     .eq('posicao', membro.posicao)
     .eq('usuario_saida', membro.usuario_id)
     .or('status.eq.pendente,and(status.eq.aceita,hora_inicio.not.is.null)')
@@ -27,10 +27,10 @@ async function esvaziarVaga(plantaoId, membro, porId) {
   const { error: logError } = await supabase
     .from('plantao_remocoes')
     .insert({
-      plantao_id: plantaoId,
+      plantao_id: plantao.id,
       usuario_id: membro.usuario_id,
       removido_por: porId,
-      era_coordenador: ehVagaDeCoordenador(membro.posicao),
+      era_coordenador: ehVagaDeCoordenador(plantao.data, membro.posicao),
       posicao: membro.posicao,
     })
 
@@ -85,7 +85,7 @@ async function liberarEscalasFuturas(usuarioId, porId) {
         plantao_id: v.plantoes.id,
         usuario_id: usuarioId,
         removido_por: porId,
-        era_coordenador: ehVagaDeCoordenador(v.posicao),
+        era_coordenador: ehVagaDeCoordenador(v.plantoes.data, v.posicao),
         posicao: v.posicao,
       })))
     if (logError) throw new Error(`Vagas liberadas, mas o histórico não foi gravado: ${logError.message}`)

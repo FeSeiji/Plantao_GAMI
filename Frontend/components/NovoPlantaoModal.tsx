@@ -217,7 +217,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
       tipo: "medico",
       chave: `posicao-${f.posicao}`,
       pessoa: f.usuario,
-      destaque: ehVagaDeCoordenador(f.posicao) ? "coordenador" : undefined,
+      destaque: ehVagaDeCoordenador(data, f.posicao) ? "coordenador" : undefined,
       rotulo: (
         <select
           aria-label="Vaga"

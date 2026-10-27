@@ -186,7 +186,7 @@ exports.removerDaVaga = async (req, res) => {
 
   const { data: plantao, error: plantaoError } = await supabase
     .from('plantoes')
-    .select('id, plantao_usuarios(id, usuario_id, posicao)')
+    .select('id, data, plantao_usuarios(id, usuario_id, posicao)')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -197,7 +197,7 @@ exports.removerDaVaga = async (req, res) => {
   if (!membro) return res.status(404).json({ error: 'Essa vaga já está vazia' })
 
   try {
-    await esvaziarVaga(plantao.id, membro, req.user.id)
+    await esvaziarVaga(plantao, membro, req.user.id)
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -1113,7 +1113,7 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
     .map(u => ({
       ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
       posicao: u.posicao,
-      coordenador: ehVagaDeCoordenador(u.posicao),
+      coordenador: ehVagaDeCoordenador(plantao.data, u.posicao),
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.posicao}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
       cobertura: coberturas.get(`${plantao.id}:${u.posicao}`) ?? null,

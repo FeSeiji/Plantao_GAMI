@@ -1,7 +1,8 @@
 // Vagas do plantão — mesma tabela de Backend/src/services/posicoes.js, no formato da escala anual do cliente.
 // Um plantão por dia, com o diurno (07h–19h) e o noturno (19h–07h do dia seguinte). A posição identifica a vaga
 // e segue a ordem das linhas da escala, de 1 a 13 — por isso o mesmo médico pode estar no diurno e no noturno.
-// No sábado e no domingo (pela data do plantão) algumas vagas mudam de nome ou de horário, e a do 7º não existe.
+// No sábado e no domingo (pela data do plantão) algumas vagas mudam de nome ou de horário, e a do 7º não existe:
+// o diurno fica Plantonista, Coordenador, Manhã e 2º a 5º, e o noturno Plantonista e 1º a 4º.
 export type Turno = "diurno" | "noturno"
 
 export const TURNOS: { valor: Turno; rotulo: string; hora_inicio: string; hora_fim: string }[] = [
@@ -14,24 +15,30 @@ type Vaga = Nome & {
   posicao: number
   turno: Turno
   coordenador?: boolean
-  // Sábado e domingo: false quando a vaga não existe; senão, o que muda (nome e/ou horário)
-  fimDeSemana?: false | (Partial<Nome> & { hora_inicio?: string; hora_fim?: string })
+  // Sábado e domingo: false quando a vaga não existe; senão, o que muda (nome, horário, se é de coordenador)
+  fimDeSemana?: false | (Partial<Nome> & { coordenador?: boolean; hora_inicio?: string; hora_fim?: string })
 }
 
 // frase: como a vaga aparece no meio de uma frase, quando não é "3º do diurno"
 const VAGAS: Vaga[] = [
-  { posicao: 1, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", frase: "coordenador", coordenador: true },
+  {
+    posicao: 1, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", frase: "coordenador", coordenador: true,
+    fimDeSemana: { rotulo: "Plantonista", curto: "P", abrev: "Plant.", frase: "plantonista do diurno", coordenador: false },
+  },
   { posicao: 2, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", frase: "coordenador", coordenador: true },
   {
     posicao: 3, turno: "diurno", rotulo: "2º", curto: "2",
     fimDeSemana: { rotulo: "Manhã", curto: "M", frase: "manhã", hora_fim: "13:00" },
   },
-  { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3", fimDeSemana: { rotulo: "1º", curto: "1" } },
-  { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4", fimDeSemana: { rotulo: "2º", curto: "2" } },
-  { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5", fimDeSemana: { rotulo: "3º", curto: "3" } },
-  { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6", fimDeSemana: { rotulo: "4º", curto: "4" } },
+  { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3", fimDeSemana: { rotulo: "2º", curto: "2" } },
+  { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4", fimDeSemana: { rotulo: "3º", curto: "3" } },
+  { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5", fimDeSemana: { rotulo: "4º", curto: "4" } },
+  { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6", fimDeSemana: { rotulo: "5º", curto: "5" } },
   { posicao: 8, turno: "diurno", rotulo: "7º", curto: "7", fimDeSemana: false },
-  { posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int", abrev: "Interm.", frase: "intermediário" },
+  {
+    posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int", abrev: "Interm.", frase: "intermediário",
+    fimDeSemana: { rotulo: "Plantonista", curto: "P", abrev: "Plant.", frase: "plantonista do noturno" },
+  },
   { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1" },
   { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1", fimDeSemana: { rotulo: "2º", curto: "2" } },
   { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2", fimDeSemana: { rotulo: "3º", curto: "3" } },
@@ -98,11 +105,12 @@ export function horarioDaVaga(data: string, posicao: number) {
   }
 }
 
-export function ehVagaDeCoordenador(posicao: number | null | undefined) {
-  return posicao != null && VAGAS.find((v) => v.posicao === posicao)?.coordenador === true
+// A vaga 1 é de coordenador só de segunda a sexta: no fim de semana ela é a do plantonista
+export function ehVagaDeCoordenador(data: string, posicao: number | null | undefined) {
+  return posicao != null && vagaDa(data, posicao)?.coordenador === true
 }
 
-// "Coordenador" / "3º" / "Intermediário" / "Manhã" — cabeçalhos e células (o turno aparece no título do bloco)
+// "Coordenador" / "3º" / "Intermediário" / "Manhã" / "Plantonista" — cabeçalhos e células (o turno aparece no título do bloco)
 export function rotuloPosicao(data: string, posicao: number) {
   return vagaDa(data, posicao)?.rotulo ?? `${posicao}`
 }
@@ -118,7 +126,7 @@ export function rotuloPosicaoCurto(data: string, posicao: number) {
   return vagaDa(data, posicao)?.curto ?? String(posicao)
 }
 
-// "coordenador" / "3º do diurno" / "intermediário" / "manhã" — no meio de frases
+// "coordenador" / "3º do diurno" / "intermediário" / "manhã" / "plantonista do diurno" — no meio de frases
 export function descreverPosicao(data: string, posicao: number) {
   const vaga = vagaDa(data, posicao)
   if (!vaga) return `vaga ${posicao}`

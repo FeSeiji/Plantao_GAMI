@@ -96,7 +96,7 @@ function repartirSemDesconto(plantao, membros, coberturas) {
   for (const m of membros) {
     const total = duracaoDaVaga(horarioDaVaga(plantao, m.posicao))
     const c = coberturas.find(x => x.plantao_id === plantao.id && x.posicao === m.posicao && x.usuario_saida === m.usuario_id)
-    const base = { posicao: m.posicao, coordenador: ehVagaDeCoordenador(m.posicao) }
+    const base = { posicao: m.posicao, coordenador: ehVagaDeCoordenador(plantao.data, m.posicao) }
     if (!c) {
       partes.push({ ...base, usuario_id: m.usuario_id, fracao: 1, minutos: total })
       continue

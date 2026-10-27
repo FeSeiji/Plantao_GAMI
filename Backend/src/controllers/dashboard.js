@@ -312,7 +312,7 @@ exports.gestao = async (req, res) => {
 function problemaDeCobertura(p) {
   if (p.plantao_usuarios.length === 0) return 'Sem nenhum médico'
   // Alerta de vagas incompletas desligado por enquanto
-  if (p.turno === 'diurno' && !p.plantao_usuarios.some(u => ehVagaDeCoordenador(u.posicao))) return 'Sem coordenador'
+  if (p.turno === 'diurno' && !p.plantao_usuarios.some(u => ehVagaDeCoordenador(p.data, u.posicao))) return 'Sem coordenador'
   return null
 }
 
@@ -380,7 +380,7 @@ function formatPlantao(row, perfis, agoraMin, coberturaDaMinhaVaga = null) {
     ...plantao,
     emAndamento: inicio <= agoraMin,
     meuPapel: {
-      coordenador: ehVagaDeCoordenador(eu[0]?.posicao),
+      coordenador: ehVagaDeCoordenador(plantao.data, eu[0]?.posicao),
       posicao: eu[0]?.posicao ?? null,
       cobrindo: cobertura
         ? {
@@ -399,17 +399,17 @@ function formatPlantao(row, perfis, agoraMin, coberturaDaMinhaVaga = null) {
           }
         : null,
     },
-    usuarios: formatarVagas(plantao_usuarios, perfis),
+    usuarios: formatarVagas(plantao.data, plantao_usuarios, perfis),
   }
 }
 
 // As vagas do turno, na ordem da escala
-function formatarVagas(plantaoUsuarios, perfis) {
+function formatarVagas(data, plantaoUsuarios, perfis) {
   return plantaoUsuarios
     .filter(u => u.posicao != null)
     .map(u => ({
       ...(perfis.get(u.usuario_id) ?? { id: u.usuario_id }),
-      coordenador: ehVagaDeCoordenador(u.posicao),
+      coordenador: ehVagaDeCoordenador(data, u.posicao),
       posicao: u.posicao,
     }))
     .sort((a, b) => a.posicao - b.posicao)
