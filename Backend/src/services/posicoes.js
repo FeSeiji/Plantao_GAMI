@@ -8,18 +8,18 @@ const TURNOS = {
   noturno: { hora_inicio: '19:00', hora_fim: '07:00' },
 }
 
-// fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto quando muda o horário.
-// Os nomes do fim de semana (Manhã, 1º–4º) ficam só no frontend.
+// fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto com o que muda (horário,
+// se é de coordenador). Os nomes do fim de semana (Plantonista, Manhã, 2º–5º) ficam só no frontend.
 const VAGAS = [
-  { posicao: 1, turno: 'diurno', coordenador: true }, // Coordenador
+  { posicao: 1, turno: 'diurno', coordenador: true, fimDeSemana: { coordenador: false } }, // Coordenador; Plantonista no fim de semana
   { posicao: 2, turno: 'diurno', coordenador: true }, // Coordenador
   { posicao: 3, turno: 'diurno', fimDeSemana: { hora_fim: '13:00' } }, // 2º; Manhã no fim de semana
-  { posicao: 4, turno: 'diurno' }, // 3º; 1º no fim de semana
-  { posicao: 5, turno: 'diurno' }, // 4º; 2º no fim de semana
-  { posicao: 6, turno: 'diurno' }, // 5º; 3º no fim de semana
-  { posicao: 7, turno: 'diurno' }, // 6º; 4º no fim de semana
+  { posicao: 4, turno: 'diurno' }, // 3º; 2º no fim de semana
+  { posicao: 5, turno: 'diurno' }, // 4º; 3º no fim de semana
+  { posicao: 6, turno: 'diurno' }, // 5º; 4º no fim de semana
+  { posicao: 7, turno: 'diurno' }, // 6º; 5º no fim de semana
   { posicao: 8, turno: 'diurno', fimDeSemana: false }, // 7º
-  { posicao: 9, turno: 'noturno' }, // Intermediário
+  { posicao: 9, turno: 'noturno' }, // Intermediário; Plantonista no fim de semana
   { posicao: 10, turno: 'noturno' }, // 1º
   { posicao: 11, turno: 'noturno' }, // 1º; 2º no fim de semana
   { posicao: 12, turno: 'noturno' }, // 2º; 3º no fim de semana
@@ -45,8 +45,16 @@ function vagaExisteNoDia(data, posicao) {
   return vaga != null && !(ehFimDeSemana(data) && vaga.fimDeSemana === false)
 }
 
-function ehVagaDeCoordenador(posicao) {
-  return vagaDa(posicao)?.coordenador === true
+// A vaga como ela é nesse dia (com o que muda no fim de semana)
+function vagaNoDia(data, posicao) {
+  const vaga = vagaDa(posicao)
+  if (!vaga?.fimDeSemana || !ehFimDeSemana(data)) return vaga
+  return { ...vaga, ...vaga.fimDeSemana }
+}
+
+// A vaga 1 é de coordenador só de segunda a sexta: no fim de semana ela é a do plantonista
+function ehVagaDeCoordenador(data, posicao) {
+  return vagaNoDia(data, posicao)?.coordenador === true
 }
 
 function turnoDaPosicao(posicao) {
@@ -56,9 +64,9 @@ function turnoDaPosicao(posicao) {
 // Horário da vaga nesse plantão: { data, hora_inicio, hora_fim } — o do turno dela, ou o próprio no fim de semana
 // (a manhã vai das 07h às 13h)
 function horarioDaVaga(plantao, posicao) {
-  const vaga = vagaDa(posicao)
-  const proprio = ehFimDeSemana(plantao.data) && vaga.fimDeSemana ? vaga.fimDeSemana : {}
-  return { data: plantao.data, ...TURNOS[vaga.turno], ...proprio }
+  const vaga = vagaNoDia(plantao.data, posicao)
+  const turno = TURNOS[vaga.turno]
+  return { data: plantao.data, hora_inicio: vaga.hora_inicio ?? turno.hora_inicio, hora_fim: vaga.hora_fim ?? turno.hora_fim }
 }
 
 // Instante no horário de Brasília (o do hospital), não no do servidor: "2026-10-18 14:05"

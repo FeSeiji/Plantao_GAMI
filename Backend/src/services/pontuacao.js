@@ -16,14 +16,16 @@ const PONTOS_SEMANA = {
 }
 
 // Sábado e domingo (o noturno de domingo para segunda também): em geral a semana × 1,3.
-// No diurno o cliente numera contando o coordenador como 1: o 2 a 5 dele são o 1º a 4º da tela (vagas 4 a 7)
+// Valores confirmados pela Dra. Aline em 27/10/2026, menos os das vagas de plantonista (1 e 9), que o cliente
+// ainda não mandou: valem quando um sócio cobre o plantonista
 const PONTOS_FIM_DE_SEMANA = {
-  1: 26, 2: 26, // coordenadores
+  1: 26, // plantonista do diurno: ficou o valor de quando era coordenador — confirmar com o cliente
+  2: 26, // coordenador
   3: 13, // manhã (7h–13h)
-  4: 23.4, 5: 20.8, 6: 18.2, 7: 15.6,
+  4: 23.4, 5: 20.8, 6: 18.2, 7: 15.6, // 2º a 5º
   // 8: o 7º não existe no fim de semana; uma vaga que já estava ocupada vale como na semana
-  9: 15.6, // intermediário: o cliente não mandou o valor, ficou 12 × 1,3 — confirmar com ele
-  10: 33.8, 11: 23.4, 12: 10.4, 13: 7,
+  9: 15.6, // plantonista do noturno: ficou 12 × 1,3 de quando era intermediário — confirmar com o cliente
+  10: 33.8, 11: 23.4, 12: 10.4, 13: 7, // 1º ("coordenador" para o cliente) a 4º
 }
 
 // Sexta à noite: só o 2º e o 3º do noturno valem como no fim de semana

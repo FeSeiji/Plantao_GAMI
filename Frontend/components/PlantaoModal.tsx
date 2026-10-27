@@ -707,7 +707,7 @@ export default function PlantaoModal({
     const anterior = selecionados;
     setSelecionados((prev) => [
       ...prev,
-      { ...usuario, posicao, coordenador: ehVagaDeCoordenador(posicao) },
+      { ...usuario, posicao, coordenador: ehVagaDeCoordenador(plantao.data, posicao) },
     ]);
 
     try {
@@ -750,7 +750,7 @@ export default function PlantaoModal({
     const naPosicao = (u: Usuario, p: number) => ({
       ...u,
       posicao: p,
-      coordenador: ehVagaDeCoordenador(p),
+      coordenador: ehVagaDeCoordenador(plantao.data, p),
     });
     setSelecionados((prev) =>
       prev.map((u) => {
