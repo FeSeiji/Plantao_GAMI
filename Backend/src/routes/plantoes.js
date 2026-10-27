@@ -4,6 +4,7 @@ const { requireRole } = require('../middleware/auth')
 const {
   createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removerDaVaga,
   criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
+  listarAvisosTroca, marcarAvisoTrocaCiente,
   alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarTroca,
   pedirVaga, listarPedidosVagaDoPlantao, listarPedidosVagaPendentes, responderPedidoVaga, cancelarPedidoVaga,
 } = require('../controllers/plantoes')
@@ -21,6 +22,9 @@ router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)
 router.patch('/trocas/:trocaId/aceitar', responderTroca(true))
 router.patch('/trocas/:trocaId/recusar', responderTroca(false))
+// Avisos das trocas que a gestão registrou (cada um vê só os seus)
+router.get('/trocas/avisos', listarAvisosTroca)
+router.patch('/trocas/avisos/:avisoId/ciente', marcarAvisoTrocaCiente)
 router.get('/pedidos-vaga/pendentes', gestao, listarPedidosVagaPendentes)
 router.patch('/pedidos-vaga/:pedidoId/aprovar', gestao, responderPedidoVaga(true))
 router.patch('/pedidos-vaga/:pedidoId/recusar', gestao, responderPedidoVaga(false))
