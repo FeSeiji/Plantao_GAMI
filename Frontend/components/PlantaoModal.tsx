@@ -421,6 +421,15 @@ export default function PlantaoModal({
         throw new Error(result.error ?? "Não foi possível solicitar a troca.");
       }
 
+      setHistorico((prev) => [result, ...prev]);
+      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
+
+      // Registrada pela gestão, a troca já vale: quem entrou (ou a cobertura) vem do plantão atualizado
+      if (result.status === "aceita") {
+        await recarregarPlantao();
+        return;
+      }
+
       setSelecionados((prev) =>
         prev.map((u) =>
           u.posicao === posicao
@@ -440,8 +449,6 @@ export default function PlantaoModal({
             : u,
         ),
       );
-      setHistorico((prev) => [result, ...prev]);
-      window.dispatchEvent(new Event(EVENTO_TROCAS_ATUALIZADAS));
     } catch (err) {
       setError(
         err instanceof Error
@@ -1261,14 +1268,16 @@ export default function PlantaoModal({
                           {nomeDe(usuarioTrocando)}
                         </span>
                         , que está de férias e continua na vaga. Os dois recebem
-                        os pontos. A cobertura só vale depois que{" "}
-                        {nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.
+                        os pontos.{" "}
+                        {podeGerirEquipe
+                          ? "A cobertura vale na hora."
+                          : `A cobertura só vale depois que ${nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.`}
                       </p>
                     ),
-                    rotuloConfirmar: "Pedir cobertura",
+                    rotuloConfirmar: podeGerirEquipe ? "Registrar cobertura" : "Pedir cobertura",
                     acao: () => solicitarTroca(trocandoPosicao!, r, null),
                   } : {
-                    titulo: "Solicitar troca?",
+                    titulo: podeGerirEquipe ? "Registrar troca?" : "Solicitar troca?",
                     mensagem: (
                       <p>
                         Trocar{" "}
@@ -1281,11 +1290,13 @@ export default function PlantaoModal({
                           : usuarioTrocando.coordenador
                             ? " (inclusive como coordenador)"
                             : ""}
-                        . A troca só vale depois que{" "}
-                        {nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.
+                        .{" "}
+                        {podeGerirEquipe
+                          ? "A troca vale na hora."
+                          : `A troca só vale depois que ${nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.`}
                       </p>
                     ),
-                    rotuloConfirmar: "Solicitar troca",
+                    rotuloConfirmar: podeGerirEquipe ? "Registrar troca" : "Solicitar troca",
                     acao: () =>
                       solicitarTroca(trocandoPosicao!, r, intervaloTroca),
                   })

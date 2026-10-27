@@ -401,7 +401,8 @@ exports.addUsuarios = async (req, res) => {
 
 // A troca é de uma vaga (posicao): quem está nela sai e usuario_entrada entra.
 // Sem hora_inicio/hora_fim troca a vaga inteira; com eles é a troca por horas (o convidado cobre só o intervalo).
-// Titular de férias aprovadas: vira cobertura de férias (ele continua na vaga e o convidado cobre o turno inteiro)
+// Titular de férias aprovadas: vira cobertura de férias (ele continua na vaga e o convidado cobre o turno inteiro).
+// Pedida por um médico, espera o aceite do outro; registrada pela gestão, já vale na hora
 exports.criarTroca = async (req, res) => {
   const { posicao, usuario_entrada, hora_inicio = null, hora_fim = null } = req.body
   const parcial = hora_inicio != null || hora_fim != null
@@ -475,6 +476,7 @@ exports.criarTroca = async (req, res) => {
     return res.status(400).json({ error: err.message })
   }
 
+  const direta = ehGestao(req.user)
   const { data: troca, error } = await supabase
     .from('plantao_trocas')
     .insert({
@@ -487,6 +489,7 @@ exports.criarTroca = async (req, res) => {
       hora_inicio: coberturaFerias ? horario.hora_inicio : parcial ? hora_inicio : null,
       hora_fim: coberturaFerias ? horario.hora_fim : parcial ? hora_fim : null,
       cobertura_ferias: coberturaFerias,
+      ...(direta ? { status: 'aceita', respondido_em: new Date().toISOString() } : {}),
     })
     .select()
     .single()
@@ -494,6 +497,15 @@ exports.criarTroca = async (req, res) => {
   if (error) {
     if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma troca pendente para essa vaga' })
     return res.status(400).json({ error: error.message })
+  }
+
+  if (direta) {
+    try {
+      const erro = await aplicarTrocaDaGestao(troca)
+      if (erro) return res.status(409).json({ error: erro })
+    } catch (err) {
+      return res.status(500).json({ error: err.message })
+    }
   }
 
   try {
@@ -902,6 +914,38 @@ exports.cancelarPedidoVaga = async (req, res) => {
 
 // Erro se o médico não puder entrar na vaga: já está no turno (aqui ou em outro plantão), tem conflito
 // de horário ou está de férias/congresso aprovados nesse dia
+// A troca registrada pela gestão já entra aceita: na troca da vaga inteira o convidado assume a vaga agora
+// (na troca por horas e na cobertura de férias a vaga continua do titular). Os pedidos pendentes de troca dessa
+// vaga perdem o sentido e são cancelados. Devolve uma mensagem de erro quando a vaga mudou de mãos no meio do caminho
+async function aplicarTrocaDaGestao(troca) {
+  if (!troca.hora_inicio) {
+    const { data: linhas, error } = await supabase
+      .from('plantao_usuarios')
+      .update({ usuario_id: troca.usuario_entrada })
+      .eq('plantao_id', troca.plantao_id)
+      .eq('posicao', troca.posicao)
+      .eq('usuario_id', troca.usuario_saida)
+      .select('id')
+
+    if (error || !linhas || linhas.length === 0) {
+      // A vaga não mudou: a troca não fica no histórico como se tivesse acontecido
+      await supabase.from('plantao_trocas').delete().eq('id', troca.id)
+      if (error) throw error
+      return 'O médico que está saindo não está mais nessa vaga'
+    }
+  }
+
+  const { error: cancelarError } = await supabase
+    .from('plantao_trocas')
+    .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
+    .eq('plantao_id', troca.plantao_id)
+    .eq('posicao', troca.posicao)
+    .eq('status', 'pendente')
+  if (cancelarError) throw cancelarError
+
+  return null
+}
+
 async function validarEntradaNaVaga(usuarioId, plantao, posicao, mensagemConflito) {
   if ((await usuariosComConflito([usuarioId], horarioDaVaga(plantao, posicao))).size > 0) {
     throw new Error(mensagemConflito)
