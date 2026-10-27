@@ -10,6 +10,7 @@ const { buscarCargosDosUsuarios, contaComoSocio } = require('./usuarios')
 const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes } = require('./ajustesPontos')
 const { buscarFinanceiro } = require('./financeiroBm')
+const { MES_INICIAL_CONTA_CORRENTE, calcularMes, saldoInicial, mesSeguinte } = require('./calculoBm')
 
 // Ordem das colunas da planilha do cliente (BM DEZ 26.xlsx). Sócio que não está nela vai depois, pela sigla
 const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'GI', 'VI', 'TG', 'LU', 'VS']
@@ -23,9 +24,15 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 //   Troca por horas: a fração das horas. Cobertura de férias: só + para quem cobre (o titular continua com a vaga).
 // - casosForaRecibo: casos fora com recibo GAMI/ADDS, com a parte de cada sócio (dois anestesistas: metade cada).
 // - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
-// - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, fator) e o histórico deles.
+// - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, valores por sócio) e o
+//   histórico deles. conta_corrente.dif_mes_anterior: a diferença final do mês anterior de cada sócio, refeita em
+//   cascata desde o primeiro mês da conta corrente (vazia nesse mês, que usa o saldo inicial, e antes dele).
 // O noturno conta no mês em que o plantão começa.
-async function montarBm(mes) {
+// Opções (só para a cascata): contaCorrente: false não refaz os meses anteriores; incluir: ids de sócios que
+// viram coluna mesmo sem nada no mês (quem tem saldo vindo do mês anterior)
+async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
+  const difMesAnterior = contaCorrente ? await calcularDifMesAnterior(mes) : null
+
   const [ano, mesNum] = mes.split('-').map(Number)
   const inicio = `${mes}-01`
   const fim = `${mes}-${String(new Date(Date.UTC(ano, mesNum, 0)).getUTCDate()).padStart(2, '0')}`
@@ -110,8 +117,10 @@ async function montarBm(mes) {
   substituicoes.sort((a, b) => a.data.localeCompare(b.data) || a.posicao - b.posicao)
 
   for (const ajuste of ajustes) socioDe(ajuste.usuario_id).pontos_ajustes += Number(ajuste.pontos)
-  // Sócio com valor digitado no mês (ex.: GAMI PRO sem recibo) também vira coluna
+  // Sócio com valor digitado no mês (ex.: GAMI PRO sem recibo) ou com saldo vindo do mês anterior também vira coluna
   for (const id of Object.keys(financeiro.socios)) if (ehSocio(id)) socioDe(id)
+  const comSaldo = [...incluir, ...Object.entries(difMesAnterior ?? {}).filter(([, v]) => v !== 0).map(([id]) => id)]
+  for (const id of comSaldo) if (ehSocio(id)) socioDe(id)
 
   // Casos fora com recibo GAMI/ADDS: os "Sem nota fiscal" ficam fora da planilha
   const casosForaRecibo = []
@@ -186,6 +195,7 @@ async function montarBm(mes) {
     })),
     financeiro: {
       ...financeiro,
+      conta_corrente: { desde: MES_INICIAL_CONTA_CORRENTE, dif_mes_anterior: difMesAnterior },
       historico: financeiro.historico.map(({ usuario_id, feito_por, ...h }) => ({
         ...h,
         socio: usuario_id ? resumoDoPerfil(usuario_id, perfis) : null,
@@ -193,6 +203,20 @@ async function montarBm(mes) {
       })),
     },
   }
+}
+
+// Diferença final do mês anterior de cada sócio: refaz as contas de cada mês desde o primeiro da conta corrente
+// (que parte do saldo inicial digitado). null no primeiro mês e antes dele
+async function calcularDifMesAnterior(mes) {
+  if (mes <= MES_INICIAL_CONTA_CORRENTE) return null
+  let dif = null
+  for (let m = MES_INICIAL_CONTA_CORRENTE; m < mes; m = mesSeguinte(m)) {
+    const incluir = Object.entries(dif ?? {}).filter(([, v]) => v !== 0).map(([id]) => id)
+    const bm = await montarBm(m, { contaCorrente: false, incluir })
+    const anterior = m === MES_INICIAL_CONTA_CORRENTE ? saldoInicial(bm) : dif
+    dif = calcularMes(bm, anterior).contaCorrente.diferencaFinal
+  }
+  return dif
 }
 
 // Trocas aceitas desses plantões: da vaga inteira (o médico já foi trocado em plantao_usuarios),

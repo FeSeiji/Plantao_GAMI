@@ -14,6 +14,7 @@ import HistoricoFinanceiro, { EventoFinanceiro } from "../../../components/bm/Hi
 import {
   CATEGORIAS_PLANTAO,
   CampoMes,
+  CampoSocioDinheiro,
   Despesa,
   Edicoes,
   Empresa,
@@ -26,6 +27,7 @@ import {
   edicoesVazias,
   formatarDinheiro,
   pagamentoPlantonista,
+  socioVazio,
   temEdicoes,
   valoresPlantao,
 } from "../../../components/bm/calculos"
@@ -162,12 +164,14 @@ function linhasCasosFora(
   casos: CasoForaRecibo[],
   socios: Socio[],
   { titulo, subtitulo, medico, custas, chave }: { titulo: string; subtitulo: string; medico: number; custas: number; chave: string },
-): { linhas: LinhaGrade[]; total: PorSocio; custas: PorSocio } {
+): { linhas: LinhaGrade[]; total: PorSocio; medico: PorSocio; custas: PorSocio } {
   const total = somar(casos.map((c) => c.partes), socios)
+  const parteMedico = multiplicar(total, medico)
   const parteCustas = multiplicar(total, custas)
   const pct = (n: number) => `${Math.round(n * 100)}%`
   return {
     total,
+    medico: parteMedico,
     custas: parteCustas,
     linhas: [
       { tipo: "secao", titulo, subtitulo },
@@ -184,7 +188,7 @@ function linhasCasosFora(
             }),
           )),
       { tipo: "valores", chave: `${chave}-total`, rotulo: "Total 100%", valores: total, formato: "dinheiro", destaque: "subtotal" },
-      { tipo: "valores", chave: `${chave}-medico`, rotulo: `Médico ${pct(medico)}`, valores: multiplicar(total, medico), formato: "dinheiro", destaque: "subtotal" },
+      { tipo: "valores", chave: `${chave}-medico`, rotulo: `Médico ${pct(medico)}`, valores: parteMedico, formato: "dinheiro", destaque: "subtotal" },
       { tipo: "valores", chave: `${chave}-custas`, rotulo: `Custas ${pct(custas)}`, valores: parteCustas, formato: "dinheiro", destaque: "subtotal" },
     ],
   }
@@ -203,7 +207,8 @@ function detalheSubstituicao(s: Substituicao) {
 }
 
 // Primeira parte da planilha: GAMI PRO sem recibo (linha 2), casos fora com recibo e a prévia dos sócios.
-// Devolve também os totais que entram no faturamento: 100% dos casos fora (R122) e as custas (R124)
+// Devolve também os totais que entram no faturamento, 100% dos casos fora (R122) e as custas (R124), e o que vai
+// para a conta corrente: a prévia (distribuição CF) e a parte do médico nos casos fora (CF)
 function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void) {
   const { socios } = bm
   const escalado = linhasCasosFora(
@@ -220,6 +225,7 @@ function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, cam
     socios.filter((s) => fin.socios[s.id]?.gami_pro_sem_recibo != null).map((s) => [s.id, fin.socios[s.id].gami_pro_sem_recibo!]),
   )
   const custas = somar([escalado.custas, naoEscalado.custas], socios)
+  const previa = somar([gamiPro, custas], socios)
 
   const linhas: LinhaGrade[] = [
     { tipo: "siglas" },
@@ -238,7 +244,7 @@ function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, cam
       chave: "previa",
       rotulo: "D. Prévia sócios",
       detalhe: "GAMI PRO sem recibo + custas dos casos fora",
-      valores: somar([gamiPro, custas], socios),
+      valores: previa,
       formato: "dinheiro",
       destaque: "total",
     },
@@ -247,6 +253,8 @@ function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, cam
     linhas,
     casosForaRecibo100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
     custasCasosFora: somarTudo(custas),
+    previa,
+    medico: somar([escalado.medico, naoEscalado.medico], socios),
   }
 }
 
@@ -257,7 +265,7 @@ function montarPontos(
   fin: Financeiro,
   valorParaDistribuir: number,
   editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void,
-): LinhaGrade[] {
+): { linhas: LinhaGrade[]; previsao: PorSocio } {
   const { socios } = bm
   const fator = (id: string) => fin.socios[id]?.fator_correcao ?? 1
   const porSocio = (valor: (s: Socio) => number): PorSocio => Object.fromEntries(socios.map((s) => [s.id, valor(s)]))
@@ -276,8 +284,9 @@ function montarPontos(
   const total = somar([corrigido, totSubstituido], socios)
   const pontosDistribuidos = somarTudo(total)
   const valorDoPonto = pontosDistribuidos > 0 ? valorParaDistribuir / pontosDistribuidos : 0
+  const previsao = multiplicar(total, valorDoPonto)
 
-  return [
+  const linhas: LinhaGrade[] = [
     { tipo: "secao", titulo: "Pontos" },
     { tipo: "siglas" },
     { tipo: "valores", chave: "valor", rotulo: "Valor", detalhe: "Pontos da escala", valores: valor, formato: "pontos", destaque: "subtotal" },
@@ -328,10 +337,83 @@ function montarPontos(
       chave: "previsao",
       rotulo: "Previsão",
       detalhe: "TOTAL × valor do ponto",
-      valores: multiplicar(total, valorDoPonto),
+      valores: previsao,
       formato: "dinheiro",
       destaque: "total",
     },
+  ]
+  return { linhas, previsao }
+}
+
+const CAMPOS_BANCOS: { campo: CampoSocioDinheiro; rotulo: string }[] = [
+  { campo: "bradesco_dia_05", rotulo: "Bradesco dia 05" },
+  { campo: "itau_dia_05", rotulo: "Itaú dia 05" },
+  { campo: "bradesco_dia_10", rotulo: "Bradesco dia 10" },
+  { campo: "itau_dia_10", rotulo: "Itaú dia 10" },
+  { campo: "cef", rotulo: "CEF" },
+]
+
+// Conta corrente (linhas 175 a 197 da planilha): a previsão mais a diferença que veio do mês anterior e o DARF,
+// menos o que foi distribuído; a diferença final passa para o mês seguinte. Começa no mês conta_corrente.desde,
+// em que a dif. mês anterior é o saldo inicial digitado; nos seguintes ela vem do backend, refeita em cascata.
+// Antes do primeiro mês não aparece (null)
+function montarContaCorrente(
+  bm: Bm,
+  fin: Financeiro,
+  { previsao, previa, medico }: { previsao: PorSocio; previa: PorSocio; medico: PorSocio },
+  editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void,
+): LinhaGrade[] | null {
+  const { desde, dif_mes_anterior } = fin.conta_corrente
+  if (bm.mes < desde) return null
+  const { socios } = bm
+  const primeiroMes = bm.mes === desde
+  const campo = (c: CampoSocioDinheiro): PorSocio =>
+    Object.fromEntries(socios.filter((s) => fin.socios[s.id]?.[c] != null).map((s) => [s.id, fin.socios[s.id][c]!]))
+  const digitada = (chave: CampoSocioDinheiro, rotulo: string, detalhe?: string): LinhaGrade => ({
+    tipo: "valores",
+    chave,
+    rotulo,
+    detalhe,
+    valores: campo(chave),
+    formato: "dinheiro",
+    editar: editarSocio && ((id, valor) => editarSocio(id, { [chave]: valor } as Partial<SocioFinanceiro>)),
+  })
+
+  const difAnterior = primeiroMes ? campo("saldo_inicial") : dif_mes_anterior ?? {}
+  const prevAtualizada = somar([previsao, difAnterior, campo("darf")], socios)
+  const distrTotal = somar([previa, campo("pro_labore"), campo("distr_dia_05"), campo("distr_dia_10")], socios)
+  const diferencaFinal = Object.fromEntries(socios.map((s) => [s.id, arredondar(prevAtualizada[s.id] - distrTotal[s.id])]))
+  const totalADistribuir = somar([campo("distr_dia_05"), campo("distr_dia_10")], socios)
+  const bancos = somar(CAMPOS_BANCOS.map((b) => campo(b.campo)), socios)
+  const balanco = Object.fromEntries(socios.map((s) => [s.id, arredondar(totalADistribuir[s.id] - bancos[s.id])]))
+
+  return [
+    {
+      tipo: "secao",
+      titulo: "Conta corrente",
+      subtitulo: primeiroMes
+        ? "Primeiro mês no sistema: a dif. mês anterior é o saldo que veio da planilha"
+        : "A diferença final passa para o mês seguinte",
+    },
+    { tipo: "siglas" },
+    primeiroMes
+      ? digitada("saldo_inicial", "Dif. mês anterior", "Saldo inicial, da planilha")
+      : { tipo: "valores", chave: "dif-anterior", rotulo: "Dif. mês anterior", detalhe: "Diferença final do mês anterior", valores: difAnterior, formato: "dinheiro" },
+    digitada("darf", "DARF"),
+    { tipo: "valores", chave: "prev-atualizada", rotulo: "Prev. atualizada", detalhe: "Previsão + dif. mês anterior + DARF", valores: prevAtualizada, formato: "dinheiro", destaque: "subtotal" },
+    { tipo: "valores", chave: "distribuicao-cf", rotulo: "Distribuição CF", detalhe: "D. Prévia sócios", valores: previa, formato: "dinheiro" },
+    digitada("pro_labore", "Pró-labore"),
+    digitada("distr_dia_05", "Distr. dia 05"),
+    digitada("distr_dia_10", "Distr. dia 10"),
+    { tipo: "valores", chave: "distr-total", rotulo: "Distr. total", valores: distrTotal, formato: "dinheiro", destaque: "subtotal" },
+    { tipo: "valores", chave: "diferenca-final", rotulo: "Diferença final", detalhe: "Prev. atualizada − distr. total", valores: diferencaFinal, formato: "dinheiro", destaque: "total" },
+    { tipo: "valores", chave: "cf", rotulo: "CF", detalhe: "Parte do médico nos casos fora com recibo", valores: medico, formato: "dinheiro" },
+    { tipo: "valores", chave: "pro-e-cf", rotulo: "Pró e CF", detalhe: "Distr. total + CF", valores: somar([distrTotal, medico], socios), formato: "dinheiro", destaque: "subtotal" },
+    { tipo: "secao", titulo: "Bancos da distribuição", subtitulo: "Onde saiu a distribuição dos dias 05 e 10" },
+    { tipo: "siglas" },
+    { tipo: "valores", chave: "total-a-distribuir", rotulo: "Total a distribuir", detalhe: "Distr. dia 05 + dia 10", valores: totalADistribuir, formato: "dinheiro", destaque: "subtotal" },
+    ...CAMPOS_BANCOS.map((b) => digitada(b.campo, b.rotulo)),
+    { tipo: "valores", chave: "balanco", rotulo: "Balanço", detalhe: "Total a distribuir − bancos (deve dar zero)", valores: balanco, formato: "dinheiro", destaque: "total" },
   ]
 }
 
@@ -727,7 +809,7 @@ export default function BmFinanceiroPage() {
 
   function editarSocio(id: string, campos: Partial<SocioFinanceiro>) {
     setEdicoes((e) => {
-      const gravado: SocioFinanceiro = { gami_pro_sem_recibo: null, fator_correcao: 1, ...bm?.financeiro.socios[id] }
+      const gravado: SocioFinanceiro = { ...socioVazio(), ...bm?.financeiro.socios[id] }
       const socio: Partial<SocioFinanceiro> = { ...e.socios[id], ...campos }
       for (const campo of Object.keys(socio) as (keyof SocioFinanceiro)[]) if (socio[campo] === gravado[campo]) delete socio[campo]
       const socios = { ...e.socios, [id]: socio }
@@ -891,6 +973,10 @@ export default function BmFinanceiroPage() {
         })
       : null
   const pontos = bm && fin && resultado ? montarPontos(bm, fin, resultado.valorParaDistribuir, podeEditar ? editarSocio : undefined) : null
+  const contaCorrente =
+    bm && fin && casosFora && pontos
+      ? montarContaCorrente(bm, fin, { previsao: pontos.previsao, previa: casosFora.previa, medico: casosFora.medico }, podeEditar ? editarSocio : undefined)
+      : null
 
   return (
     <main className={`max-w-[96rem] mx-auto px-4 sm:px-6 py-8 sm:py-12 ${alterado ? "pb-28" : ""}`}>
@@ -964,7 +1050,9 @@ export default function BmFinanceiroPage() {
             copiando={copiando}
           />
           <CardRateio fin={fin} resultado={resultado} />
-          {bm.socios.length > 0 && <GradeBm socios={bm.socios} linhas={pontos} loading={loading} />}
+          {bm.socios.length > 0 && (
+            <GradeBm socios={bm.socios} linhas={[...pontos.linhas, ...(contaCorrente ?? [])]} loading={loading} />
+          )}
           <SecaoAjustes
             ajustes={bm.ajustes}
             historico={bm.historico}

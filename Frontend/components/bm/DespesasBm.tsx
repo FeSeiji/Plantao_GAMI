@@ -21,14 +21,21 @@ type Props = {
   copiando: boolean
 }
 
-const ROTULO_CALCULO = { produtividade: "0,1% do faturamento", plantonistas: "plantões × valor" }
+const ROTULO_CALCULO = { produtividade: "0,1% do faturamento", plantonistas: "plantões × valor", impostos: "" }
+
+// "Calculado: CSLL 1.234,56 + IRPJ 2.345,67" (impostos) ou a regra da conta
+function textoCalculo(d: Despesa, resultado: ResultadoFinanceiro) {
+  if (d.calculo !== "impostos") return d.calculo ? ROTULO_CALCULO[d.calculo] : ""
+  const { csll, irpj } = resultado.impostos[d.empresa]
+  return `CSLL ${formatarDinheiro(csll)} + IRPJ ${formatarDinheiro(irpj)}`
+}
 
 function formatarData(data: string | null) {
   return data ? `${data.slice(8, 10)}/${data.slice(5, 7)}/${data.slice(0, 4)}` : ""
 }
 
 // Despesas da PMP e da GAMI do mês, lado a lado, como nas colunas da planilha (linhas 82 a 126).
-// Quem tem acesso ao BM digita banco, data e valor; produtividade e plantonistas são calculados
+// Quem tem acesso ao BM digita banco, data e valor; produtividade, plantonistas e impostos são calculados
 export default function DespesasBm(props: Props) {
   const { podeEditar, onCopiarMesAnterior, copiando } = props
   return (
@@ -159,7 +166,7 @@ function TabelaDespesas({
                     )}
                   </div>
                 )}
-                {d.calculo && <p className="text-xs text-gray-400">Calculado: {ROTULO_CALCULO[d.calculo]}</p>}
+                {d.calculo && <p className="text-xs text-gray-400">Calculado: {textoCalculo(d, resultado)}</p>}
               </td>
               <td className="px-3 py-1.5 text-right tabular-nums min-w-[7rem]">
                 {d.calculo || !podeEditar ? (

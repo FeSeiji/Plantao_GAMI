@@ -3,13 +3,20 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const { buscarCargosDosUsuarios, contaComoSocio } = require('./usuarios')
+const { MES_INICIAL_CONTA_CORRENTE } = require('./calculoBm')
 
-// Financeiro do BM (migration bm_financeiro): os valores digitados por quem tem acesso ao BM.
-// Só guarda o que foi digitado; as contas (produtividade, plantonistas, rateio, valor do ponto) são feitas na tela.
+// Financeiro do BM (migrations bm_financeiro e bm_conta_corrente): os valores digitados por quem tem acesso ao BM.
+// Só guarda o que foi digitado; as contas são feitas na tela e, para a conta corrente e o Excel, em calculoBm.js.
 
 const CAMPOS_FATURAMENTO = ['faturamento_pmp', 'recibos_gami', 'gami_total']
 const CAMPOS_VALOR_PLANTAO = ['valor_diurno', 'valor_noturno', 'valor_diurno_fds', 'valor_noturno_fds']
 const CAMPOS_MES = [...CAMPOS_FATURAMENTO, ...CAMPOS_VALOR_PLANTAO]
+// Valores em reais de cada sócio no mês: GAMI PRO sem recibo, a conta corrente e os bancos da distribuição.
+// O saldo inicial só existe no primeiro mês da conta corrente
+const CAMPOS_SOCIO_DINHEIRO = [
+  'gami_pro_sem_recibo', 'saldo_inicial', 'darf', 'pro_labore', 'distr_dia_05', 'distr_dia_10',
+  'bradesco_dia_05', 'itau_dia_05', 'bradesco_dia_10', 'itau_dia_10', 'cef',
+]
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // Colunas de controle, que não aparecem como mudança no histórico
 const CAMPOS_CONTROLE = ['mes', 'usuario_id', 'item_id', 'id', 'atualizado_por', 'atualizado_em']
@@ -22,7 +29,7 @@ async function buscarFinanceiro(mes) {
   const [atual, anteriores, socios, itens, despesas, historico] = await Promise.all([
     supabase.from('bm_meses').select(CAMPOS_MES.join(', ')).eq('mes', inicio).maybeSingle(),
     supabase.from('bm_meses').select(`mes, ${CAMPOS_VALOR_PLANTAO.join(', ')}`).lt('mes', inicio).order('mes', { ascending: false }).limit(24),
-    supabase.from('bm_socios_mes').select('usuario_id, gami_pro_sem_recibo, fator_correcao').eq('mes', inicio),
+    supabase.from('bm_socios_mes').select(`usuario_id, fator_correcao, ${CAMPOS_SOCIO_DINHEIRO.join(', ')}`).eq('mes', inicio),
     supabase.from('bm_despesa_itens').select('id, empresa, nome, ordem, calculo, ativo').order('ordem'),
     supabase.from('bm_despesas').select('item_id, banco, data_pago, valor').eq('mes', inicio),
     supabase
@@ -49,7 +56,7 @@ async function buscarFinanceiro(mes) {
     valores_plantao_anteriores: valoresAnteriores,
     socios: Object.fromEntries(
       socios.data.map(s => [s.usuario_id, {
-        gami_pro_sem_recibo: numeroOuNulo(s.gami_pro_sem_recibo),
+        ...Object.fromEntries(CAMPOS_SOCIO_DINHEIRO.map(c => [c, numeroOuNulo(s[c])])),
         fator_correcao: Number(s.fator_correcao),
       }])
     ),
@@ -107,10 +114,15 @@ async function salvarFinanceiro(mes, corpo, usuarioId) {
     for (const [id, campos] of sociosEnviados) {
       if (!UUID_REGEX.test(id) || !contaComoSocio(cargos.get(id)?.roles)) return { error: 'Sócio não encontrado' }
       valoresSocios[id] = {}
-      if (campos.gami_pro_sem_recibo !== undefined) {
-        const lido = lerDinheiro(campos.gami_pro_sem_recibo)
+      for (const [campo, valor] of Object.entries(campos ?? {})) {
+        if (campo === 'fator_correcao') continue
+        if (!CAMPOS_SOCIO_DINHEIRO.includes(campo)) return { error: `Campo desconhecido: ${campo}` }
+        if (campo === 'saldo_inicial' && mes !== MES_INICIAL_CONTA_CORRENTE) {
+          return { error: 'O saldo inicial só é digitado no primeiro mês da conta corrente' }
+        }
+        const lido = lerDinheiro(valor)
         if (lido.error) return lido
-        valoresSocios[id].gami_pro_sem_recibo = lido.valor
+        valoresSocios[id][campo] = lido.valor
       }
       if (campos.fator_correcao !== undefined) {
         const fator = campos.fator_correcao

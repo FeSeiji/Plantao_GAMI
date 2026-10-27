@@ -2,6 +2,8 @@ const fs = require('fs/promises')
 const path = require('path')
 const JSZip = require('jszip')
 
+const { MES_INICIAL_CONTA_CORRENTE, CAMPOS_CONTA_CORRENTE, CAMPOS_BANCOS, calcularMes, saldoInicial } = require('./calculoBm')
+
 // Exportação do BM no modelo do cliente (modelos/bm-modelo.xlsx, cópia do BM DEZ 26.xlsx que eles usam).
 // O arquivo não é regravado por uma biblioteca de planilha: só o valor das células que o sistema preenche muda
 // dentro do XML, e o resto (formatação, fórmulas, comentários) continua exatamente como no modelo. O Excel
@@ -10,8 +12,10 @@ const JSZip = require('jszip')
 //   1, 132 e 190: siglas  ·  T2, U2, V2: faturamento PMP, recibos GAMI e GAMI total  ·  2: GAMI PRO sem recibo
 //   8–22: casos fora escalados  ·  28–52: não escalados  ·  133: VALOR (pontos da escala)
 //   134: fator de correção  ·  136–166: substituições e ajustes "Outro"  ·  167: Administrativo  ·  168: Reunião
-// A linha 175 (DIF MÊS ANTERIOR) puxava a aba do mês anterior de outro arquivo (BM 2026.xlsx, no Dropbox):
-// o vínculo sai e a linha fica para digitar.
+//   83–124: despesas da PMP (banco B, data C, nome E, valor F) e da GAMI (H, I, K, L)
+//   175: DIF MÊS ANTERIOR (puxava a aba do mês anterior de outro arquivo, no Dropbox: o vínculo sai e entra o valor
+//   da conta corrente do sistema)  ·  176: DARF  ·  179: pró-labore  ·  180 e 181: distribuição dos dias 05 e 10
+//   192–196: bancos da distribuição
 const MODELO = path.join(__dirname, '../modelos/bm-modelo.xlsx')
 
 const COLUNAS_SOCIOS = 'CDEFGHIJKLMNOPQRS'.split('') // 17 colunas: as 14 da planilha e 3 livres
@@ -26,6 +30,24 @@ const SUBSTITUICOES = { primeira: 136, ultima: 166 }
 const LINHA_ADMINISTRATIVO = 167
 const LINHA_REUNIAO = 168
 const LINHA_DIF_MES_ANTERIOR = 175
+const LINHAS_CONTA_CORRENTE = { darf: 176, pro_labore: 179, distr_dia_05: 180, distr_dia_10: 181 }
+const LINHAS_BANCOS = { bradesco_dia_05: 192, itau_dia_05: 193, bradesco_dia_10: 194, itau_dia_10: 195, cef: 196 }
+
+// Despesas: a linha de cada item da lista original (pela ordem dele na empresa) e as linhas livres, para os itens
+// incluídos depois. As produtividades (F106, F109, L106, L109) ficam com a fórmula do modelo, que é a mesma conta
+const intervalo = (de, ate) => Array.from({ length: ate - de + 1 }, (_, i) => de + i)
+const DESPESAS = {
+  pmp: {
+    colunas: { banco: 'B', data: 'C', nome: 'E', valor: 'F' },
+    linhas: [...intervalo(83, 106), 109, 111, 112, 113, 115, 116, 117, 119, 120, 121, 122, 123, 124],
+    livres: [107, 108, 110, 114, 118],
+  },
+  gami: {
+    colunas: { banco: 'H', data: 'I', nome: 'K', valor: 'L' },
+    linhas: [106, 109, 115, 116, 117, 119, 120, 122, 123, 124],
+    livres: [...intervalo(83, 105), 107, 108, ...intervalo(110, 114), 118, 121],
+  },
+}
 
 const ROTULO_RECIBO = { gami: 'GAMI/ADDS', sem_recibo: 'Sem nota fiscal' }
 const ROTULO_CATEGORIA = { diurno: 'Diurno', noturno: 'Noturno', diurno_fds: 'Diurno fim de semana', noturno_fds: 'Noturno fim de semana' }
@@ -74,7 +96,18 @@ async function gerarPlanilhaBm(bm) {
   porColuna(LINHA_ADMINISTRATIVO, somaDoTipo('administrativo'))
   porColuna(LINHA_REUNIAO, somaDoTipo('reuniao'))
 
+  // Conta corrente e despesas, com as contas do sistema (calculoBm.js). Antes do primeiro mês da conta corrente,
+  // a dif. mês anterior fica vazia
+  const difAnterior = bm.mes === MES_INICIAL_CONTA_CORRENTE ? saldoInicial(bm) : financeiro.conta_corrente.dif_mes_anterior
+  const contas = calcularMes(bm, difAnterior ?? {})
   for (const col of COLUNAS_SOCIOS) planilha.definir(`${col}${LINHA_DIF_MES_ANTERIOR}`, null, { trocarFormula: true })
+  if (difAnterior) porColuna(LINHA_DIF_MES_ANTERIOR, s => (s ? difAnterior[s.id] ?? null : null))
+  for (const campo of [...CAMPOS_CONTA_CORRENTE, ...CAMPOS_BANCOS]) {
+    porColuna(LINHAS_CONTA_CORRENTE[campo] ?? LINHAS_BANCOS[campo], s => (s ? financeiro.socios[s.id]?.[campo] : null))
+  }
+  for (const empresa of Object.keys(DESPESAS)) {
+    preencherDespesas(planilha, DESPESAS[empresa], financeiro.despesas.filter(d => d.empresa === empresa), contas.financeiro.valorDespesa)
+  }
   planilha.apagarResultadosGuardados()
 
   zip.file('xl/worksheets/sheet1.xml', planilha.xml)
@@ -109,6 +142,33 @@ function preencherBloco(planilha, colunaDe, { primeira, ultima }, itens, nomeDoR
       const col = colunaDe.get(id)
       if (col) planilha.definir(`${col}${linha}`, arredondar(valor))
     }
+  }
+}
+
+// Cada item na linha dele (ou numa livre, se foi incluído depois). Linha do modelo sem item no mês (desativado)
+// fica vazia. Se faltar linha livre, a última soma o que sobrou
+function preencherDespesas(planilha, { colunas, linhas, livres }, despesas, valorDespesa) {
+  const livresUsadas = []
+  const porLinha = new Map()
+  for (const d of despesas) {
+    const linha = linhas[d.ordem - 1] ?? livres[livresUsadas.length]
+    if (linha == null) {
+      const ultima = livres[livres.length - 1]
+      const resto = porLinha.get(ultima)
+      porLinha.set(ultima, { nome: `Demais despesas`, banco: null, data_pago: null, valor: arredondar((resto.valor ?? 0) + valorDespesa(d)) })
+      continue
+    }
+    if (!linhas.includes(linha)) livresUsadas.push(linha)
+    porLinha.set(linha, { nome: d.nome, banco: d.banco, data_pago: d.data_pago, valor: d.calculo || d.valor != null ? valorDespesa(d) : null })
+  }
+
+  for (const linha of [...linhas, ...livres]) {
+    const d = porLinha.get(linha)
+    if (!d && livres.includes(linha)) continue
+    planilha.definir(`${colunas.banco}${linha}`, d?.banco ?? null)
+    planilha.definir(`${colunas.data}${linha}`, d?.data_pago ? formatarData(d.data_pago) : null)
+    planilha.definir(`${colunas.nome}${linha}`, d?.nome ?? null)
+    if (!planilha.temFormula(`${colunas.valor}${linha}`)) planilha.definir(`${colunas.valor}${linha}`, d?.valor ?? null)
   }
 }
 
@@ -150,6 +210,11 @@ class Planilha {
     else nova = `<c r="${ref}"${estilo} t="inlineStr"><is><t xml:space="preserve">${escaparXml(valor)}</t></is></c>`
 
     this.xml = this.xml.replace(re, () => nova)
+  }
+
+  temFormula(ref) {
+    const atual = this.xml.match(new RegExp(`<c r="${ref}"([^>]*?)(?:/>|>([\\s\\S]*?)</c>)`))
+    return Boolean(atual?.[2]?.includes('<f'))
   }
 
   // O modelo traz o último resultado de cada fórmula (os números do mês em que foi salvo). Sem eles, quem abre
