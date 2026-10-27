@@ -34,6 +34,12 @@ type TrocaPendente = {
   }
 }
 
+// Troca que a gestão registrou (já vale) envolvendo o usuário: aparece até ele marcar "ciente"
+type AvisoTroca = {
+  id: string
+  troca: Omit<TrocaPendente, "respondenteId"> & { posicao: number }
+}
+
 // Pedido de férias/congresso aguardando a gestão
 type AfastamentoPendente = {
   id: string
@@ -60,11 +66,34 @@ function formatarData(data: string) {
   return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
 }
 
+const nomeDe = (p: Pessoa) => p.nome ?? p.email
+
+// "Escritório colocou você no lugar de Ana" / "Escritório colocou Bruno no seu lugar das 13h às 19h"
+function textoDoAviso({ troca: t }: AvisoTroca, meuId: string | null) {
+  const por = <span className="font-semibold">{nomeDe(t.solicitadoPor)}</span>
+  const entrada = <span className="font-semibold">{nomeDe(t.usuarioEntrada)}</span>
+  const saida = <span className="font-semibold">{nomeDe(t.usuarioSaida)}</span>
+  const entrei = t.usuarioEntrada.id === meuId
+  if (t.coberturaFerias) {
+    return entrei
+      ? <>{por} colocou você para cobrir as férias de {saida}</>
+      : <>{por} colocou {entrada} para cobrir a sua vaga durante as férias</>
+  }
+  const intervalo = t.horaInicio && t.horaFim
+    ? <> das <span className="font-semibold">{formatarIntervalo(t.horaInicio, t.horaFim).replace("–", " às ")}</span></>
+    : null
+  return entrei
+    ? <>{por} colocou você no lugar de {saida}{intervalo}</>
+    : <>{por} colocou {entrada} no seu lugar{intervalo}</>
+}
+
 const INTERVALO_POLL_MS = 30000
 export const EVENTO_TROCAS_ATUALIZADAS = "trocas-atualizadas"
 
 export default function NotificacaoTrocaSino() {
   const [pendentes, setPendentes] = useState<TrocaPendente[]>([])
+  const [avisos, setAvisos] = useState<AvisoTroca[]>([])
+  const [meuId, setMeuId] = useState<string | null>(null)
   const [afastamentos, setAfastamentos] = useState<AfastamentoPendente[]>([])
   const [pedidosVaga, setPedidosVaga] = useState<PedidoVagaPendente[]>([])
   const [aberto, setAberto] = useState(false)
@@ -75,6 +104,16 @@ export default function NotificacaoTrocaSino() {
   const carregar = useCallback(() => {
     const token = localStorage.getItem("token")
     if (!token) return
+    setMeuId(localStorage.getItem("userId"))
+
+    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/avisos`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) return
+        setAvisos(await res.json())
+      })
+      .catch(() => {})
 
     apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/pendentes`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -161,6 +200,29 @@ export default function NotificacaoTrocaSino() {
     }
   }
 
+  async function marcarCiente(id: string) {
+    setError("")
+    setProcessando(id)
+
+    try {
+      const token = localStorage.getItem("token")
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes/trocas/avisos/${id}/ciente`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      // 404: já tinha sido marcado (em outra aba, por exemplo); some do sino do mesmo jeito
+      if (!res.ok && res.status !== 404) {
+        const result = await res.json().catch(() => ({}))
+        throw new Error(result.error ?? "Não foi possível marcar o aviso.")
+      }
+      setAvisos((prev) => prev.filter((a) => a.id !== id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível marcar o aviso.")
+    } finally {
+      setProcessando(null)
+    }
+  }
+
   async function responderAfastamento(id: string, aprovar: boolean) {
     setError("")
     setProcessando(id)
@@ -221,7 +283,7 @@ export default function NotificacaoTrocaSino() {
     }
   }
 
-  const total = pendentes.length + afastamentos.length + pedidosVaga.length
+  const total = avisos.length + pendentes.length + afastamentos.length + pedidosVaga.length
 
   return (
     <div className="relative" ref={containerRef}>
@@ -250,6 +312,41 @@ export default function NotificacaoTrocaSino() {
 
           {error && (
             <p className="text-red-600 text-xs bg-red-50 border-b border-red-200 px-4 py-2">{error}</p>
+          )}
+
+          {avisos.length > 0 && (
+            <>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 pt-3 pb-1">
+                Trocas registradas pela gestão
+              </p>
+              <ul className="divide-y divide-gray-100 border-b border-gray-100">
+                {avisos.map((a) => (
+                  <li key={a.id} className="px-4 py-3">
+                    <p className="text-sm text-gray-700">
+                      {textoDoAviso(a, meuId)} na vaga de {descreverPosicao(a.troca.plantao.data, a.troca.posicao)} no
+                      plantão <span className="font-semibold">{a.troca.plantao.titulo}</span>.
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formatarData(a.troca.plantao.data)} · {a.troca.plantao.hora_inicio.slice(0, 5)}-
+                      {a.troca.plantao.hora_fim.slice(0, 5)}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={processando === a.id}
+                      onClick={() => marcarCiente(a.id)}
+                      className="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                    >
+                      Ciente
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {pedidosVaga.length === 0 && afastamentos.length === 0 && pendentes.length > 0 && (
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 pt-3 pb-1">
+                  Trocas
+                </p>
+              )}
+            </>
           )}
 
           {pedidosVaga.length > 0 && (

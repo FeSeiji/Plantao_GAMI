@@ -599,6 +599,48 @@ exports.listarTrocasPendentes = async (req, res) => {
   }
 }
 
+// Avisos de trocas que a gestão registrou envolvendo o usuário (ele entrou, saiu ou ganhou uma cobertura),
+// ainda não marcados como ciente
+exports.listarAvisosTroca = async (req, res) => {
+  const { data, error } = await supabase
+    .from('avisos_troca')
+    .select('id, criado_em, plantao_trocas(*, plantoes(id, titulo, data))')
+    .eq('usuario_id', req.user.id)
+    .is('ciente_em', null)
+    .order('criado_em', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  try {
+    const trocas = data.map(a => a.plantao_trocas)
+    const perfis = await buscarPerfis(trocas.flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por]))
+    return res.json(data.map(({ id, criado_em, plantao_trocas: { plantoes: plantao, ...t } }) => ({
+      id,
+      criadoEm: criado_em,
+      troca: {
+        ...formatTroca(t, perfis),
+        plantao: plantao && { ...plantao, ...horarioDaVaga(plantao, t.posicao) },
+      },
+    })))
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+exports.marcarAvisoTrocaCiente = async (req, res) => {
+  const { data, error } = await supabase
+    .from('avisos_troca')
+    .update({ ciente_em: new Date().toISOString() })
+    .eq('id', req.params.avisoId)
+    .eq('usuario_id', req.user.id)
+    .is('ciente_em', null)
+    .select('id')
+
+  if (error) return res.status(400).json({ error: error.message })
+  if (!data || data.length === 0) return res.status(404).json({ error: 'Aviso não encontrado' })
+  return res.status(204).send()
+}
+
 exports.responderTroca = (aceitar) => async (req, res) => {
   const { data: troca, error: trocaError } = await supabase
     .from('plantao_trocas')
@@ -916,7 +958,8 @@ exports.cancelarPedidoVaga = async (req, res) => {
 // de horário ou está de férias/congresso aprovados nesse dia
 // A troca registrada pela gestão já entra aceita: na troca da vaga inteira o convidado assume a vaga agora
 // (na troca por horas e na cobertura de férias a vaga continua do titular). Os pedidos pendentes de troca dessa
-// vaga perdem o sentido e são cancelados. Devolve uma mensagem de erro quando a vaga mudou de mãos no meio do caminho
+// vaga perdem o sentido e são cancelados, e os dois médicos recebem um aviso no sino (menos quem registrou, se for
+// um deles). Devolve uma mensagem de erro quando a vaga mudou de mãos no meio do caminho
 async function aplicarTrocaDaGestao(troca) {
   if (!troca.hora_inicio) {
     const { data: linhas, error } = await supabase
@@ -942,6 +985,14 @@ async function aplicarTrocaDaGestao(troca) {
     .eq('posicao', troca.posicao)
     .eq('status', 'pendente')
   if (cancelarError) throw cancelarError
+
+  const avisar = [troca.usuario_entrada, troca.usuario_saida].filter(id => id !== troca.solicitado_por)
+  if (avisar.length > 0) {
+    const { error: avisoError } = await supabase
+      .from('avisos_troca')
+      .insert(avisar.map(usuario_id => ({ troca_id: troca.id, usuario_id })))
+    if (avisoError) throw new Error(`Troca registrada, mas o aviso aos médicos não foi gravado: ${avisoError.message}`)
+  }
 
   return null
 }
