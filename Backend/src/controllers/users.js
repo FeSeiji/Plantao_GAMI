@@ -5,7 +5,7 @@ const { ROLES_VALIDAS, DURACAO_DESATIVACAO, validarDadosUsuario, criarUsuario, e
 const { liberarEscalasFuturas } = require('../services/escalas')
 const { usuariosAfastados } = require('../services/afastamentos')
 const { usuariosComConflito } = require('../services/conflitos')
-const { ehAdmin } = require('../middleware/auth')
+const { ehAdmin, temAcessoBm } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -101,6 +101,7 @@ exports.listarGestao = async (req, res) => {
       ...p,
       roles: authUser?.app_metadata?.roles ?? [],
       is_admin: ehAdmin(authUser),
+      bm_access: temAcessoBm(authUser),
       ativo: !estaDesativado(authUser),
       pendente: estaDesativado(authUser) && authUser?.app_metadata?.pendente_aprovacao === true
     }
@@ -108,7 +109,7 @@ exports.listarGestao = async (req, res) => {
 }
 
 exports.criarUsuarioGestao = async (req, res) => {
-  const { email, password, nome, sigla, roles, crm, crm_uf, is_admin = false } = req.body
+  const { email, password, nome, sigla, roles, crm, crm_uf, is_admin = false, bm_access = false } = req.body
 
   if (!email || !password || !nome || !sigla) {
     return res.status(400).json({ error: 'email, password, nome e sigla são obrigatórios' })
@@ -120,6 +121,12 @@ exports.criarUsuarioGestao = async (req, res) => {
 
   if (typeof is_admin !== 'boolean') {
     return res.status(400).json({ error: 'is_admin deve ser true ou false' })
+  }
+  if (typeof bm_access !== 'boolean') {
+    return res.status(400).json({ error: 'bm_access deve ser true ou false' })
+  }
+  if (bm_access && !ehAdmin(req.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem conceder o acesso ao BM' })
   }
 
   if (is_admin && !ehAdmin(req.user)) {
@@ -136,16 +143,16 @@ exports.criarUsuarioGestao = async (req, res) => {
 
   if (dados.error) return res.status(400).json({ error: dados.error })
 
-  const resultado = await criarUsuario({ email, password, nome, ...dados, is_admin })
+  const resultado = await criarUsuario({ email, password, nome, ...dados, is_admin, bm_access })
   if (resultado.error) return res.status(resultado.status).json({ error: resultado.error })
 
   return res.status(201).json({ id: resultado.user.id })
 }
 
-// Edita nome, sigla, roles, flag admin e CRM. Campos omitidos mantêm o valor atual.
+// Edita nome, sigla, roles, flags (admin e acesso ao BM) e CRM. Campos omitidos mantêm o valor atual.
 exports.atualizarUsuario = async (req, res) => {
   const { id } = req.params
-  const { nome, sigla, roles, crm, crm_uf, is_admin } = req.body
+  const { nome, sigla, roles, crm, crm_uf, is_admin, bm_access } = req.body
 
   const [{ data: profile, error: profileError }, { data: auth, error: authError }] = await Promise.all([
     supabase.from('profiles').select('nome, sigla, crm, crm_uf').eq('id', id).maybeSingle(),
@@ -165,6 +172,14 @@ exports.atualizarUsuario = async (req, res) => {
   const mudaAdmin = is_admin !== undefined && is_admin !== ehAdmin(auth.user)
   if (mudaAdmin && !ehAdmin(req.user)) {
     return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover a flag de administrador' })
+  }
+
+  if (bm_access !== undefined && typeof bm_access !== 'boolean') {
+    return res.status(400).json({ error: 'bm_access deve ser true ou false' })
+  }
+  const mudaAcessoBm = bm_access !== undefined && bm_access !== temAcessoBm(auth.user)
+  if (mudaAcessoBm && !ehAdmin(req.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem conceder ou remover o acesso ao BM' })
   }
 
   // Evita que o admin se tranque para fora
@@ -212,7 +227,7 @@ exports.atualizarUsuario = async (req, res) => {
   }
 
   const { error: rolesError } = await supabase.auth.admin.updateUserById(id, {
-    app_metadata: { roles: dados.roles, ...(mudaAdmin ? { is_admin } : {}) }
+    app_metadata: { roles: dados.roles, ...(mudaAdmin ? { is_admin } : {}), ...(mudaAcessoBm ? { bm_access } : {}) }
   })
 
   if (rolesError) {

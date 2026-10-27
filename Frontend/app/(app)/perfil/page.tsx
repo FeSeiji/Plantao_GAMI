@@ -22,6 +22,7 @@ type Perfil = {
   dias_disponiveis: number[] | null
   roles: string[]
   is_admin: boolean
+  bm_access: boolean
 }
 
 const TODOS_OS_DIAS = DIAS_SEMANA.map((d) => d.valor)
@@ -354,7 +355,7 @@ export default function PerfilPage() {
                     valor={
                       perfil.roles.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5 mt-1">
-                          {[...perfil.roles, ...(perfil.is_admin ? ["admin"] : [])].map((r) => (
+                          {[...perfil.roles, ...(perfil.is_admin ? ["admin"] : []), ...(perfil.bm_access ? ["bm_access"] : [])].map((r) => (
                             <span key={r} className="bg-brand-100 text-brand-800 text-xs font-semibold px-2 py-0.5 rounded-full">
                               {ROTULO_ROLE[r] ?? r}
                             </span>

@@ -1,5 +1,6 @@
 const { montarBm } = require('../services/bm')
 const { gerarPlanilhaBm } = require('../services/planilhaBm')
+const { salvarFinanceiro, criarItemDespesa, atualizarItemDespesa } = require('../services/financeiroBm')
 
 const MESES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ']
 
@@ -31,5 +32,45 @@ exports.exportar = async (req, res) => {
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Não foi possível gerar o Excel do BM.' })
+  }
+}
+
+// Grava os valores digitados do mês (faturamento, valor do plantão, valores por sócio, despesas).
+// Corpo em services/financeiroBm.js (salvarFinanceiro). Todos os meses continuam editáveis
+exports.salvarFinanceiro = async (req, res) => {
+  const { mes } = req.query
+  if (!mesValido(mes)) return res.status(400).json({ error: "mes é obrigatório no formato 'AAAA-MM'" })
+
+  try {
+    const resultado = await salvarFinanceiro(mes, req.body, req.user.id)
+    if (resultado.error) return res.status(400).json({ error: resultado.error })
+    return res.status(204).send()
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Corpo: empresa ('pmp' ou 'gami') e nome
+exports.criarItemDespesa = async (req, res) => {
+  try {
+    const resultado = await criarItemDespesa(req.body ?? {}, req.user.id)
+    if (resultado.error) return res.status(400).json({ error: resultado.error })
+    return res.status(201).json(resultado.item)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
+  }
+}
+
+// Corpo: nome e/ou ativo
+exports.atualizarItemDespesa = async (req, res) => {
+  try {
+    const resultado = await atualizarItemDespesa(req.params.id, req.body ?? {}, req.user.id)
+    if (resultado.error) return res.status(resultado.status ?? 400).json({ error: resultado.error })
+    return res.json(resultado.item)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: err.message })
   }
 }

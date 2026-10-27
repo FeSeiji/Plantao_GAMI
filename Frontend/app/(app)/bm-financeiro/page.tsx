@@ -8,13 +8,30 @@ import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorH
 import { descreverPosicao } from "../../../components/posicoes"
 import AjustePontosModal, { AjusteEditavel, TipoAjuste, rotuloTipoAjuste } from "../../../components/AjustePontosModal"
 import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoModal"
+import CampoNumero from "../../../components/bm/CampoNumero"
+import DespesasBm from "../../../components/bm/DespesasBm"
+import HistoricoFinanceiro, { EventoFinanceiro } from "../../../components/bm/HistoricoFinanceiro"
+import {
+  CATEGORIAS_PLANTAO,
+  CampoMes,
+  Despesa,
+  Edicoes,
+  Empresa,
+  FATOR_DISTRIBUICAO,
+  Financeiro,
+  ResultadoFinanceiro,
+  SocioFinanceiro,
+  aplicarEdicoes,
+  calcularFinanceiro,
+  edicoesVazias,
+  formatarDinheiro,
+  pagamentoPlantonista,
+  temEdicoes,
+  valoresPlantao,
+} from "../../../components/bm/calculos"
 
-// Administradores, técnicos e sócios — mesma lista do backend em routes/bmFinanceiro.js
-const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio"]
-
-// Fator de correção de cada sócio (linha FATOR CORREÇÃO da planilha). Por enquanto 1 para todos;
-// na Etapa 2, com o financeiro, passa a ser editável
-const FATOR_CORRECAO = 1
+// Administradores, técnicos, sócios e quem tem acesso ao BM — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio", "bm_access"]
 
 type Perfil = { id: string; nome: string | null; email: string | null; sigla: string | null }
 
@@ -55,24 +72,13 @@ type CasoForaRecibo = {
   partes: PorSocio
 }
 
-// Categorias do plantonista — mesmas de Backend/src/services/pontuacao.js.
-// Sexta à noite conta como noturno de fim de semana; a manhã de sábado e domingo, como diurno de fim de semana
-const CATEGORIAS = [
-  { chave: "diurno", rotulo: "Diurno" },
-  { chave: "noturno", rotulo: "Noturno" },
-  { chave: "diurno_fds", rotulo: "Diurno fim de semana" },
-  { chave: "noturno_fds", rotulo: "Noturno fim de semana" },
-] as const
-
-type Categoria = (typeof CATEGORIAS)[number]["chave"]
-
 type LinhaPlantonista = Perfil & {
   // Plantões em cada categoria (a fração na troca por horas e no congresso) e a soma deles
-  categorias: Record<Categoria, number>
+  categorias: Record<(typeof CATEGORIAS_PLANTAO)[number]["chave"], number>
   total: number
 }
 
-// Ajuste manual de pontos de um sócio no mês (lançado por quem tem a flag admin)
+// Ajuste manual de pontos de um sócio no mês (lançado por quem tem acesso ao BM)
 type Ajuste = {
   id: string
   tipo: TipoAjuste
@@ -107,7 +113,10 @@ type Bm = {
   plantonistas: LinhaPlantonista[]
   ajustes: Ajuste[]
   historico: EventoHistorico[]
+  financeiro: Financeiro & { historico: EventoFinanceiro[] }
 }
+
+type Formato = "pontos" | "dinheiro" | "fator" | "valorPonto"
 
 // Linhas da grade, de cima para baixo, como na planilha do cliente
 type LinhaGrade =
@@ -120,9 +129,13 @@ type LinhaGrade =
       rotulo: string
       detalhe?: string
       valores: PorSocio
-      formato: "pontos" | "dinheiro" | "fator"
+      formato: Formato
       // subtotal e total: linhas calculadas, que mostram 0 e ficam em destaque
       destaque?: "subtotal" | "total"
+      // Linha digitada por quem tem acesso ao BM: cada célula vira um campo
+      editar?: (socioId: string, valor: number | null) => void
+      // Linha de um valor só (pontos distribuídos, valor do ponto): aparece na coluna de total
+      unico?: number
     }
 
 function paraChaveMes(d: Date) {
@@ -134,11 +147,13 @@ function somar(linhas: PorSocio[], socios: Socio[]): PorSocio {
   return Object.fromEntries(socios.map((s) => [s.id, arredondar(linhas.reduce((t, l) => t + (l[s.id] ?? 0), 0))]))
 }
 
-function multiplicar(linha: PorSocio, fator: number): PorSocio {
-  return Object.fromEntries(Object.entries(linha).map(([id, v]) => [id, arredondar(v * fator)]))
+function multiplicar(linha: PorSocio, fator: number | ((id: string) => number)): PorSocio {
+  const f = typeof fator === "number" ? () => fator : fator
+  return Object.fromEntries(Object.entries(linha).map(([id, v]) => [id, arredondar(v * f(id))]))
 }
 
 const arredondar = (n: number) => Math.round(n * 100) / 100
+const somarTudo = (linha: PorSocio) => arredondar(Object.values(linha).reduce((t, v) => t + v, 0))
 
 const formatarDiaMes = (data: string) => `${data.slice(8, 10)}/${data.slice(5, 7)}`
 
@@ -147,11 +162,12 @@ function linhasCasosFora(
   casos: CasoForaRecibo[],
   socios: Socio[],
   { titulo, subtitulo, medico, custas, chave }: { titulo: string; subtitulo: string; medico: number; custas: number; chave: string },
-): { linhas: LinhaGrade[]; custas: PorSocio } {
+): { linhas: LinhaGrade[]; total: PorSocio; custas: PorSocio } {
   const total = somar(casos.map((c) => c.partes), socios)
   const parteCustas = multiplicar(total, custas)
   const pct = (n: number) => `${Math.round(n * 100)}%`
   return {
+    total,
     custas: parteCustas,
     linhas: [
       { tipo: "secao", titulo, subtitulo },
@@ -186,8 +202,9 @@ function detalheSubstituicao(s: Substituicao) {
   return vaga
 }
 
-// A planilha inteira em linhas: casos fora com recibo, a prévia dos sócios e o bloco de pontos
-function montarGrade(bm: Bm): LinhaGrade[] {
+// Primeira parte da planilha: GAMI PRO sem recibo (linha 2), casos fora com recibo e a prévia dos sócios.
+// Devolve também os totais que entram no faturamento: 100% dos casos fora (R122) e as custas (R124)
+function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void) {
   const { socios } = bm
   const escalado = linhasCasosFora(
     bm.casosForaRecibo.filter((c) => c.escalado),
@@ -199,39 +216,79 @@ function montarGrade(bm: Bm): LinhaGrade[] {
     socios,
     { titulo: "Casos fora com recibo — não escalado", subtitulo: "Valor integral; custas de 20%", medico: 0.8, custas: 0.2, chave: "nao-escalado" },
   )
-
-  const porSocio = (valor: (s: Socio) => number): PorSocio => Object.fromEntries(socios.map((s) => [s.id, valor(s)]))
-  const somaDoTipo = (tipo: TipoAjuste) =>
-    somar(bm.ajustes.filter((a) => a.tipo === tipo).map((a) => ({ [a.medico.id]: a.pontos })), socios)
-
-  const valor = porSocio((s) => s.valor_escala)
-  const corrigido = multiplicar(valor, FATOR_CORRECAO)
-  const outros = bm.ajustes.filter((a) => a.tipo === "outro")
-  const administrativo = somaDoTipo("administrativo")
-  const reuniao = somaDoTipo("reuniao")
-  const totSubstituido = multiplicar(
-    somar([...bm.substituicoes.map((s) => s.pontos), administrativo, reuniao, ...outros.map((a) => ({ [a.medico.id]: a.pontos }))], socios),
-    FATOR_CORRECAO,
+  const gamiPro: PorSocio = Object.fromEntries(
+    socios.filter((s) => fin.socios[s.id]?.gami_pro_sem_recibo != null).map((s) => [s.id, fin.socios[s.id].gami_pro_sem_recibo!]),
   )
-  const total = somar([corrigido, totSubstituido], socios)
+  const custas = somar([escalado.custas, naoEscalado.custas], socios)
 
-  return [
+  const linhas: LinhaGrade[] = [
     { tipo: "siglas" },
+    {
+      tipo: "valores",
+      chave: "gami-pro",
+      rotulo: "GAMI PRO sem recibo",
+      valores: gamiPro,
+      formato: "dinheiro",
+      editar: editarSocio && ((id, valor) => editarSocio(id, { gami_pro_sem_recibo: valor })),
+    },
     ...escalado.linhas,
     ...naoEscalado.linhas,
     {
       tipo: "valores",
       chave: "previa",
       rotulo: "D. Prévia sócios",
-      detalhe: "Custas dos casos fora",
-      valores: somar([escalado.custas, naoEscalado.custas], socios),
+      detalhe: "GAMI PRO sem recibo + custas dos casos fora",
+      valores: somar([gamiPro, custas], socios),
       formato: "dinheiro",
       destaque: "total",
     },
+  ]
+  return {
+    linhas,
+    casosForaRecibo100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
+    custasCasosFora: somarTudo(custas),
+  }
+}
+
+// Bloco de pontos (linhas 132 a 174): valor da escala × fator, substituições, ajustes, TOTAL,
+// e com o financeiro o valor do ponto e a previsão de cada sócio
+function montarPontos(
+  bm: Bm,
+  fin: Financeiro,
+  valorParaDistribuir: number,
+  editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void,
+): LinhaGrade[] {
+  const { socios } = bm
+  const fator = (id: string) => fin.socios[id]?.fator_correcao ?? 1
+  const porSocio = (valor: (s: Socio) => number): PorSocio => Object.fromEntries(socios.map((s) => [s.id, valor(s)]))
+  const somaDoTipo = (tipo: TipoAjuste) =>
+    somar(bm.ajustes.filter((a) => a.tipo === tipo).map((a) => ({ [a.medico.id]: a.pontos })), socios)
+
+  const valor = porSocio((s) => s.valor_escala)
+  const corrigido = multiplicar(valor, fator)
+  const outros = bm.ajustes.filter((a) => a.tipo === "outro")
+  const administrativo = somaDoTipo("administrativo")
+  const reuniao = somaDoTipo("reuniao")
+  const totSubstituido = multiplicar(
+    somar([...bm.substituicoes.map((s) => s.pontos), administrativo, reuniao, ...outros.map((a) => ({ [a.medico.id]: a.pontos }))], socios),
+    fator,
+  )
+  const total = somar([corrigido, totSubstituido], socios)
+  const pontosDistribuidos = somarTudo(total)
+  const valorDoPonto = pontosDistribuidos > 0 ? valorParaDistribuir / pontosDistribuidos : 0
+
+  return [
     { tipo: "secao", titulo: "Pontos" },
     { tipo: "siglas" },
     { tipo: "valores", chave: "valor", rotulo: "Valor", detalhe: "Pontos da escala", valores: valor, formato: "pontos", destaque: "subtotal" },
-    { tipo: "valores", chave: "fator", rotulo: "Fator de correção", valores: porSocio(() => FATOR_CORRECAO), formato: "fator" },
+    {
+      tipo: "valores",
+      chave: "fator",
+      rotulo: "Fator de correção",
+      valores: porSocio((s) => fator(s.id)),
+      formato: "fator",
+      editar: editarSocio && ((id, v) => v != null && v > 0 && editarSocio(id, { fator_correcao: v })),
+    },
     { tipo: "valores", chave: "corrigido", rotulo: "Valor corrigido", valores: corrigido, formato: "pontos", destaque: "subtotal" },
     ...bm.substituicoes.map(
       (s): LinhaGrade => ({
@@ -256,20 +313,38 @@ function montarGrade(bm: Bm): LinhaGrade[] {
     ),
     { tipo: "valores", chave: "tot-substituido", rotulo: "Tot. substituído", valores: totSubstituido, formato: "pontos", destaque: "subtotal" },
     { tipo: "valores", chave: "total", rotulo: "TOTAL", valores: total, formato: "pontos", destaque: "total" },
+    { tipo: "valores", chave: "distribuidos", rotulo: "Pontos distribuídos", valores: {}, formato: "pontos", unico: pontosDistribuidos },
+    {
+      tipo: "valores",
+      chave: "valor-ponto",
+      rotulo: "Valor do ponto",
+      detalhe: "Valor para distribuir ÷ pontos distribuídos",
+      valores: {},
+      formato: "valorPonto",
+      unico: valorDoPonto,
+    },
+    {
+      tipo: "valores",
+      chave: "previsao",
+      rotulo: "Previsão",
+      detalhe: "TOTAL × valor do ponto",
+      valores: multiplicar(total, valorDoPonto),
+      formato: "dinheiro",
+      destaque: "total",
+    },
   ]
 }
 
-function formatarNumero(valor: number, formato: "pontos" | "dinheiro" | "fator") {
-  if (formato === "dinheiro") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  if (formato === "fator") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })
+function formatarNumero(valor: number, formato: Formato) {
+  if (formato === "dinheiro") return formatarDinheiro(valor)
+  if (formato === "valorPonto") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (formato === "fator") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
   return formatarPontos(valor)
 }
 
 // A grade no formato da planilha: os sócios em colunas, pela sigla, e uma coluna de total no fim.
 // A primeira coluna fica fixa ao rolar para o lado
-function GradeBm({ bm, loading }: { bm: Bm; loading: boolean }) {
-  const { socios } = bm
-  const linhas = montarGrade(bm)
+function GradeBm({ socios, linhas, loading }: { socios: Socio[]; linhas: LinhaGrade[]; loading: boolean }) {
   const colunas = socios.length + 2
   const fixa = "sticky left-0 z-10"
 
@@ -317,11 +392,11 @@ function GradeBm({ bm, loading }: { bm: Bm; loading: boolean }) {
             }
 
             const calculada = Boolean(linha.destaque)
-            const fundo = linha.destaque === "total" ? "bg-brand-50" : "bg-white"
-            const peso = linha.destaque ? "font-semibold" : ""
-            const totalLinha = arredondar(socios.reduce((t, s) => t + (linha.valores[s.id] ?? 0), 0))
+            const fundo = linha.destaque === "total" ? "bg-brand-50" : linha.editar ? "bg-amber-50/30" : "bg-white"
+            const peso = linha.destaque || linha.unico !== undefined ? "font-semibold" : ""
+            const totalLinha = linha.unico ?? arredondar(socios.reduce((t, s) => t + (linha.valores[s.id] ?? 0), 0))
             const celula = (valor: number | undefined) => {
-              if (valor === undefined || (valor === 0 && !calculada)) return ""
+              if (valor === undefined || (valor === 0 && !calculada && linha.unico === undefined)) return ""
               return formatarNumero(valor, linha.formato)
             }
             // Zero das linhas calculadas apagado, negativo em vermelho
@@ -330,7 +405,7 @@ function GradeBm({ bm, loading }: { bm: Bm; loading: boolean }) {
 
             return (
               <tr key={linha.chave} className={`border-b border-gray-100 ${fundo}`}>
-                <td className={`${fixa} ${fundo} px-3 sm:px-4 py-1.5 max-w-[9rem] sm:max-w-[16rem]`}>
+                <td className={`${fixa} ${fundo === "bg-amber-50/30" ? "bg-white" : fundo} px-3 sm:px-4 py-1.5 max-w-[9rem] sm:max-w-[16rem]`}>
                   <p className={`truncate ${peso} ${linha.destaque ? "text-gray-800" : "text-gray-700"}`} title={linha.rotulo}>
                     {linha.rotulo}
                   </p>
@@ -340,11 +415,22 @@ function GradeBm({ bm, loading }: { bm: Bm; loading: boolean }) {
                     </p>
                   )}
                 </td>
-                {socios.map((s) => (
-                  <td key={s.id} className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${peso} ${cor(linha.valores[s.id])}`}>
-                    {celula(linha.valores[s.id])}
-                  </td>
-                ))}
+                {socios.map((s) =>
+                  linha.editar ? (
+                    <td key={s.id} className="px-1 py-1 min-w-[6.5rem]">
+                      <CampoNumero
+                        valor={linha.valores[s.id] ?? null}
+                        onChange={(v) => linha.editar!(s.id, v)}
+                        casas={linha.formato === "fator" ? 4 : 2}
+                        ariaLabel={`${linha.rotulo} de ${s.sigla ?? s.nome ?? ""}`}
+                      />
+                    </td>
+                  ) : (
+                    <td key={s.id} className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${peso} ${cor(linha.valores[s.id])}`}>
+                      {linha.unico === undefined ? celula(linha.valores[s.id]) : ""}
+                    </td>
+                  ),
+                )}
                 <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap font-semibold ${cor(totalLinha)}`}>
                   {linha.formato === "fator" ? "" : celula(totalLinha)}
                 </td>
@@ -354,6 +440,94 @@ function GradeBm({ bm, loading }: { bm: Bm; loading: boolean }) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+// Faturamento do mês (T2, U2 e V2 da planilha) e o que vem dos sócios e dos casos fora
+function CardFaturamento({
+  fin,
+  resultado,
+  editar,
+}: {
+  fin: Financeiro
+  resultado: ResultadoFinanceiro
+  editar?: (campo: CampoMes, valor: number | null) => void
+}) {
+  const campos: { campo: CampoMes; rotulo: string; detalhe: string }[] = [
+    { campo: "faturamento_pmp", rotulo: "Faturamento PMP", detalhe: "Entra no rateio" },
+    { campo: "gami_total", rotulo: "GAMI total (na PRO)", detalhe: "Entra no rateio" },
+    { campo: "recibos_gami", rotulo: "Recibos GAMI emitidos", detalhe: "Healthchess; base dos impostos da GAMI" },
+  ]
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-4">
+      <h2 className="font-semibold text-gray-800 mb-3">Faturamento do mês</h2>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {campos.map((c) => (
+          <div key={c.campo}>
+            <p className="text-sm font-medium text-gray-700">{c.rotulo}</p>
+            {editar ? (
+              <div className="mt-1 max-w-[12rem]">
+                <CampoNumero valor={fin[c.campo]} onChange={(v) => editar(c.campo, v)} ariaLabel={c.rotulo} placeholder="0,00" />
+              </div>
+            ) : (
+              <p className="mt-1 text-lg font-semibold text-gray-800 tabular-nums">{fin[c.campo] == null ? "—" : formatarDinheiro(fin[c.campo])}</p>
+            )}
+            <p className="text-xs text-gray-400 mt-0.5">{c.detalhe}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-gray-500 mt-3">
+        GAMI PRO sem recibo (soma dos sócios): <strong className="tabular-nums">{formatarDinheiro(resultado.gamiProSemRecibo)}</strong> · Casos fora
+        com recibo (100%): <strong className="tabular-nums">{formatarDinheiro(resultado.casosForaRecibo100)}</strong>
+      </p>
+    </section>
+  )
+}
+
+// Rateio (N122 a R128 da planilha): faturamento geral − despesas, × 0,63 = valor para distribuir
+function CardRateio({ fin, resultado }: { fin: Financeiro; resultado: ResultadoFinanceiro }) {
+  const pct = (v: number) =>
+    resultado.faturamentoGeral > 0 ? `${((v / resultado.faturamentoGeral) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : ""
+  const linhas: { rotulo: string; valor: number; pct?: string; destaque?: boolean; sinal?: string }[] = [
+    { rotulo: "Faturamento GAMI na PRO", valor: fin.gami_total ?? 0, pct: pct(fin.gami_total ?? 0) },
+    { rotulo: "Casos fora (custas distribuídas)", valor: resultado.custasCasosFora, pct: pct(resultado.custasCasosFora) },
+    { rotulo: "Faturamento PMP", valor: fin.faturamento_pmp ?? 0, pct: pct(fin.faturamento_pmp ?? 0) },
+    { rotulo: "Faturamento geral", valor: resultado.faturamentoGeral, destaque: true },
+    { rotulo: "Despesas PMP", valor: resultado.totalDespesas.pmp, sinal: "−" },
+    { rotulo: "Despesas GAMI", valor: resultado.totalDespesas.gami, sinal: "−" },
+  ]
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-4">
+      <h2 className="font-semibold text-gray-800 mb-3">Rateio</h2>
+      <table className="w-full text-sm">
+        <tbody>
+          {linhas.map((l) => (
+            <tr key={l.rotulo} className={l.destaque ? "border-t border-gray-200 font-semibold text-gray-800" : "text-gray-700"}>
+              <td className="py-1">
+                {l.sinal && <span className="text-gray-400 mr-1">{l.sinal}</span>}
+                {l.rotulo}
+              </td>
+              <td className="py-1 text-right text-xs text-gray-400 w-16">{l.pct}</td>
+              <td className="py-1 text-right tabular-nums w-36">{formatarDinheiro(l.valor)}</td>
+            </tr>
+          ))}
+          <tr className="text-gray-700">
+            <td className="py-1">
+              <span className="text-gray-400 mr-1">×</span>Fator de distribuição
+            </td>
+            <td />
+            <td className="py-1 text-right tabular-nums">{FATOR_DISTRIBUICAO.toLocaleString("pt-BR")}</td>
+          </tr>
+          <tr className="border-t border-gray-200 font-semibold text-gray-900 bg-brand-50">
+            <td className="py-2 pl-2">Valor para distribuir</td>
+            <td />
+            <td className={`py-2 pr-2 text-right tabular-nums ${resultado.valorParaDistribuir < 0 ? "text-red-600" : ""}`}>
+              {formatarDinheiro(resultado.valorParaDistribuir)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   )
 }
 
@@ -466,13 +640,17 @@ export default function BmFinanceiroPage() {
   const [loading, setLoading] = useState(true)
   const [autorizado, setAutorizado] = useState(false)
   const [exportando, setExportando] = useState(false)
-  // Só quem tem a flag admin dá e tira pontos (o backend confere de novo)
-  const [podeAjustar, setPodeAjustar] = useState(false)
+  // Só quem tem a flag bm_access edita o financeiro e os ajustes (o backend confere de novo)
+  const [podeEditar, setPodeEditar] = useState(false)
   // undefined: fechado; null: novo ajuste; um ajuste: editando ele
   const [ajusteEmEdicao, setAjusteEmEdicao] = useState<AjusteEditavel | null | undefined>(undefined)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
-  // Muda depois de lançar, editar ou excluir um ajuste, para buscar o BM de novo
+  // Muda depois de salvar ou de mexer em ajustes e na lista de despesas, para buscar o BM de novo
   const [versao, setVersao] = useState(0)
+  // O que foi digitado e ainda não foi salvo (no formato do PUT); a tela já mostra as contas com isso
+  const [edicoes, setEdicoes] = useState<Edicoes>(edicoesVazias)
+  const [salvando, setSalvando] = useState(false)
+  const [copiando, setCopiando] = useState(false)
 
   useEffect(() => {
     if (!localStorage.getItem("token")) {
@@ -485,10 +663,11 @@ export default function BmFinanceiroPage() {
       return
     }
     setAutorizado(true)
-    setPodeAjustar(roles.includes("admin"))
+    setPodeEditar(roles.includes("bm_access"))
   }, [router])
 
   const mes = paraChaveMes(mesReferencia)
+  const alterado = temEdicoes(edicoes)
 
   useEffect(() => {
     const token = localStorage.getItem("token")
@@ -508,11 +687,145 @@ export default function BmFinanceiroPage() {
       .finally(() => setLoading(false))
   }, [autorizado, mes, versao])
 
-  function mudarMes(delta: number) {
-    setMesReferencia((atual) => new Date(atual.getFullYear(), atual.getMonth() + delta, 1))
-  }
+  // Sair da página com alterações não salvas: o navegador pergunta antes
+  useEffect(() => {
+    if (!alterado) return
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener("beforeunload", avisar)
+    return () => window.removeEventListener("beforeunload", avisar)
+  }, [alterado])
 
   const recarregar = () => setVersao((v) => v + 1)
+
+  function irParaMes(novo: Date) {
+    const trocar = () => {
+      setEdicoes(edicoesVazias())
+      setMesReferencia(novo)
+    }
+    if (!alterado) return trocar()
+    setConfirmacao({
+      titulo: "Descartar alterações?",
+      mensagem: "As alterações deste mês ainda não foram salvas e serão perdidas.",
+      rotuloConfirmar: "Descartar e trocar de mês",
+      perigo: true,
+      acao: async () => trocar(),
+    })
+  }
+
+  function mudarMes(delta: number) {
+    irParaMes(new Date(mesReferencia.getFullYear(), mesReferencia.getMonth() + delta, 1))
+  }
+
+  // Edições: o valor igual ao gravado sai da lista, para "Salvar" só aparecer quando algo mudou de verdade
+  function editarMes(campo: CampoMes, valor: number | null) {
+    setEdicoes((e) => {
+      const mesEditado = { ...e.mes, [campo]: valor }
+      if (bm && bm.financeiro[campo] === valor) delete mesEditado[campo]
+      return { ...e, mes: mesEditado }
+    })
+  }
+
+  function editarSocio(id: string, campos: Partial<SocioFinanceiro>) {
+    setEdicoes((e) => {
+      const gravado: SocioFinanceiro = { gami_pro_sem_recibo: null, fator_correcao: 1, ...bm?.financeiro.socios[id] }
+      const socio: Partial<SocioFinanceiro> = { ...e.socios[id], ...campos }
+      for (const campo of Object.keys(socio) as (keyof SocioFinanceiro)[]) if (socio[campo] === gravado[campo]) delete socio[campo]
+      const socios = { ...e.socios, [id]: socio }
+      if (Object.keys(socio).length === 0) delete socios[id]
+      return { ...e, socios }
+    })
+  }
+
+  function editarDespesa(id: string, campos: Partial<Pick<Despesa, "banco" | "data_pago" | "valor">>) {
+    setEdicoes((e) => {
+      const gravada = bm?.financeiro.despesas.find((d) => d.id === id)
+      const despesa = { ...e.despesas[id], ...campos }
+      for (const campo of Object.keys(despesa) as (keyof typeof despesa)[]) if (gravada && despesa[campo] === gravada[campo]) delete despesa[campo]
+      const despesas = { ...e.despesas, [id]: despesa }
+      if (Object.keys(despesa).length === 0) delete despesas[id]
+      return { ...e, despesas }
+    })
+  }
+
+  async function salvar() {
+    setSalvando(true)
+    try {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/financeiro?mes=${mes}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
+        body: JSON.stringify(edicoes),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? "Não foi possível salvar.")
+      }
+      setEdicoes(edicoesVazias())
+      setError("")
+      recarregar()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar.")
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  // Traz o valor (e o banco) de cada despesa do mês anterior para as que estão vazias neste mês. Fica como
+  // edição: só grava ao salvar
+  async function copiarMesAnterior() {
+    if (!bm) return
+    setCopiando(true)
+    try {
+      const anterior = paraChaveMes(new Date(mesReferencia.getFullYear(), mesReferencia.getMonth() - 1, 1))
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro?mes=${anterior}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível buscar o mês anterior.")
+      const atuais = aplicarEdicoes(bm.financeiro, edicoes).despesas
+      let copiadas = 0
+      for (const d of (data as Bm).financeiro.despesas) {
+        const atual = atuais.find((a) => a.id === d.id)
+        if (!atual || atual.calculo || atual.valor != null || d.valor == null) continue
+        editarDespesa(d.id, { valor: d.valor, ...(atual.banco ? {} : { banco: d.banco }) })
+        copiadas++
+      }
+      setError(copiadas === 0 ? "O mês anterior não tem valores para copiar nas despesas vazias." : "")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível buscar o mês anterior.")
+    } finally {
+      setCopiando(false)
+    }
+  }
+
+  // Lista de despesas (incluir, renomear, remover): grava na hora e recarrega, sem perder o que foi digitado
+  async function chamarItens(caminho: string, metodo: "POST" | "PATCH", body: object) {
+    const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/despesa-itens${caminho}`, {
+      method: metodo,
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setError(data.error ?? "Não foi possível alterar a lista de despesas.")
+      return
+    }
+    recarregar()
+  }
+
+  function pedirRemocaoDespesa(despesa: Despesa) {
+    setConfirmacao({
+      titulo: "Remover despesa",
+      mensagem: (
+        <>
+          Remover <strong>{despesa.nome}</strong> da lista? Ela some dos meses sem valor nela; os meses que já têm valor continuam
+          mostrando.
+        </>
+      ),
+      rotuloConfirmar: "Remover",
+      perigo: true,
+      acao: () => chamarItens(`/${despesa.id}`, "PATCH", { ativo: false }),
+    })
+  }
 
   // O backend preenche o modelo de Excel do cliente com os dados do mês ("BM OUT 26.xlsx")
   async function exportar() {
@@ -566,8 +879,21 @@ export default function BmFinanceiroPage() {
 
   const rotuloMes = mesReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
 
+  // As contas da planilha, refeitas a cada valor digitado
+  const fin = bm ? aplicarEdicoes(bm.financeiro, edicoes) : null
+  const casosFora = bm && fin ? montarCasosFora(bm, fin, podeEditar ? editarSocio : undefined) : null
+  const resultado =
+    bm && fin && casosFora
+      ? calcularFinanceiro(fin, {
+          casosForaRecibo100: casosFora.casosForaRecibo100,
+          custasCasosFora: casosFora.custasCasosFora,
+          plantonistas: bm.plantonistas,
+        })
+      : null
+  const pontos = bm && fin && resultado ? montarPontos(bm, fin, resultado.valorParaDistribuir, podeEditar ? editarSocio : undefined) : null
+
   return (
-    <main className="max-w-[96rem] mx-auto px-4 sm:px-6 py-8 sm:py-12">
+    <main className={`max-w-[96rem] mx-auto px-4 sm:px-6 py-8 sm:py-12 ${alterado ? "pb-28" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-bold text-gray-800">BM Financeiro</h1>
@@ -582,7 +908,7 @@ export default function BmFinanceiroPage() {
                 <polyline points="15 18 9 12 15 6" />
               </svg>
             </button>
-            <SeletorMes valor={mesReferencia} onChange={setMesReferencia} />
+            <SeletorMes valor={mesReferencia} onChange={irParaMes} />
             <button
               type="button"
               onClick={() => mudarMes(1)}
@@ -599,7 +925,8 @@ export default function BmFinanceiroPage() {
         <button
           type="button"
           onClick={exportar}
-          disabled={!bm || loading || exportando}
+          disabled={!bm || loading || exportando || alterado}
+          title={alterado ? "Salve as alterações antes de exportar" : undefined}
           className="flex items-center gap-2 bg-brand-700 hover:bg-brand-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -615,29 +942,74 @@ export default function BmFinanceiroPage() {
         <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-6">{error}</p>
       )}
 
-      {bm && (
+      {bm && fin && casosFora && resultado && pontos && (
         <div className="space-y-6">
+          <CardFaturamento fin={fin} resultado={resultado} editar={podeEditar ? editarMes : undefined} />
           {bm.socios.length === 0 ? (
             <p className="bg-white rounded-xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
               Nenhum sócio cadastrado.
             </p>
           ) : (
-            <GradeBm bm={bm} loading={loading} />
+            <GradeBm socios={bm.socios} linhas={casosFora.linhas} loading={loading} />
           )}
+          <DespesasBm
+            despesas={fin.despesas}
+            resultado={resultado}
+            podeEditar={podeEditar}
+            onEditar={editarDespesa}
+            onAdicionar={(empresa: Empresa, nome: string) => chamarItens("", "POST", { empresa, nome })}
+            onRenomear={(despesa, nome) => chamarItens(`/${despesa.id}`, "PATCH", { nome })}
+            onRemover={pedirRemocaoDespesa}
+            onCopiarMesAnterior={copiarMesAnterior}
+            copiando={copiando}
+          />
+          <CardRateio fin={fin} resultado={resultado} />
+          {bm.socios.length > 0 && <GradeBm socios={bm.socios} linhas={pontos} loading={loading} />}
           <SecaoAjustes
             ajustes={bm.ajustes}
             historico={bm.historico}
             loading={loading}
-            podeAjustar={podeAjustar}
+            podeAjustar={podeEditar}
             onNovo={() => setAjusteEmEdicao(null)}
             onEditar={(a) => setAjusteEmEdicao(a)}
             onExcluir={pedirExclusao}
           />
-          <section>
-            <h2 className="font-semibold text-gray-800 mb-1">Plantonistas</h2>
-            <p className="text-xs text-gray-500 mb-3">Plantões do mês por categoria. Não fazem parte da planilha dos sócios.</p>
-            <TabelaPlantonistasPorCategoria linhas={bm.plantonistas} loading={loading} />
-          </section>
+          <SecaoPlantonistas
+            linhas={bm.plantonistas}
+            fin={fin}
+            resultado={resultado}
+            loading={loading}
+            editar={podeEditar ? editarMes : undefined}
+          />
+          <HistoricoFinanceiro eventos={bm.financeiro.historico} />
+        </div>
+      )}
+
+      {alterado && podeEditar && (
+        <div className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+          <div className="max-w-[96rem] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-700">
+              <strong>Alterações não salvas</strong> em {rotuloMes}. As contas acima já mostram os valores novos.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setEdicoes(edicoesVazias())}
+                disabled={salvando}
+                className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60"
+              >
+                Descartar
+              </button>
+              <button
+                type="button"
+                onClick={salvar}
+                disabled={salvando}
+                className="bg-brand-700 hover:bg-brand-800 text-white font-semibold px-5 py-2 rounded-lg text-sm disabled:opacity-60"
+              >
+                {salvando ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -750,7 +1122,7 @@ function DescricaoEvento({ evento }: { evento: EventoHistorico }) {
   )
 }
 
-// Ajustes manuais do mês e o histórico deles: todos que veem o BM veem tudo; só o admin lança, edita e exclui
+// Ajustes manuais do mês e o histórico deles: todos que veem o BM veem tudo; só quem tem acesso ao BM lança, edita e exclui
 function SecaoAjustes({
   ajustes,
   historico,
@@ -845,73 +1217,114 @@ function SecaoAjustes({
   )
 }
 
-// Plantonistas: quantos plantões em cada categoria (com fração na troca por horas e no congresso)
-function TabelaPlantonistasPorCategoria({
+// Plantonistas: plantões em cada categoria (com fração na troca por horas e no congresso), o valor de cada
+// categoria no mês e quanto cada um recebe. A soma é a despesa "Plantonistas" da PMP
+function SecaoPlantonistas({
   linhas,
+  fin,
+  resultado,
   loading,
+  editar,
 }: {
   linhas: LinhaPlantonista[]
+  fin: Financeiro
+  resultado: ResultadoFinanceiro
   loading: boolean
+  editar?: (campo: CampoMes, valor: number | null) => void
 }) {
+  const valores = valoresPlantao(fin)
   const somar = (valor: (l: LinhaPlantonista) => number) => linhas.reduce((s, l) => s + valor(l), 0)
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-            <th className="px-4 py-3">Médico</th>
-            {CATEGORIAS.map((c) => (
-              <th key={c.chave} className="px-3 py-3 text-right">
-                {c.rotulo}
-              </th>
-            ))}
-            <th className="px-4 py-3 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((l) => (
-            <tr key={l.id} className="border-b border-gray-100 last:border-0">
-              <td className="px-4 py-3 min-w-[12rem]">
-                <div className="flex items-center gap-3">
-                  <SiglaBadge sigla={l.sigla} />
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
-                    <p className="text-gray-400 text-xs truncate">{l.email}</p>
+    <section>
+      <h2 className="font-semibold text-gray-800 mb-1">Plantonistas</h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Plantões do mês por categoria e o valor pago por plantão. O total entra na despesa &ldquo;Plantonistas&rdquo; da PMP.
+      </p>
+      <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+              <th className="px-4 py-3">Médico</th>
+              {CATEGORIAS_PLANTAO.map((c) => (
+                <th key={c.chave} className="px-3 py-3 text-right">
+                  {c.rotulo}
+                </th>
+              ))}
+              <th className="px-3 py-3 text-right">Total</th>
+              <th className="px-4 py-3 text-right">A receber</th>
+            </tr>
+            <tr className="border-b border-gray-200 bg-amber-50/30">
+              <td className="px-4 py-2 text-xs font-semibold text-gray-600">Valor do plantão (R$)</td>
+              {CATEGORIAS_PLANTAO.map((c) => {
+                const herdado = fin[c.campo] == null && fin.valores_plantao_anteriores[c.campo] != null
+                return (
+                  <td key={c.chave} className="px-2 py-1.5 text-right min-w-[7rem]">
+                    {editar ? (
+                      <CampoNumero
+                        valor={fin[c.campo]}
+                        onChange={(v) => editar(c.campo, v)}
+                        ariaLabel={`Valor do plantão ${c.rotulo.toLowerCase()}`}
+                        placeholder={herdado ? formatarDinheiro(fin.valores_plantao_anteriores[c.campo]) : "0,00"}
+                      />
+                    ) : (
+                      <span className="tabular-nums text-gray-700">{valores[c.chave] == null ? "—" : formatarDinheiro(valores[c.chave])}</span>
+                    )}
+                    {herdado && <p className="text-[11px] text-gray-400 mt-0.5">do mês anterior</p>}
+                  </td>
+                )
+              })}
+              <td colSpan={2} />
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.id} className="border-b border-gray-100 last:border-0">
+                <td className="px-4 py-3 min-w-[12rem]">
+                  <div className="flex items-center gap-3">
+                    <SiglaBadge sigla={l.sigla} />
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
+                      <p className="text-gray-400 text-xs truncate">{l.email}</p>
+                    </div>
                   </div>
-                </div>
-              </td>
-              {CATEGORIAS.map((c) => (
-                <td key={c.chave} className="px-3 py-3 text-right text-gray-700 tabular-nums">
-                  {formatarPontos(l.categorias[c.chave])}
                 </td>
-              ))}
-              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
-            </tr>
-          ))}
+                {CATEGORIAS_PLANTAO.map((c) => (
+                  <td key={c.chave} className="px-3 py-3 text-right text-gray-700 tabular-nums">
+                    {formatarPontos(l.categorias[c.chave])}
+                  </td>
+                ))}
+                <td className="px-3 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
+                <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
+                  {formatarDinheiro(pagamentoPlantonista(l, valores))}
+                </td>
+              </tr>
+            ))}
 
-          {!loading && linhas.length === 0 && (
-            <tr>
-              <td colSpan={CATEGORIAS.length + 2} className="px-4 py-8 text-center text-gray-400">
-                Nenhum plantonista com plantão neste mês.
-              </td>
-            </tr>
-          )}
-        </tbody>
-        {linhas.length > 0 && (
-          <tfoot>
-            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
-              <td className="px-4 py-3">Total</td>
-              {CATEGORIAS.map((c) => (
-                <td key={c.chave} className="px-3 py-3 text-right tabular-nums">
-                  {formatarPontos(somar((l) => l.categorias[c.chave]))}
+            {!loading && linhas.length === 0 && (
+              <tr>
+                <td colSpan={CATEGORIAS_PLANTAO.length + 3} className="px-4 py-8 text-center text-gray-400">
+                  Nenhum plantonista com plantão neste mês.
                 </td>
-              ))}
-              <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
+              </tr>
+            )}
+          </tbody>
+          {linhas.length > 0 && (
+            <tfoot>
+              <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
+                <td className="px-4 py-3">Total</td>
+                {CATEGORIAS_PLANTAO.map((c) => (
+                  <td key={c.chave} className="px-3 py-3 text-right tabular-nums">
+                    {formatarPontos(somar((l) => l.categorias[c.chave]))}
+                  </td>
+                ))}
+                <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
+                <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarDinheiro(resultado.totalPlantonistas)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </section>
   )
 }

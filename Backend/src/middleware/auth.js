@@ -39,13 +39,22 @@ exports.authMiddleware = async (req, res, next) => {
 const ehAdmin = user => user?.app_metadata?.is_admin === true
 exports.ehAdmin = ehAdmin
 
+// Acesso de edição ao BM Financeiro (financeiro e ajustes de pontos): a flag app_metadata.bm_access,
+// separada do cargo e da flag admin. Só o admin concede
+const temAcessoBm = user => user?.app_metadata?.bm_access === true
+exports.temAcessoBm = temAcessoBm
+
 // Gestão: escritório, técnico ou quem tem a flag admin
 const ROLES_GESTAO = ['escritorio', 'tecnico']
 exports.ehGestao = user => ehAdmin(user) || (user?.app_metadata?.roles ?? []).some(r => ROLES_GESTAO.includes(r))
 
-// Nas listas de requireRole, 'admin' representa quem tem a flag
+// Nas listas de requireRole, 'admin' e 'bm_access' representam quem tem a flag
 exports.requireRole = (...allowedRoles) => (req, res, next) => {
-  const roles = [...(req.user?.app_metadata?.roles ?? []), ...(ehAdmin(req.user) ? ['admin'] : [])]
+  const roles = [
+    ...(req.user?.app_metadata?.roles ?? []),
+    ...(ehAdmin(req.user) ? ['admin'] : []),
+    ...(temAcessoBm(req.user) ? ['bm_access'] : []),
+  ]
 
   if (!roles.some(role => allowedRoles.includes(role))) {
     return res.status(403).json({ error: 'Você não tem permissão para realizar esta ação' })

@@ -14,6 +14,8 @@ export type UsuarioGestao = {
   crm_uf: string | null
   roles: string[]
   is_admin: boolean
+  // Edita o BM Financeiro (flag separada, que só o admin concede)
+  bm_access: boolean
   ativo: boolean
   // Cadastro público ainda não aprovado pela gestão
   pendente: boolean
@@ -26,10 +28,11 @@ export const ROLES = [
   { value: "escritorio", label: "Escritório" },
 ]
 
-// "admin" não é cargo: é a flag is_admin, que o login guarda junto das roles no navegador
+// "admin" e "bm_access" não são cargos: são as flags is_admin e bm_access, que o login guarda junto das roles
 export const ROTULO_ROLE: Record<string, string> = {
   ...Object.fromEntries(ROLES.map((r) => [r.value, r.label])),
   admin: "Administrador",
+  bm_access: "Acesso ao BM",
 }
 
 // Quem pode abrir a tela de usuários e quem pode editar (só admin concede ou remove a flag admin)
@@ -78,6 +81,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   const [password, setPassword] = useState("")
   const [roles, setRoles] = useState<string[]>(usuario?.roles ?? [])
   const [isAdmin, setIsAdmin] = useState(usuario?.is_admin ?? false)
+  const [acessoBm, setAcessoBm] = useState(usuario?.bm_access ?? false)
   const [crm, setCrm] = useState(usuario?.crm ?? "")
   const [crmUf, setCrmUf] = useState(usuario?.crm_uf ?? "")
 
@@ -192,6 +196,7 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
       crm: exigeCrm ? crm : undefined,
       crm_uf: exigeCrm ? crmUf : undefined,
       is_admin: podeGerenciarAdmin ? isAdmin : undefined,
+      bm_access: podeGerenciarAdmin ? acessoBm : undefined,
     }
 
     try {
@@ -350,6 +355,29 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
               <span>
                 Administrador
                 <span className="block text-xs text-gray-500">Acesso total à gestão e pode conceder esta permissão a outros.</span>
+              </span>
+            </label>
+          )}
+
+          {(podeGerenciarAdmin || acessoBm) && (
+            <label
+              title={podeGerenciarAdmin ? undefined : "Só administradores podem conceder ou remover"}
+              className={`flex items-start gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
+                podeGerenciarAdmin ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+              } ${acessoBm ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
+            >
+              <input
+                type="checkbox"
+                checked={acessoBm}
+                disabled={!podeGerenciarAdmin}
+                onChange={() => setAcessoBm((v) => !v)}
+                className="accent-brand-700 mt-0.5"
+              />
+              <span>
+                Acesso ao BM
+                <span className="block text-xs text-gray-500">
+                  Edita o BM Financeiro: faturamento, despesas, valores dos plantões e ajustes de pontos.
+                </span>
               </span>
             </label>
           )}

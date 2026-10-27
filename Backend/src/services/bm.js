@@ -9,6 +9,7 @@ const { buscarAfastamentosNoPeriodo } = require('./afastamentos')
 const { buscarCargosDosUsuarios, contaComoSocio } = require('./usuarios')
 const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes } = require('./ajustesPontos')
+const { buscarFinanceiro } = require('./financeiroBm')
 
 // Ordem das colunas da planilha do cliente (BM DEZ 26.xlsx). Sócio que não está nela vai depois, pela sigla
 const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'GI', 'VI', 'TG', 'LU', 'VS']
@@ -22,6 +23,7 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 //   Troca por horas: a fração das horas. Cobertura de férias: só + para quem cobre (o titular continua com a vaga).
 // - casosForaRecibo: casos fora com recibo GAMI/ADDS, com a parte de cada sócio (dois anestesistas: metade cada).
 // - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
+// - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, fator) e o histórico deles.
 // O noturno conta no mês em que o plantão começa.
 async function montarBm(mes) {
   const [ano, mesNum] = mes.split('-').map(Number)
@@ -35,12 +37,13 @@ async function montarBm(mes) {
     .lte('data', fim)
   if (error) throw error
 
-  const [trocas, cargos, casosFora, afastamentos, { ajustes, historico }] = await Promise.all([
+  const [trocas, cargos, casosFora, afastamentos, { ajustes, historico }, financeiro] = await Promise.all([
     buscarTrocasAceitas(plantoes.map(p => p.id)),
     buscarCargosDosUsuarios(),
     listarCasosFora({ inicio, fim }),
     buscarAfastamentosNoPeriodo(plantoes.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)), inicio, fim),
     buscarAjustesDoMes(inicio),
+    buscarFinanceiro(mes),
   ])
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
   // Trocas por horas e coberturas de férias: a vaga continua do titular (repartirPlantao divide)
@@ -107,6 +110,8 @@ async function montarBm(mes) {
   substituicoes.sort((a, b) => a.data.localeCompare(b.data) || a.posicao - b.posicao)
 
   for (const ajuste of ajustes) socioDe(ajuste.usuario_id).pontos_ajustes += Number(ajuste.pontos)
+  // Sócio com valor digitado no mês (ex.: GAMI PRO sem recibo) também vira coluna
+  for (const id of Object.keys(financeiro.socios)) if (ehSocio(id)) socioDe(id)
 
   // Casos fora com recibo GAMI/ADDS: os "Sem nota fiscal" ficam fora da planilha
   const casosForaRecibo = []
@@ -148,6 +153,7 @@ async function montarBm(mes) {
     ...substituicoes.flatMap(s => [s.saida, s.entrada]),
     ...ajustes.flatMap(a => [a.criado_por, a.atualizado_por]),
     ...historico.flatMap(h => [h.usuario_id, h.feito_por]),
+    ...financeiro.historico.flatMap(h => [h.usuario_id, h.feito_por]),
   ].filter(Boolean))
 
   return {
@@ -178,6 +184,14 @@ async function montarBm(mes) {
       medico: resumoDoPerfil(usuario_id, perfis),
       feito_por: resumoDoPerfil(feito_por, perfis),
     })),
+    financeiro: {
+      ...financeiro,
+      historico: financeiro.historico.map(({ usuario_id, feito_por, ...h }) => ({
+        ...h,
+        socio: usuario_id ? resumoDoPerfil(usuario_id, perfis) : null,
+        feito_por: feito_por ? resumoDoPerfil(feito_por, perfis) : null,
+      })),
+    },
   }
 }
 

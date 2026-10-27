@@ -9,11 +9,19 @@ export function salvarTokens(dados: { token: string; refresh_token?: string }) {
   if (dados.refresh_token) localStorage.setItem("refreshToken", dados.refresh_token)
 }
 
-export type Me = { id: string; email: string; roles: string[]; is_admin?: boolean; nome?: string | null; sigla?: string | null }
+export type Me = {
+  id: string
+  email: string
+  roles: string[]
+  is_admin?: boolean
+  bm_access?: boolean
+  nome?: string | null
+  sigla?: string | null
+}
 
-// A flag admin entra como "admin" na lista, que é o que as checagens de permissão da tela procuram
+// As flags entram na lista como "admin" e "bm_access", que é o que as checagens de permissão da tela procuram
 export function rolesDaSessao(me: Me): string[] {
-  return [...me.roles, ...(me.is_admin ? ["admin"] : [])]
+  return [...me.roles, ...(me.is_admin ? ["admin"] : []), ...(me.bm_access ? ["bm_access"] : [])]
 }
 
 export function salvarDadosUsuario(me: Me) {

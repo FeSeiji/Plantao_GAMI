@@ -7,7 +7,8 @@ const JSZip = require('jszip')
 // dentro do XML, e o resto (formatação, fórmulas, comentários) continua exatamente como no modelo. O Excel
 // recalcula as fórmulas ao abrir.
 // Linhas do modelo que o sistema preenche (as demais são digitadas pelo escritório, por enquanto):
-//   1, 132 e 190: siglas  ·  8–22: casos fora escalados  ·  28–52: não escalados  ·  133: VALOR (pontos da escala)
+//   1, 132 e 190: siglas  ·  T2, U2, V2: faturamento PMP, recibos GAMI e GAMI total  ·  2: GAMI PRO sem recibo
+//   8–22: casos fora escalados  ·  28–52: não escalados  ·  133: VALOR (pontos da escala)
 //   134: fator de correção  ·  136–166: substituições e ajustes "Outro"  ·  167: Administrativo  ·  168: Reunião
 // A linha 175 (DIF MÊS ANTERIOR) puxava a aba do mês anterior de outro arquivo (BM 2026.xlsx, no Dropbox):
 // o vínculo sai e a linha fica para digitar.
@@ -15,6 +16,8 @@ const MODELO = path.join(__dirname, '../modelos/bm-modelo.xlsx')
 
 const COLUNAS_SOCIOS = 'CDEFGHIJKLMNOPQRS'.split('') // 17 colunas: as 14 da planilha e 3 livres
 const LINHAS_SIGLAS = [1, 132, 190]
+const LINHA_GAMI_PRO_SEM_RECIBO = 2
+const FATURAMENTO = { faturamento_pmp: 'T2', recibos_gami: 'U2', gami_total: 'V2' }
 const ESCALADO = { primeira: 8, ultima: 22 }
 const NAO_ESCALADO = { primeira: 28, ultima: 52 }
 const LINHA_VALOR = 133
@@ -39,9 +42,12 @@ async function gerarPlanilhaBm(bm) {
   const porColuna = (linha, valores) =>
     COLUNAS_SOCIOS.forEach((col, i) => planilha.definir(`${col}${linha}`, valores(bm.socios[i], i) ?? null))
 
+  const { financeiro } = bm
   for (const linha of LINHAS_SIGLAS) porColuna(linha, s => s?.sigla)
+  for (const [campo, ref] of Object.entries(FATURAMENTO)) planilha.definir(ref, financeiro[campo])
+  porColuna(LINHA_GAMI_PRO_SEM_RECIBO, s => (s ? financeiro.socios[s.id]?.gami_pro_sem_recibo : null))
   porColuna(LINHA_VALOR, s => s?.valor_escala)
-  porColuna(LINHA_FATOR, s => (s ? 1 : null))
+  porColuna(LINHA_FATOR, s => (s ? financeiro.socios[s.id]?.fator_correcao ?? 1 : null))
 
   // Casos fora: um por linha, a parte de cada sócio na coluna dele e a data + hospital no rótulo (coluna B)
   const casos = bm.casosForaRecibo.map(c => ({

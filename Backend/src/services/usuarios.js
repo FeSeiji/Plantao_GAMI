@@ -75,13 +75,14 @@ async function validarDadosUsuario({ sigla, roles, crm, crm_uf }, ignorarId = nu
 // Cria o usuário no Supabase Auth e completa o profile com o CRM.
 // Espera dados já validados por validarDadosUsuario. Retorna { user } ou { error, status }.
 // pendente: cadastro público — a conta nasce desativada até alguém da gestão aprovar.
-async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf, is_admin = false }, { pendente = false } = {}) {
+async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf, is_admin = false, bm_access = false }, { pendente = false } = {}) {
   const { data, error } = await supabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true, // pula confirmação de email
     user_metadata: { nome, sigla },
-    app_metadata: { roles, is_admin, pendente_aprovacao: pendente }, // roles e flag admin só mudam pela service role
+    // roles e flags (admin, acesso ao BM) só mudam pela service role
+    app_metadata: { roles, is_admin, bm_access, pendente_aprovacao: pendente },
     ...(pendente ? { ban_duration: DURACAO_DESATIVACAO } : {})
   })
 

@@ -5,7 +5,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { contaComoSocio } = require('../services/usuarios')
 const { CAMPOS_AJUSTE, TIPOS_AJUSTE } = require('../services/ajustesPontos')
 
-// Ajustes manuais de pontos do BM: só sócios recebem, em qualquer mês, e só quem tem a flag admin lança.
+// Ajustes manuais de pontos do BM: só sócios recebem, em qualquer mês, e só quem tem a flag bm_access lança.
 // O histórico é gravado pelo trigger do banco (migration ajustes_pontos); excluir só marca excluido_em.
 const MAX_MOTIVO = 200
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
