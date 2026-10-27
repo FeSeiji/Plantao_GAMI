@@ -72,7 +72,7 @@ async function main() {
   }
 
   // Usuários
-  const escritorio = await criar({ email: 'escritorio@example.com', nome: 'Escritório Teste', sigla: 'ES', roles: ['escritorio'], is_admin: true })
+  const escritorio = await criar({ email: 'escritorio@example.com', nome: 'Escritório Teste', sigla: 'ES', roles: ['escritorio'], is_admin: true, bm_access: true })
   const tecnico = await criar({ email: 'paula@example.com', nome: 'Paula Martins', sigla: 'PM', roles: ['tecnico'] })
 
   let crm = 100001
@@ -214,7 +214,7 @@ async function main() {
 
   console.log(`Pronto: ${medicos.length + 3} usuários, ${plantoes.length} plantões (${dataLocal(inicio)} a ${dataLocal(fim)}).`)
   console.log(`Senha de todos: ${SENHA}`)
-  console.log('  escritorio@example.com — escritório + admin (ES)')
+  console.log('  escritorio@example.com — escritório + admin + acesso ao BM (ES)')
   console.log('  paula@example.com      — técnico (PM)')
   console.log(`  ${emailDe(ana.nome).padEnd(22)} — sócio (${SOCIOS.map(s => s[1]).join(', ')}: primeiro nome @example.com)`)
   console.log(`  ${emailDe(igor.nome).padEnd(22)} — plantonista (${PLANTONISTAS.map(s => s[1]).join(', ')}: primeiro nome @example.com)`)

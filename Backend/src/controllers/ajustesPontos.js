@@ -3,9 +3,9 @@ const { createClient } = require('@supabase/supabase-js')
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const { contaComoSocio } = require('../services/usuarios')
-const { CAMPOS_AJUSTE } = require('../services/ajustesPontos')
+const { CAMPOS_AJUSTE, TIPOS_AJUSTE } = require('../services/ajustesPontos')
 
-// Ajustes manuais de pontos do BM: só sócios recebem, em qualquer mês, e só quem tem a flag admin lança.
+// Ajustes manuais de pontos do BM: só sócios recebem, em qualquer mês, e só quem tem a flag bm_access lança.
 // O histórico é gravado pelo trigger do banco (migration ajustes_pontos); excluir só marca excluido_em.
 const MAX_MOTIVO = 200
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -19,19 +19,26 @@ function lerPontos(valor) {
   return { pontos }
 }
 
+function lerTipo(valor) {
+  if (!TIPOS_AJUSTE.includes(valor)) return { error: 'Escolha o tipo do ajuste: Administrativo, Reunião ou Outro' }
+  return { tipo: valor }
+}
+
 function lerMotivo(valor) {
   const motivo = String(valor ?? '').trim().slice(0, MAX_MOTIVO)
   if (!motivo) return { error: 'Informe o motivo do ajuste' }
   return { motivo }
 }
 
-// Corpo: usuario_id, mes ('AAAA-MM'), pontos (número, negativo para tirar) e motivo
+// Corpo: usuario_id, mes ('AAAA-MM'), tipo, pontos (número, negativo para tirar) e motivo
 exports.criar = async (req, res) => {
   const { usuario_id, mes } = req.body ?? {}
 
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes ?? '')) {
     return res.status(400).json({ error: "mes é obrigatório no formato 'AAAA-MM'" })
   }
+  const tipo = lerTipo(req.body?.tipo)
+  if (tipo.error) return res.status(400).json({ error: tipo.error })
   const pontos = lerPontos(req.body?.pontos)
   if (pontos.error) return res.status(400).json({ error: pontos.error })
   const motivo = lerMotivo(req.body?.motivo)
@@ -49,6 +56,7 @@ exports.criar = async (req, res) => {
     .insert({
       usuario_id,
       mes: `${mes}-01`,
+      tipo: tipo.tipo,
       pontos: pontos.pontos,
       motivo: motivo.motivo,
       criado_por: req.user.id,
@@ -60,7 +68,7 @@ exports.criar = async (req, res) => {
   return res.status(201).json(data)
 }
 
-// Corpo: pontos e/ou motivo. Para trocar o médico ou o mês, exclua e lance de novo
+// Corpo: tipo, pontos e/ou motivo. Para trocar o médico ou o mês, exclua e lance de novo
 exports.atualizar = async (req, res) => {
   if (!UUID_REGEX.test(req.params.id)) return res.status(404).json({ error: 'Ajuste não encontrado' })
 
@@ -75,6 +83,11 @@ exports.atualizar = async (req, res) => {
   if (!atual) return res.status(404).json({ error: 'Ajuste não encontrado' })
 
   const alteracoes = {}
+  if (req.body?.tipo !== undefined) {
+    const tipo = lerTipo(req.body.tipo)
+    if (tipo.error) return res.status(400).json({ error: tipo.error })
+    if (tipo.tipo !== atual.tipo) alteracoes.tipo = tipo.tipo
+  }
   if (req.body?.pontos !== undefined) {
     const pontos = lerPontos(req.body.pontos)
     if (pontos.error) return res.status(400).json({ error: pontos.error })

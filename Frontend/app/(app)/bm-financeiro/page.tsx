@@ -1,34 +1,87 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import SiglaBadge from "../../../components/SiglaBadge"
 import { apiFetch } from "../../../components/sessao"
-import { formatarPontos } from "../../../components/trocaPorHoras"
-import { CasoFora, anestesistasDe, formatarCpf, formatarValor, rotuloRecibo } from "../../../components/casosFora"
-import AjustePontosModal, { AjusteEditavel } from "../../../components/AjustePontosModal"
+import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
+import { descreverPosicao } from "../../../components/posicoes"
+import AjustePontosModal, { AjusteEditavel, TipoAjuste, rotuloTipoAjuste } from "../../../components/AjustePontosModal"
 import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoModal"
+import CampoNumero from "../../../components/bm/CampoNumero"
+import DespesasBm from "../../../components/bm/DespesasBm"
+import HistoricoFinanceiro, { EventoFinanceiro } from "../../../components/bm/HistoricoFinanceiro"
+import {
+  CATEGORIAS_PLANTAO,
+  CampoMes,
+  Despesa,
+  Edicoes,
+  Empresa,
+  FATOR_DISTRIBUICAO,
+  Financeiro,
+  ResultadoFinanceiro,
+  SocioFinanceiro,
+  aplicarEdicoes,
+  calcularFinanceiro,
+  edicoesVazias,
+  formatarDinheiro,
+  pagamentoPlantonista,
+  temEdicoes,
+  valoresPlantao,
+} from "../../../components/bm/calculos"
 
-// Administradores, técnicos e sócios — mesma lista do backend em routes/bmFinanceiro.js
-const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio"]
+// Administradores, técnicos, sócios e quem tem acesso ao BM — mesma lista do backend em routes/bmFinanceiro.js
+const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio", "bm_access"]
 
-type Aba = "plantonista" | "socio" | "casos_fora"
+type Perfil = { id: string; nome: string | null; email: string | null; sigla: string | null }
 
-type LinhaBase = {
-  id: string
-  nome: string | null
-  email: string | null
-  sigla: string | null
+// Uma coluna do BM. valor_escala: pontos de como o sócio foi escalado (a linha VALOR da planilha);
+// pontos: o total, com as trocas e os ajustes
+type Socio = Perfil & {
+  plantoes: number
+  valor_escala: number
+  pontos_plantoes: number
+  pontos_ajustes: number
+  pontos: number
 }
 
-// pontos = pontos dos plantões + ajustes manuais
-type LinhaSocio = LinhaBase & { plantoes: number; pontos_plantoes: number; pontos_ajustes: number; pontos: number }
+// Valor de cada sócio numa linha (id -> valor); quem não aparece fica em branco
+type PorSocio = Record<string, number>
 
-type Perfil = LinhaBase
+// Troca aceita: − para quem saiu e + para quem entrou (na cobertura de férias, só + para quem cobriu)
+type Substituicao = {
+  id: string
+  data: string
+  posicao: number
+  tipo: "vaga" | "horas" | "ferias"
+  hora_inicio: string | null
+  hora_fim: string | null
+  saida: Perfil
+  entrada: Perfil
+  pontos: PorSocio
+}
 
-// Ajuste manual de pontos de um sócio no mês (lançado por quem tem a flag admin)
+// Caso fora com recibo GAMI/ADDS e a parte de cada sócio (dois anestesistas: metade cada)
+type CasoForaRecibo = {
+  id: string
+  data: string
+  escalado: boolean
+  hospital: string | null
+  cirurgia: string
+  valor: number
+  partes: PorSocio
+}
+
+type LinhaPlantonista = Perfil & {
+  // Plantões em cada categoria (a fração na troca por horas e no congresso) e a soma deles
+  categorias: Record<(typeof CATEGORIAS_PLANTAO)[number]["chave"], number>
+  total: number
+}
+
+// Ajuste manual de pontos de um sócio no mês (lançado por quem tem acesso ao BM)
 type Ajuste = {
   id: string
+  tipo: TipoAjuste
   pontos: number
   motivo: string
   medico: Perfil
@@ -38,190 +91,444 @@ type Ajuste = {
   atualizado_em: string | null
 }
 
-// Uma criação, edição ou exclusão de ajuste; na edição, anterior traz os pontos e o motivo de antes
+// Uma criação, edição ou exclusão de ajuste; na edição, anterior traz o tipo, os pontos e o motivo de antes
 type EventoHistorico = {
   id: string
   ajuste_id: string
   acao: "criado" | "editado" | "excluido"
+  tipo: TipoAjuste
   pontos: number
   motivo: string
   medico: Perfil
   feito_por: Perfil
   feito_em: string
-  anterior: { pontos: number; motivo: string } | null
+  anterior: { tipo: TipoAjuste; pontos: number; motivo: string } | null
 }
 
-// Categorias do plantonista — mesmas de Backend/src/services/pontuacao.js.
-// Sexta à noite conta como noturno de fim de semana; a manhã de sábado e domingo, como diurno de fim de semana
-const CATEGORIAS = [
-  { chave: "diurno", rotulo: "Diurno" },
-  { chave: "noturno", rotulo: "Noturno" },
-  { chave: "diurno_fds", rotulo: "Diurno fim de semana" },
-  { chave: "noturno_fds", rotulo: "Noturno fim de semana" },
-] as const
-
-type Categoria = (typeof CATEGORIAS)[number]["chave"]
-
-type LinhaPlantonista = LinhaBase & {
-  // Plantões em cada categoria (a fração na troca por horas e no congresso) e a soma deles
-  categorias: Record<Categoria, number>
-  total: number
-}
-
-type Resumo = {
+type Bm = {
   mes: string
+  socios: Socio[]
+  substituicoes: Substituicao[]
+  casosForaRecibo: CasoForaRecibo[]
   plantonistas: LinhaPlantonista[]
-  socios: LinhaSocio[]
-  casosFora: CasoFora[]
   ajustes: Ajuste[]
   historico: EventoHistorico[]
+  financeiro: Financeiro & { historico: EventoFinanceiro[] }
 }
 
-function lerRoles(): string[] {
-  try {
-    return JSON.parse(localStorage.getItem("roles") ?? "[]")
-  } catch {
-    return []
-  }
-}
+type Formato = "pontos" | "dinheiro" | "fator" | "valorPonto"
+
+// Linhas da grade, de cima para baixo, como na planilha do cliente
+type LinhaGrade =
+  | { tipo: "secao"; titulo: string; subtitulo?: string }
+  | { tipo: "siglas" }
+  | { tipo: "vazia"; texto: string }
+  | {
+      tipo: "valores"
+      chave: string
+      rotulo: string
+      detalhe?: string
+      valores: PorSocio
+      formato: Formato
+      // subtotal e total: linhas calculadas, que mostram 0 e ficam em destaque
+      destaque?: "subtotal" | "total"
+      // Linha digitada por quem tem acesso ao BM: cada célula vira um campo
+      editar?: (socioId: string, valor: number | null) => void
+      // Linha de um valor só (pontos distribuídos, valor do ponto): aparece na coluna de total
+      unico?: number
+    }
 
 function paraChaveMes(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
 }
 
-// Busca sem diferenciar maiúsculas nem acentos ("joao" encontra "João")
-function normalizar(texto: string) {
-  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+// As "fórmulas" da planilha: somas por coluna e porcentagens
+function somar(linhas: PorSocio[], socios: Socio[]): PorSocio {
+  return Object.fromEntries(socios.map((s) => [s.id, arredondar(linhas.reduce((t, l) => t + (l[s.id] ?? 0), 0))]))
 }
 
-function correspondeBusca(linha: { nome?: string | null; email?: string | null; sigla?: string | null }, termo: string) {
-  if (!termo) return true
-  return [linha.nome, linha.email, linha.sigla].some((campo) => campo && normalizar(campo).includes(termo))
+function multiplicar(linha: PorSocio, fator: number | ((id: string) => number)): PorSocio {
+  const f = typeof fator === "number" ? () => fator : fator
+  return Object.fromEntries(Object.entries(linha).map(([id, v]) => [id, arredondar(v * f(id))]))
 }
 
-// Gera um .xlsx com uma aba por tipo; exceljs só é baixado quando alguém exporta
-async function exportarExcel(resumo: Resumo, mesReferencia: Date) {
-  const { Workbook } = await import("exceljs")
-  const workbook = new Workbook()
-  const rotuloMes = mesReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
+const arredondar = (n: number) => Math.round(n * 100) / 100
+const somarTudo = (linha: PorSocio) => arredondar(Object.values(linha).reduce((t, v) => t + v, 0))
 
-  // Uma aba com sigla, nome e e-mail seguidos das colunas de valor, e a linha de total somando cada uma
-  function adicionarAba(nome: string, colunas: { header: string; key: string }[], linhas: Record<string, unknown>[]) {
-    const aba = workbook.addWorksheet(nome)
-    aba.columns = [
-      { header: "Sigla", key: "sigla", width: 8 },
-      { header: "Nome", key: "nome", width: 32 },
-      { header: "E-mail", key: "email", width: 32 },
-      ...colunas.map((c) => ({ ...c, width: 14 })),
-    ]
-    aba.getRow(1).font = { bold: true }
-    aba.views = [{ state: "frozen", ySplit: 1 }]
-    linhas.forEach((l) => aba.addRow(l))
+const formatarDiaMes = (data: string) => `${data.slice(8, 10)}/${data.slice(5, 7)}`
 
-    if (linhas.length > 0) {
-      const ultima = linhas.length + 1
-      const soma = (chave: string) => {
-        const letra = aba.getColumn(chave).letter
-        return { formula: `SUM(${letra}2:${letra}${ultima})` }
-      }
-      const total = aba.addRow({ nome: "Total", ...Object.fromEntries(colunas.map((c) => [c.key, soma(c.key)])) })
-      total.font = { bold: true }
-    }
-  }
-
-  adicionarAba(
-    "Plantonista",
-    [...CATEGORIAS.map((c) => ({ header: c.rotulo, key: c.chave })), { header: "Total", key: "total" }],
-    resumo.plantonistas.map((l) => ({ ...l, ...l.categorias })),
-  )
-  adicionarAba(
-    "Sócio",
-    [
-      { header: "Plantões", key: "plantoes" },
-      { header: "Pontos dos plantões", key: "pontos_plantoes" },
-      { header: "Ajustes", key: "pontos_ajustes" },
-      { header: "Total de pontos", key: "pontos" },
+// Bloco de casos fora (escalado ou não): um caso por linha, o total e a divisão entre médico e custas
+function linhasCasosFora(
+  casos: CasoForaRecibo[],
+  socios: Socio[],
+  { titulo, subtitulo, medico, custas, chave }: { titulo: string; subtitulo: string; medico: number; custas: number; chave: string },
+): { linhas: LinhaGrade[]; total: PorSocio; custas: PorSocio } {
+  const total = somar(casos.map((c) => c.partes), socios)
+  const parteCustas = multiplicar(total, custas)
+  const pct = (n: number) => `${Math.round(n * 100)}%`
+  return {
+    total,
+    custas: parteCustas,
+    linhas: [
+      { tipo: "secao", titulo, subtitulo },
+      ...(casos.length === 0
+        ? [{ tipo: "vazia", texto: "Nenhum caso neste mês." } as LinhaGrade]
+        : casos.map(
+            (c): LinhaGrade => ({
+              tipo: "valores",
+              chave: `caso-${c.id}`,
+              rotulo: `${formatarDiaMes(c.data)} · ${c.hospital ?? c.cirurgia}`,
+              detalhe: c.hospital ? c.cirurgia : undefined,
+              valores: c.partes,
+              formato: "dinheiro",
+            }),
+          )),
+      { tipo: "valores", chave: `${chave}-total`, rotulo: "Total 100%", valores: total, formato: "dinheiro", destaque: "subtotal" },
+      { tipo: "valores", chave: `${chave}-medico`, rotulo: `Médico ${pct(medico)}`, valores: multiplicar(total, medico), formato: "dinheiro", destaque: "subtotal" },
+      { tipo: "valores", chave: `${chave}-custas`, rotulo: `Custas ${pct(custas)}`, valores: parteCustas, formato: "dinheiro", destaque: "subtotal" },
     ],
-    resumo.socios,
-  )
-
-  // Ajustes manuais do mês, um por linha, com o motivo e quem lançou
-  const abaAjustes = workbook.addWorksheet("Ajustes de pontos")
-  abaAjustes.columns = [
-    { header: "Sigla", key: "sigla", width: 8 },
-    { header: "Sócio", key: "medico", width: 28 },
-    { header: "Pontos", key: "pontos", width: 10 },
-    { header: "Motivo", key: "motivo", width: 40 },
-    { header: "Lançado por", key: "criado_por", width: 28 },
-    { header: "Lançado em", key: "criado_em", width: 18 },
-  ]
-  abaAjustes.getRow(1).font = { bold: true }
-  abaAjustes.views = [{ state: "frozen", ySplit: 1 }]
-  resumo.ajustes.forEach((a) =>
-    abaAjustes.addRow({
-      sigla: a.medico.sigla ?? "",
-      medico: nomeDoPerfil(a.medico),
-      pontos: a.pontos,
-      motivo: a.motivo,
-      criado_por: nomeDoPerfil(a.criado_por),
-      criado_em: formatarDataHora(a.criado_em),
-    })
-  )
-
-  // Casos fora: um por linha, com todos os campos do registro
-  const abaCasos = workbook.addWorksheet("Casos fora")
-  abaCasos.columns = [
-    { header: "Data", key: "data", width: 12, style: { numFmt: "dd/mm/yyyy" } },
-    { header: "Sigla", key: "sigla", width: 8 },
-    { header: "Anestesista", key: "anestesista", width: 28 },
-    { header: "Escalado", key: "escalado", width: 10 },
-    { header: "Cirurgião", key: "cirurgiao", width: 24 },
-    { header: "Paciente", key: "paciente", width: 30 },
-    { header: "CPF do paciente", key: "cpf", width: 16 },
-    { header: "Cirurgia realizada", key: "cirurgia", width: 30 },
-    { header: "Hospital", key: "hospital", width: 18 },
-    { header: "Recibo", key: "recibo", width: 12 },
-    { header: "Valor", key: "valor", width: 14, style: { numFmt: '"R$" #,##0.00' } },
-    { header: "Comentários", key: "comentarios", width: 40 },
-  ]
-  abaCasos.getRow(1).font = { bold: true }
-  abaCasos.views = [{ state: "frozen", ySplit: 1 }]
-  resumo.casosFora.forEach((c) =>
-    abaCasos.addRow({
-      // Meia-noite UTC: o Excel mostra o mesmo dia, sem deslocar pelo fuso
-      data: new Date(`${c.data}T00:00:00Z`),
-      // Caso com dois anestesistas: os dois na mesma linha (o valor é do caso, não se repete)
-      sigla: anestesistasDe(c).map((a) => a.sigla).filter(Boolean).join(" / "),
-      anestesista: anestesistasDe(c).map((a) => a.nome ?? a.email).join(" e "),
-      escalado: c.escalado ? "Sim" : "Não",
-      cirurgiao: c.cirurgiao,
-      paciente: c.paciente_nome,
-      cpf: formatarCpf(c.paciente_cpf),
-      cirurgia: c.cirurgia,
-      hospital: c.hospital?.nome ?? "",
-      recibo: rotuloRecibo(c.recibo),
-      valor: c.valor,
-      comentarios: c.comentarios ?? "",
-    })
-  )
-  if (resumo.casosFora.length > 0) {
-    const letraValor = abaCasos.getColumn("valor").letter
-    const total = abaCasos.addRow({
-      anestesista: "Total",
-      valor: { formula: `SUM(${letraValor}2:${letraValor}${resumo.casosFora.length + 1})` },
-    })
-    total.font = { bold: true }
   }
+}
 
-  const buffer = await workbook.xlsx.writeBuffer()
-  const url = URL.createObjectURL(
-    new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+function rotuloSubstituicao(s: Substituicao) {
+  const quem = `${s.saida.sigla ?? s.saida.nome ?? "?"} → ${s.entrada.sigla ?? s.entrada.nome ?? "?"}`
+  return `${formatarDiaMes(s.data)} · ${quem}`
+}
+
+function detalheSubstituicao(s: Substituicao) {
+  const vaga = descreverPosicao(s.data, s.posicao)
+  if (s.tipo === "ferias") return `${vaga} · cobertura de férias`
+  if (s.tipo === "horas" && s.hora_inicio && s.hora_fim) return `${vaga} · ${formatarIntervalo(s.hora_inicio, s.hora_fim)}`
+  return vaga
+}
+
+// Primeira parte da planilha: GAMI PRO sem recibo (linha 2), casos fora com recibo e a prévia dos sócios.
+// Devolve também os totais que entram no faturamento: 100% dos casos fora (R122) e as custas (R124)
+function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void) {
+  const { socios } = bm
+  const escalado = linhasCasosFora(
+    bm.casosForaRecibo.filter((c) => c.escalado),
+    socios,
+    { titulo: "Casos fora com recibo — escalado", subtitulo: "Valor integral; custas de 50%", medico: 0.5, custas: 0.5, chave: "escalado" },
   )
-  const link = document.createElement("a")
-  link.href = url
-  link.download = `BM Financeiro - ${rotuloMes}.xlsx`
-  link.click()
-  URL.revokeObjectURL(url)
+  const naoEscalado = linhasCasosFora(
+    bm.casosForaRecibo.filter((c) => !c.escalado),
+    socios,
+    { titulo: "Casos fora com recibo — não escalado", subtitulo: "Valor integral; custas de 20%", medico: 0.8, custas: 0.2, chave: "nao-escalado" },
+  )
+  const gamiPro: PorSocio = Object.fromEntries(
+    socios.filter((s) => fin.socios[s.id]?.gami_pro_sem_recibo != null).map((s) => [s.id, fin.socios[s.id].gami_pro_sem_recibo!]),
+  )
+  const custas = somar([escalado.custas, naoEscalado.custas], socios)
+
+  const linhas: LinhaGrade[] = [
+    { tipo: "siglas" },
+    {
+      tipo: "valores",
+      chave: "gami-pro",
+      rotulo: "GAMI PRO sem recibo",
+      valores: gamiPro,
+      formato: "dinheiro",
+      editar: editarSocio && ((id, valor) => editarSocio(id, { gami_pro_sem_recibo: valor })),
+    },
+    ...escalado.linhas,
+    ...naoEscalado.linhas,
+    {
+      tipo: "valores",
+      chave: "previa",
+      rotulo: "D. Prévia sócios",
+      detalhe: "GAMI PRO sem recibo + custas dos casos fora",
+      valores: somar([gamiPro, custas], socios),
+      formato: "dinheiro",
+      destaque: "total",
+    },
+  ]
+  return {
+    linhas,
+    casosForaRecibo100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
+    custasCasosFora: somarTudo(custas),
+  }
+}
+
+// Bloco de pontos (linhas 132 a 174): valor da escala × fator, substituições, ajustes, TOTAL,
+// e com o financeiro o valor do ponto e a previsão de cada sócio
+function montarPontos(
+  bm: Bm,
+  fin: Financeiro,
+  valorParaDistribuir: number,
+  editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void,
+): LinhaGrade[] {
+  const { socios } = bm
+  const fator = (id: string) => fin.socios[id]?.fator_correcao ?? 1
+  const porSocio = (valor: (s: Socio) => number): PorSocio => Object.fromEntries(socios.map((s) => [s.id, valor(s)]))
+  const somaDoTipo = (tipo: TipoAjuste) =>
+    somar(bm.ajustes.filter((a) => a.tipo === tipo).map((a) => ({ [a.medico.id]: a.pontos })), socios)
+
+  const valor = porSocio((s) => s.valor_escala)
+  const corrigido = multiplicar(valor, fator)
+  const outros = bm.ajustes.filter((a) => a.tipo === "outro")
+  const administrativo = somaDoTipo("administrativo")
+  const reuniao = somaDoTipo("reuniao")
+  const totSubstituido = multiplicar(
+    somar([...bm.substituicoes.map((s) => s.pontos), administrativo, reuniao, ...outros.map((a) => ({ [a.medico.id]: a.pontos }))], socios),
+    fator,
+  )
+  const total = somar([corrigido, totSubstituido], socios)
+  const pontosDistribuidos = somarTudo(total)
+  const valorDoPonto = pontosDistribuidos > 0 ? valorParaDistribuir / pontosDistribuidos : 0
+
+  return [
+    { tipo: "secao", titulo: "Pontos" },
+    { tipo: "siglas" },
+    { tipo: "valores", chave: "valor", rotulo: "Valor", detalhe: "Pontos da escala", valores: valor, formato: "pontos", destaque: "subtotal" },
+    {
+      tipo: "valores",
+      chave: "fator",
+      rotulo: "Fator de correção",
+      valores: porSocio((s) => fator(s.id)),
+      formato: "fator",
+      editar: editarSocio && ((id, v) => v != null && v > 0 && editarSocio(id, { fator_correcao: v })),
+    },
+    { tipo: "valores", chave: "corrigido", rotulo: "Valor corrigido", valores: corrigido, formato: "pontos", destaque: "subtotal" },
+    ...bm.substituicoes.map(
+      (s): LinhaGrade => ({
+        tipo: "valores",
+        chave: `troca-${s.id}`,
+        rotulo: `Substituído ${rotuloSubstituicao(s)}`,
+        detalhe: detalheSubstituicao(s),
+        valores: s.pontos,
+        formato: "pontos",
+      }),
+    ),
+    { tipo: "valores", chave: "administrativo", rotulo: "Administrativo", valores: administrativo, formato: "pontos" },
+    { tipo: "valores", chave: "reuniao", rotulo: "Reunião", valores: reuniao, formato: "pontos" },
+    ...outros.map(
+      (a): LinhaGrade => ({
+        tipo: "valores",
+        chave: `ajuste-${a.id}`,
+        rotulo: `Ajuste: ${a.motivo}`,
+        valores: { [a.medico.id]: a.pontos },
+        formato: "pontos",
+      }),
+    ),
+    { tipo: "valores", chave: "tot-substituido", rotulo: "Tot. substituído", valores: totSubstituido, formato: "pontos", destaque: "subtotal" },
+    { tipo: "valores", chave: "total", rotulo: "TOTAL", valores: total, formato: "pontos", destaque: "total" },
+    { tipo: "valores", chave: "distribuidos", rotulo: "Pontos distribuídos", valores: {}, formato: "pontos", unico: pontosDistribuidos },
+    {
+      tipo: "valores",
+      chave: "valor-ponto",
+      rotulo: "Valor do ponto",
+      detalhe: "Valor para distribuir ÷ pontos distribuídos",
+      valores: {},
+      formato: "valorPonto",
+      unico: valorDoPonto,
+    },
+    {
+      tipo: "valores",
+      chave: "previsao",
+      rotulo: "Previsão",
+      detalhe: "TOTAL × valor do ponto",
+      valores: multiplicar(total, valorDoPonto),
+      formato: "dinheiro",
+      destaque: "total",
+    },
+  ]
+}
+
+function formatarNumero(valor: number, formato: Formato) {
+  if (formato === "dinheiro") return formatarDinheiro(valor)
+  if (formato === "valorPonto") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (formato === "fator") return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  return formatarPontos(valor)
+}
+
+// A grade no formato da planilha: os sócios em colunas, pela sigla, e uma coluna de total no fim.
+// A primeira coluna fica fixa ao rolar para o lado
+function GradeBm({ socios, linhas, loading }: { socios: Socio[]; linhas: LinhaGrade[]; loading: boolean }) {
+  const colunas = socios.length + 2
+  const fixa = "sticky left-0 z-10"
+
+  return (
+    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+      <table className="text-sm border-collapse min-w-full">
+        <tbody>
+          {linhas.map((linha, i) => {
+            if (linha.tipo === "secao") {
+              return (
+                <tr key={`secao-${i}`} className="border-t-2 border-gray-200">
+                  <td colSpan={colunas} className="px-0 pt-4 pb-1">
+                    <div className={`${fixa} inline-block px-4 bg-white`}>
+                      <p className="text-xs font-bold text-brand-800 uppercase tracking-wide">{linha.titulo}</p>
+                      {linha.subtitulo && <p className="text-xs text-gray-400">{linha.subtitulo}</p>}
+                    </div>
+                  </td>
+                </tr>
+              )
+            }
+            if (linha.tipo === "siglas") {
+              return (
+                <tr key={`siglas-${i}`} className="border-b border-gray-200 bg-gray-50">
+                  <th className={`${fixa} bg-gray-50 px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase min-w-[9rem] sm:min-w-[14rem]`}>
+                    {i === 0 ? "Sócio" : ""}
+                  </th>
+                  {socios.map((s) => (
+                    <th key={s.id} className="px-2 py-2 min-w-[4.5rem]" title={s.nome ?? s.email ?? ""}>
+                      <div className="flex justify-end">
+                        <SiglaBadge sigla={s.sigla} size="sm" />
+                      </div>
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">Total</th>
+                </tr>
+              )
+            }
+            if (linha.tipo === "vazia") {
+              return (
+                <tr key={`vazia-${i}`}>
+                  <td className={`${fixa} bg-white px-4 py-1.5 text-xs text-gray-400`}>{linha.texto}</td>
+                  <td colSpan={colunas - 1} />
+                </tr>
+              )
+            }
+
+            const calculada = Boolean(linha.destaque)
+            const fundo = linha.destaque === "total" ? "bg-brand-50" : linha.editar ? "bg-amber-50/30" : "bg-white"
+            const peso = linha.destaque || linha.unico !== undefined ? "font-semibold" : ""
+            const totalLinha = linha.unico ?? arredondar(socios.reduce((t, s) => t + (linha.valores[s.id] ?? 0), 0))
+            const celula = (valor: number | undefined) => {
+              if (valor === undefined || (valor === 0 && !calculada && linha.unico === undefined)) return ""
+              return formatarNumero(valor, linha.formato)
+            }
+            // Zero das linhas calculadas apagado, negativo em vermelho
+            const cor = (valor: number | undefined) =>
+              valor === 0 ? "text-gray-300" : valor !== undefined && valor < 0 ? "text-red-600" : linha.destaque ? "text-gray-800" : "text-gray-700"
+
+            return (
+              <tr key={linha.chave} className={`border-b border-gray-100 ${fundo}`}>
+                <td className={`${fixa} ${fundo === "bg-amber-50/30" ? "bg-white" : fundo} px-3 sm:px-4 py-1.5 max-w-[9rem] sm:max-w-[16rem]`}>
+                  <p className={`truncate ${peso} ${linha.destaque ? "text-gray-800" : "text-gray-700"}`} title={linha.rotulo}>
+                    {linha.rotulo}
+                  </p>
+                  {linha.detalhe && (
+                    <p className="text-xs text-gray-400 truncate" title={linha.detalhe}>
+                      {linha.detalhe}
+                    </p>
+                  )}
+                </td>
+                {socios.map((s) =>
+                  linha.editar ? (
+                    <td key={s.id} className="px-1 py-1 min-w-[6.5rem]">
+                      <CampoNumero
+                        valor={linha.valores[s.id] ?? null}
+                        onChange={(v) => linha.editar!(s.id, v)}
+                        casas={linha.formato === "fator" ? 4 : 2}
+                        ariaLabel={`${linha.rotulo} de ${s.sigla ?? s.nome ?? ""}`}
+                      />
+                    </td>
+                  ) : (
+                    <td key={s.id} className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${peso} ${cor(linha.valores[s.id])}`}>
+                      {linha.unico === undefined ? celula(linha.valores[s.id]) : ""}
+                    </td>
+                  ),
+                )}
+                <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap font-semibold ${cor(totalLinha)}`}>
+                  {linha.formato === "fator" ? "" : celula(totalLinha)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Faturamento do mês (T2, U2 e V2 da planilha) e o que vem dos sócios e dos casos fora
+function CardFaturamento({
+  fin,
+  resultado,
+  editar,
+}: {
+  fin: Financeiro
+  resultado: ResultadoFinanceiro
+  editar?: (campo: CampoMes, valor: number | null) => void
+}) {
+  const campos: { campo: CampoMes; rotulo: string; detalhe: string }[] = [
+    { campo: "faturamento_pmp", rotulo: "Faturamento PMP", detalhe: "Entra no rateio" },
+    { campo: "gami_total", rotulo: "GAMI total (na PRO)", detalhe: "Entra no rateio" },
+    { campo: "recibos_gami", rotulo: "Recibos GAMI emitidos", detalhe: "Healthchess; base dos impostos da GAMI" },
+  ]
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-4">
+      <h2 className="font-semibold text-gray-800 mb-3">Faturamento do mês</h2>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {campos.map((c) => (
+          <div key={c.campo}>
+            <p className="text-sm font-medium text-gray-700">{c.rotulo}</p>
+            {editar ? (
+              <div className="mt-1 max-w-[12rem]">
+                <CampoNumero valor={fin[c.campo]} onChange={(v) => editar(c.campo, v)} ariaLabel={c.rotulo} placeholder="0,00" />
+              </div>
+            ) : (
+              <p className="mt-1 text-lg font-semibold text-gray-800 tabular-nums">{fin[c.campo] == null ? "—" : formatarDinheiro(fin[c.campo])}</p>
+            )}
+            <p className="text-xs text-gray-400 mt-0.5">{c.detalhe}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-gray-500 mt-3">
+        GAMI PRO sem recibo (soma dos sócios): <strong className="tabular-nums">{formatarDinheiro(resultado.gamiProSemRecibo)}</strong> · Casos fora
+        com recibo (100%): <strong className="tabular-nums">{formatarDinheiro(resultado.casosForaRecibo100)}</strong>
+      </p>
+    </section>
+  )
+}
+
+// Rateio (N122 a R128 da planilha): faturamento geral − despesas, × 0,63 = valor para distribuir
+function CardRateio({ fin, resultado }: { fin: Financeiro; resultado: ResultadoFinanceiro }) {
+  const pct = (v: number) =>
+    resultado.faturamentoGeral > 0 ? `${((v / resultado.faturamentoGeral) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : ""
+  const linhas: { rotulo: string; valor: number; pct?: string; destaque?: boolean; sinal?: string }[] = [
+    { rotulo: "Faturamento GAMI na PRO", valor: fin.gami_total ?? 0, pct: pct(fin.gami_total ?? 0) },
+    { rotulo: "Casos fora (custas distribuídas)", valor: resultado.custasCasosFora, pct: pct(resultado.custasCasosFora) },
+    { rotulo: "Faturamento PMP", valor: fin.faturamento_pmp ?? 0, pct: pct(fin.faturamento_pmp ?? 0) },
+    { rotulo: "Faturamento geral", valor: resultado.faturamentoGeral, destaque: true },
+    { rotulo: "Despesas PMP", valor: resultado.totalDespesas.pmp, sinal: "−" },
+    { rotulo: "Despesas GAMI", valor: resultado.totalDespesas.gami, sinal: "−" },
+  ]
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-4">
+      <h2 className="font-semibold text-gray-800 mb-3">Rateio</h2>
+      <table className="w-full text-sm">
+        <tbody>
+          {linhas.map((l) => (
+            <tr key={l.rotulo} className={l.destaque ? "border-t border-gray-200 font-semibold text-gray-800" : "text-gray-700"}>
+              <td className="py-1">
+                {l.sinal && <span className="text-gray-400 mr-1">{l.sinal}</span>}
+                {l.rotulo}
+              </td>
+              <td className="py-1 text-right text-xs text-gray-400 w-16">{l.pct}</td>
+              <td className="py-1 text-right tabular-nums w-36">{formatarDinheiro(l.valor)}</td>
+            </tr>
+          ))}
+          <tr className="text-gray-700">
+            <td className="py-1">
+              <span className="text-gray-400 mr-1">×</span>Fator de distribuição
+            </td>
+            <td />
+            <td className="py-1 text-right tabular-nums">{FATOR_DISTRIBUICAO.toLocaleString("pt-BR")}</td>
+          </tr>
+          <tr className="border-t border-gray-200 font-semibold text-gray-900 bg-brand-50">
+            <td className="py-2 pl-2">Valor para distribuir</td>
+            <td />
+            <td className={`py-2 pr-2 text-right tabular-nums ${resultado.valorParaDistribuir < 0 ? "text-red-600" : ""}`}>
+              {formatarDinheiro(resultado.valorParaDistribuir)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  )
 }
 
 const MESES_ABREVIADOS =["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
@@ -328,35 +635,39 @@ export default function BmFinanceiroPage() {
     const hoje = new Date()
     return new Date(hoje.getFullYear(), hoje.getMonth(), 1)
   })
-  const [aba, setAba] = useState<Aba>("plantonista")
-  const [busca, setBusca] = useState("")
-  const [resumo, setResumo] = useState<Resumo | null>(null)
+  const [bm, setBm] = useState<Bm | null>(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
   const [autorizado, setAutorizado] = useState(false)
   const [exportando, setExportando] = useState(false)
-  // Só quem tem a flag admin dá e tira pontos (o backend confere de novo)
-  const [podeAjustar, setPodeAjustar] = useState(false)
+  // Só quem tem a flag bm_access edita o financeiro e os ajustes (o backend confere de novo)
+  const [podeEditar, setPodeEditar] = useState(false)
   // undefined: fechado; null: novo ajuste; um ajuste: editando ele
   const [ajusteEmEdicao, setAjusteEmEdicao] = useState<AjusteEditavel | null | undefined>(undefined)
   const [confirmacao, setConfirmacao] = useState<Confirmacao | null>(null)
-  // Muda depois de lançar, editar ou excluir um ajuste, para buscar o BM de novo
+  // Muda depois de salvar ou de mexer em ajustes e na lista de despesas, para buscar o BM de novo
   const [versao, setVersao] = useState(0)
+  // O que foi digitado e ainda não foi salvo (no formato do PUT); a tela já mostra as contas com isso
+  const [edicoes, setEdicoes] = useState<Edicoes>(edicoesVazias)
+  const [salvando, setSalvando] = useState(false)
+  const [copiando, setCopiando] = useState(false)
 
   useEffect(() => {
     if (!localStorage.getItem("token")) {
       router.push("/login")
       return
     }
-    if (!lerRoles().some((r) => ROLES_BM_FINANCEIRO.includes(r))) {
+    const roles = lerRoles()
+    if (!roles.some((r) => ROLES_BM_FINANCEIRO.includes(r))) {
       router.push("/dashboard")
       return
     }
     setAutorizado(true)
-    setPodeAjustar(lerRoles().includes("admin"))
+    setPodeEditar(roles.includes("bm_access"))
   }, [router])
 
   const mes = paraChaveMes(mesReferencia)
+  const alterado = temEdicoes(edicoes)
 
   useEffect(() => {
     const token = localStorage.getItem("token")
@@ -369,30 +680,176 @@ export default function BmFinanceiroPage() {
       .then(async (res) => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar o BM Financeiro.")
-        setResumo(data)
+        setBm(data)
         setError("")
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [autorizado, mes, versao])
 
-  function mudarMes(delta: number) {
-    setMesReferencia((atual) => new Date(atual.getFullYear(), atual.getMonth() + delta, 1))
+  // Sair da página com alterações não salvas: o navegador pergunta antes
+  useEffect(() => {
+    if (!alterado) return
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener("beforeunload", avisar)
+    return () => window.removeEventListener("beforeunload", avisar)
+  }, [alterado])
+
+  const recarregar = () => setVersao((v) => v + 1)
+
+  function irParaMes(novo: Date) {
+    const trocar = () => {
+      setEdicoes(edicoesVazias())
+      setMesReferencia(novo)
+    }
+    if (!alterado) return trocar()
+    setConfirmacao({
+      titulo: "Descartar alterações?",
+      mensagem: "As alterações deste mês ainda não foram salvas e serão perdidas.",
+      rotuloConfirmar: "Descartar e trocar de mês",
+      perigo: true,
+      acao: async () => trocar(),
+    })
   }
 
+  function mudarMes(delta: number) {
+    irParaMes(new Date(mesReferencia.getFullYear(), mesReferencia.getMonth() + delta, 1))
+  }
+
+  // Edições: o valor igual ao gravado sai da lista, para "Salvar" só aparecer quando algo mudou de verdade
+  function editarMes(campo: CampoMes, valor: number | null) {
+    setEdicoes((e) => {
+      const mesEditado = { ...e.mes, [campo]: valor }
+      if (bm && bm.financeiro[campo] === valor) delete mesEditado[campo]
+      return { ...e, mes: mesEditado }
+    })
+  }
+
+  function editarSocio(id: string, campos: Partial<SocioFinanceiro>) {
+    setEdicoes((e) => {
+      const gravado: SocioFinanceiro = { gami_pro_sem_recibo: null, fator_correcao: 1, ...bm?.financeiro.socios[id] }
+      const socio: Partial<SocioFinanceiro> = { ...e.socios[id], ...campos }
+      for (const campo of Object.keys(socio) as (keyof SocioFinanceiro)[]) if (socio[campo] === gravado[campo]) delete socio[campo]
+      const socios = { ...e.socios, [id]: socio }
+      if (Object.keys(socio).length === 0) delete socios[id]
+      return { ...e, socios }
+    })
+  }
+
+  function editarDespesa(id: string, campos: Partial<Pick<Despesa, "banco" | "data_pago" | "valor">>) {
+    setEdicoes((e) => {
+      const gravada = bm?.financeiro.despesas.find((d) => d.id === id)
+      const despesa = { ...e.despesas[id], ...campos }
+      for (const campo of Object.keys(despesa) as (keyof typeof despesa)[]) if (gravada && despesa[campo] === gravada[campo]) delete despesa[campo]
+      const despesas = { ...e.despesas, [id]: despesa }
+      if (Object.keys(despesa).length === 0) delete despesas[id]
+      return { ...e, despesas }
+    })
+  }
+
+  async function salvar() {
+    setSalvando(true)
+    try {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/financeiro?mes=${mes}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
+        body: JSON.stringify(edicoes),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? "Não foi possível salvar.")
+      }
+      setEdicoes(edicoesVazias())
+      setError("")
+      recarregar()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível salvar.")
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  // Traz o valor (e o banco) de cada despesa do mês anterior para as que estão vazias neste mês. Fica como
+  // edição: só grava ao salvar
+  async function copiarMesAnterior() {
+    if (!bm) return
+    setCopiando(true)
+    try {
+      const anterior = paraChaveMes(new Date(mesReferencia.getFullYear(), mesReferencia.getMonth() - 1, 1))
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro?mes=${anterior}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível buscar o mês anterior.")
+      const atuais = aplicarEdicoes(bm.financeiro, edicoes).despesas
+      let copiadas = 0
+      for (const d of (data as Bm).financeiro.despesas) {
+        const atual = atuais.find((a) => a.id === d.id)
+        if (!atual || atual.calculo || atual.valor != null || d.valor == null) continue
+        editarDespesa(d.id, { valor: d.valor, ...(atual.banco ? {} : { banco: d.banco }) })
+        copiadas++
+      }
+      setError(copiadas === 0 ? "O mês anterior não tem valores para copiar nas despesas vazias." : "")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível buscar o mês anterior.")
+    } finally {
+      setCopiando(false)
+    }
+  }
+
+  // Lista de despesas (incluir, renomear, remover): grava na hora e recarrega, sem perder o que foi digitado
+  async function chamarItens(caminho: string, metodo: "POST" | "PATCH", body: object) {
+    const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/despesa-itens${caminho}`, {
+      method: metodo,
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setError(data.error ?? "Não foi possível alterar a lista de despesas.")
+      return
+    }
+    recarregar()
+  }
+
+  function pedirRemocaoDespesa(despesa: Despesa) {
+    setConfirmacao({
+      titulo: "Remover despesa",
+      mensagem: (
+        <>
+          Remover <strong>{despesa.nome}</strong> da lista? Ela some dos meses sem valor nela; os meses que já têm valor continuam
+          mostrando.
+        </>
+      ),
+      rotuloConfirmar: "Remover",
+      perigo: true,
+      acao: () => chamarItens(`/${despesa.id}`, "PATCH", { ativo: false }),
+    })
+  }
+
+  // O backend preenche o modelo de Excel do cliente com os dados do mês ("BM OUT 26.xlsx")
   async function exportar() {
-    if (!resumo) return
     setExportando(true)
     try {
-      await exportarExcel(resumo, mesReferencia)
-    } catch {
-      setError("Não foi possível gerar o arquivo Excel.")
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/bm-financeiro/exportar?mes=${mes}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? "Não foi possível gerar o arquivo Excel.")
+      }
+      const url = URL.createObjectURL(await res.blob())
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `BM ${MESES_ABREVIADOS[mesReferencia.getMonth()].toUpperCase()} ${String(mesReferencia.getFullYear()).slice(2)}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível gerar o arquivo Excel.")
     } finally {
       setExportando(false)
     }
   }
-
-  const recarregar = () => setVersao((v) => v + 1)
 
   function pedirExclusao(ajuste: Ajuste) {
     setConfirmacao({
@@ -420,112 +877,139 @@ export default function BmFinanceiroPage() {
     })
   }
 
-  const termo = normalizar(busca.trim())
-  const plantonistas = (resumo?.plantonistas ?? []).filter((l) => correspondeBusca(l, termo))
-  const socios = (resumo?.socios ?? []).filter((l) => correspondeBusca(l, termo))
-  const casosFora = (resumo?.casosFora ?? []).filter((c) => anestesistasDe(c).some((a) => correspondeBusca(a, termo)))
-  const ajustes = (resumo?.ajustes ?? []).filter((a) => correspondeBusca(a.medico, termo))
-  const historico = (resumo?.historico ?? []).filter((h) => correspondeBusca(h.medico, termo))
   const rotuloMes = mesReferencia.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
 
+  // As contas da planilha, refeitas a cada valor digitado
+  const fin = bm ? aplicarEdicoes(bm.financeiro, edicoes) : null
+  const casosFora = bm && fin ? montarCasosFora(bm, fin, podeEditar ? editarSocio : undefined) : null
+  const resultado =
+    bm && fin && casosFora
+      ? calcularFinanceiro(fin, {
+          casosForaRecibo100: casosFora.casosForaRecibo100,
+          custasCasosFora: casosFora.custasCasosFora,
+          plantonistas: bm.plantonistas,
+        })
+      : null
+  const pontos = bm && fin && resultado ? montarPontos(bm, fin, resultado.valorParaDistribuir, podeEditar ? editarSocio : undefined) : null
+
   return (
-    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+    <main className={`max-w-[96rem] mx-auto px-4 sm:px-6 py-8 sm:py-12 ${alterado ? "pb-28" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <h1 className="text-xl font-bold text-gray-800">BM Financeiro</h1>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-            {(
-              [
-                { valor: "plantonista", rotulo: "Plantonista" },
-                { valor: "socio", rotulo: "Sócio" },
-                { valor: "casos_fora", rotulo: "Casos fora" },
-              ] as const
-            ).map((opcao) => (
-              <button
-                key={opcao.valor}
-                type="button"
-                onClick={() => setAba(opcao.valor)}
-                className={`text-xs font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
-                  aba === opcao.valor ? "bg-white text-brand-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {opcao.rotulo}
-              </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold text-gray-800">BM Financeiro</h1>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => mudarMes(-1)}
+              aria-label="Mês anterior"
+              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <SeletorMes valor={mesReferencia} onChange={irParaMes} />
+            <button
+              type="button"
+              onClick={() => mudarMes(1)}
+              aria-label="Próximo mês"
+              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={exportar}
-            disabled={!resumo || loading || exportando}
-            className="flex items-center gap-2 bg-brand-700 hover:bg-brand-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            {exportando ? "Exportando..." : "Exportar Excel"}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => mudarMes(-1)}
-            aria-label="Mês anterior"
-            className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-          <SeletorMes valor={mesReferencia} onChange={setMesReferencia} />
-          <button
-            type="button"
-            onClick={() => mudarMes(1)}
-            aria-label="Próximo mês"
-            className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
         </div>
 
-        <input
-          type="search"
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar médico por nome, e-mail ou sigla"
-          className="w-full sm:w-72 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent transition"
-        />
+        <button
+          type="button"
+          onClick={exportar}
+          disabled={!bm || loading || exportando || alterado}
+          title={alterado ? "Salve as alterações antes de exportar" : undefined}
+          className="flex items-center gap-2 bg-brand-700 hover:bg-brand-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          {exportando ? "Exportando..." : "Exportar Excel"}
+        </button>
       </div>
 
       {error && (
         <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-6">{error}</p>
       )}
 
-      {aba === "casos_fora" ? (
-        <TabelaCasosFora casos={casosFora} loading={loading} busca={termo ? busca.trim() : ""} />
-      ) : aba === "plantonista" ? (
-        <TabelaPlantonistasPorCategoria linhas={plantonistas} loading={loading} busca={termo ? busca.trim() : ""} />
-      ) : (
+      {bm && fin && casosFora && resultado && pontos && (
         <div className="space-y-6">
-          <TabelaSocios linhas={socios} loading={loading} busca={termo ? busca.trim() : ""} />
+          <CardFaturamento fin={fin} resultado={resultado} editar={podeEditar ? editarMes : undefined} />
+          {bm.socios.length === 0 ? (
+            <p className="bg-white rounded-xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
+              Nenhum sócio cadastrado.
+            </p>
+          ) : (
+            <GradeBm socios={bm.socios} linhas={casosFora.linhas} loading={loading} />
+          )}
+          <DespesasBm
+            despesas={fin.despesas}
+            resultado={resultado}
+            podeEditar={podeEditar}
+            onEditar={editarDespesa}
+            onAdicionar={(empresa: Empresa, nome: string) => chamarItens("", "POST", { empresa, nome })}
+            onRenomear={(despesa, nome) => chamarItens(`/${despesa.id}`, "PATCH", { nome })}
+            onRemover={pedirRemocaoDespesa}
+            onCopiarMesAnterior={copiarMesAnterior}
+            copiando={copiando}
+          />
+          <CardRateio fin={fin} resultado={resultado} />
+          {bm.socios.length > 0 && <GradeBm socios={bm.socios} linhas={pontos} loading={loading} />}
           <SecaoAjustes
-            ajustes={ajustes}
-            historico={historico}
+            ajustes={bm.ajustes}
+            historico={bm.historico}
             loading={loading}
-            busca={termo ? busca.trim() : ""}
-            podeAjustar={podeAjustar}
+            podeAjustar={podeEditar}
             onNovo={() => setAjusteEmEdicao(null)}
             onEditar={(a) => setAjusteEmEdicao(a)}
             onExcluir={pedirExclusao}
           />
+          <SecaoPlantonistas
+            linhas={bm.plantonistas}
+            fin={fin}
+            resultado={resultado}
+            loading={loading}
+            editar={podeEditar ? editarMes : undefined}
+          />
+          <HistoricoFinanceiro eventos={bm.financeiro.historico} />
+        </div>
+      )}
+
+      {alterado && podeEditar && (
+        <div className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+          <div className="max-w-[96rem] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-700">
+              <strong>Alterações não salvas</strong> em {rotuloMes}. As contas acima já mostram os valores novos.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setEdicoes(edicoesVazias())}
+                disabled={salvando}
+                className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60"
+              >
+                Descartar
+              </button>
+              <button
+                type="button"
+                onClick={salvar}
+                disabled={salvando}
+                className="bg-brand-700 hover:bg-brand-800 text-white font-semibold px-5 py-2 rounded-lg text-sm disabled:opacity-60"
+              >
+                {salvando ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -543,8 +1027,12 @@ export default function BmFinanceiroPage() {
   )
 }
 
-function formatarData(data: string) {
-  return new Date(`${data}T00:00:00`).toLocaleDateString("pt-BR")
+function lerRoles(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem("roles") ?? "[]")
+  } catch {
+    return []
+  }
 }
 
 function formatarDataHora(iso: string) {
@@ -575,120 +1063,70 @@ function ValorAjuste({ pontos, className = "" }: { pontos: number; className?: s
   )
 }
 
-// Sócios: pontos dos plantões (vaga, troca por horas, férias e congresso já calculados) mais os ajustes manuais
-function TabelaSocios({ linhas, loading, busca }: { linhas: LinhaSocio[]; loading: boolean; busca: string }) {
-  const somar = (valor: (l: LinhaSocio) => number) => linhas.reduce((s, l) => s + valor(l), 0)
-
-  return (
-    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-            <th className="px-4 py-3">Médico</th>
-            <th className="px-3 py-3 text-right whitespace-nowrap hidden sm:table-cell">Plantões</th>
-            <th className="px-3 py-3 text-right">Pontos dos plantões</th>
-            <th className="px-3 py-3 text-right">Ajustes</th>
-            <th className="px-4 py-3 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((l) => (
-            <tr key={l.id} className="border-b border-gray-100 last:border-0">
-              <td className="px-4 py-3 min-w-[12rem]">
-                <div className="flex items-center gap-3">
-                  <SiglaBadge sigla={l.sigla} />
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
-                    <p className="text-gray-400 text-xs truncate">{l.email}</p>
-                  </div>
-                </div>
-              </td>
-              <td className="px-3 py-3 text-right text-gray-700 tabular-nums hidden sm:table-cell">{l.plantoes}</td>
-              <td className="px-3 py-3 text-right text-gray-700 tabular-nums">{formatarPontos(l.pontos_plantoes)}</td>
-              <td className="px-3 py-3 text-right">
-                <ValorAjuste pontos={l.pontos_ajustes} />
-              </td>
-              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
-                {formatarPontos(l.pontos)} pts
-              </td>
-            </tr>
-          ))}
-
-          {!loading && linhas.length === 0 && (
-            <tr>
-              <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                {busca ? `Nenhum médico encontrado para "${busca}".` : "Nenhum sócio com plantão ou ajuste neste mês."}
-              </td>
-            </tr>
-          )}
-        </tbody>
-        {linhas.length > 0 && (
-          <tfoot>
-            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
-              <td className="px-4 py-3">Total</td>
-              <td className="px-3 py-3 text-right tabular-nums hidden sm:table-cell">{somar((l) => l.plantoes)}</td>
-              <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.pontos_plantoes))}</td>
-              <td className="px-3 py-3 text-right">
-                <ValorAjuste pontos={Math.round(somar((l) => l.pontos_ajustes) * 100) / 100} />
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarPontos(somar((l) => l.pontos))} pts</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
-  )
-}
-
 // Frase do histórico: quem fez o quê, e na edição o que mudou
 function DescricaoEvento({ evento }: { evento: EventoHistorico }) {
   const quem = <strong className="font-semibold text-gray-800">{nomeDoPerfil(evento.feito_por)}</strong>
   const medico = <strong className="font-semibold text-gray-800">{nomeDoPerfil(evento.medico)}</strong>
+  const tipo = rotuloTipoAjuste(evento.tipo)
 
   if (evento.acao === "criado") {
     return (
       <>
-        {quem} lançou <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts para {medico}: {evento.motivo}
+        {quem} lançou <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts ({tipo}) para {medico}: {evento.motivo}
       </>
     )
   }
   if (evento.acao === "excluido") {
     return (
       <>
-        {quem} excluiu <ValorAjuste pontos={evento.pontos} className="font-semibold line-through" /> pts de {medico} ({evento.motivo})
+        {quem} excluiu <ValorAjuste pontos={evento.pontos} className="font-semibold line-through" /> pts ({tipo}) de {medico} ({evento.motivo})
       </>
     )
   }
   const { anterior } = evento
+  if (!anterior) {
+    return (
+      <>
+        {quem} editou o ajuste de {medico}: <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts ({tipo}), {evento.motivo}
+      </>
+    )
+  }
+  const mudancas: React.ReactNode[] = []
+  if (anterior.pontos !== evento.pontos) {
+    mudancas.push(
+      <span key="pontos">
+        <ValorAjuste pontos={anterior.pontos} /> → <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts
+      </span>,
+    )
+  }
+  if (anterior.tipo !== evento.tipo) {
+    mudancas.push(<span key="tipo">tipo {rotuloTipoAjuste(anterior.tipo)} → {tipo}</span>)
+  }
+  if (anterior.motivo !== evento.motivo) {
+    mudancas.push(
+      <span key="motivo">
+        motivo &ldquo;{anterior.motivo}&rdquo; → &ldquo;{evento.motivo}&rdquo;
+      </span>,
+    )
+  }
   return (
     <>
       {quem} editou o ajuste de {medico}:{" "}
-      {anterior && anterior.pontos !== evento.pontos && (
-        <>
-          <ValorAjuste pontos={anterior.pontos} /> → <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts
-          {anterior.motivo !== evento.motivo ? "; " : ""}
-        </>
-      )}
-      {anterior && anterior.motivo !== evento.motivo && (
-        <>
-          motivo &ldquo;{anterior.motivo}&rdquo; → &ldquo;{evento.motivo}&rdquo;
-        </>
-      )}
-      {!anterior && (
-        <>
-          <ValorAjuste pontos={evento.pontos} className="font-semibold" /> pts, {evento.motivo}
-        </>
-      )}
+      {mudancas.map((m, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && "; "}
+          {m}
+        </React.Fragment>
+      ))}
     </>
   )
 }
 
-// Ajustes manuais do mês e o histórico deles: todos que veem o BM veem tudo; só o admin lança, edita e exclui
+// Ajustes manuais do mês e o histórico deles: todos que veem o BM veem tudo; só quem tem acesso ao BM lança, edita e exclui
 function SecaoAjustes({
   ajustes,
   historico,
   loading,
-  busca,
   podeAjustar,
   onNovo,
   onEditar,
@@ -697,7 +1135,6 @@ function SecaoAjustes({
   ajustes: Ajuste[]
   historico: EventoHistorico[]
   loading: boolean
-  busca: string
   podeAjustar: boolean
   onNovo: () => void
   onEditar: (ajuste: Ajuste) => void
@@ -708,7 +1145,9 @@ function SecaoAjustes({
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 border-b border-gray-200">
         <div>
           <h2 className="font-semibold text-gray-800">Ajustes de pontos</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Pontos dados ou tirados à mão, com o motivo. Somam ao total do sócio.</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Pontos dados ou tirados à mão, com o motivo. Entram nas linhas Administrativo, Reunião ou como ajuste avulso.
+          </p>
         </div>
         {podeAjustar && (
           <button
@@ -726,7 +1165,12 @@ function SecaoAjustes({
           <li key={a.id} className="flex items-start gap-3 px-4 py-3 border-b border-gray-100 last:border-0">
             <SiglaBadge sigla={a.medico.sigla} />
             <div className="min-w-0 flex-1">
-              <p className="font-medium text-gray-800 truncate">{nomeDoPerfil(a.medico)}</p>
+              <p className="font-medium text-gray-800 truncate">
+                {nomeDoPerfil(a.medico)}
+                <span className="ml-2 text-xs font-semibold text-brand-700 bg-brand-50 rounded px-1.5 py-0.5">
+                  {rotuloTipoAjuste(a.tipo)}
+                </span>
+              </p>
               <p className="text-sm text-gray-700 break-words">{a.motivo}</p>
               <p className="text-xs text-gray-400 mt-0.5">
                 Lançado por {nomeDoPerfil(a.criado_por)} em {formatarDataHora(a.criado_em)}
@@ -750,9 +1194,7 @@ function SecaoAjustes({
         ))}
 
         {!loading && ajustes.length === 0 && (
-          <li className="px-4 py-6 text-center text-sm text-gray-400">
-            {busca ? `Nenhum ajuste encontrado para "${busca}".` : "Nenhum ajuste neste mês."}
-          </li>
+          <li className="px-4 py-6 text-center text-sm text-gray-400">Nenhum ajuste neste mês.</li>
         )}
       </ul>
 
@@ -775,152 +1217,114 @@ function SecaoAjustes({
   )
 }
 
-// Plantonistas: quantos plantões em cada categoria (com fração na troca por horas e no congresso)
-function TabelaPlantonistasPorCategoria({
+// Plantonistas: plantões em cada categoria (com fração na troca por horas e no congresso), o valor de cada
+// categoria no mês e quanto cada um recebe. A soma é a despesa "Plantonistas" da PMP
+function SecaoPlantonistas({
   linhas,
+  fin,
+  resultado,
   loading,
-  busca,
+  editar,
 }: {
   linhas: LinhaPlantonista[]
+  fin: Financeiro
+  resultado: ResultadoFinanceiro
   loading: boolean
-  busca: string
+  editar?: (campo: CampoMes, valor: number | null) => void
 }) {
+  const valores = valoresPlantao(fin)
   const somar = (valor: (l: LinhaPlantonista) => number) => linhas.reduce((s, l) => s + valor(l), 0)
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-            <th className="px-4 py-3">Médico</th>
-            {CATEGORIAS.map((c) => (
-              <th key={c.chave} className="px-3 py-3 text-right">
-                {c.rotulo}
-              </th>
+    <section>
+      <h2 className="font-semibold text-gray-800 mb-1">Plantonistas</h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Plantões do mês por categoria e o valor pago por plantão. O total entra na despesa &ldquo;Plantonistas&rdquo; da PMP.
+      </p>
+      <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+              <th className="px-4 py-3">Médico</th>
+              {CATEGORIAS_PLANTAO.map((c) => (
+                <th key={c.chave} className="px-3 py-3 text-right">
+                  {c.rotulo}
+                </th>
+              ))}
+              <th className="px-3 py-3 text-right">Total</th>
+              <th className="px-4 py-3 text-right">A receber</th>
+            </tr>
+            <tr className="border-b border-gray-200 bg-amber-50/30">
+              <td className="px-4 py-2 text-xs font-semibold text-gray-600">Valor do plantão (R$)</td>
+              {CATEGORIAS_PLANTAO.map((c) => {
+                const herdado = fin[c.campo] == null && fin.valores_plantao_anteriores[c.campo] != null
+                return (
+                  <td key={c.chave} className="px-2 py-1.5 text-right min-w-[7rem]">
+                    {editar ? (
+                      <CampoNumero
+                        valor={fin[c.campo]}
+                        onChange={(v) => editar(c.campo, v)}
+                        ariaLabel={`Valor do plantão ${c.rotulo.toLowerCase()}`}
+                        placeholder={herdado ? formatarDinheiro(fin.valores_plantao_anteriores[c.campo]) : "0,00"}
+                      />
+                    ) : (
+                      <span className="tabular-nums text-gray-700">{valores[c.chave] == null ? "—" : formatarDinheiro(valores[c.chave])}</span>
+                    )}
+                    {herdado && <p className="text-[11px] text-gray-400 mt-0.5">do mês anterior</p>}
+                  </td>
+                )
+              })}
+              <td colSpan={2} />
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.id} className="border-b border-gray-100 last:border-0">
+                <td className="px-4 py-3 min-w-[12rem]">
+                  <div className="flex items-center gap-3">
+                    <SiglaBadge sigla={l.sigla} />
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
+                      <p className="text-gray-400 text-xs truncate">{l.email}</p>
+                    </div>
+                  </div>
+                </td>
+                {CATEGORIAS_PLANTAO.map((c) => (
+                  <td key={c.chave} className="px-3 py-3 text-right text-gray-700 tabular-nums">
+                    {formatarPontos(l.categorias[c.chave])}
+                  </td>
+                ))}
+                <td className="px-3 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
+                <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
+                  {formatarDinheiro(pagamentoPlantonista(l, valores))}
+                </td>
+              </tr>
             ))}
-            <th className="px-4 py-3 text-right">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((l) => (
-            <tr key={l.id} className="border-b border-gray-100 last:border-0">
-              <td className="px-4 py-3 min-w-[12rem]">
-                <div className="flex items-center gap-3">
-                  <SiglaBadge sigla={l.sigla} />
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-800 truncate">{l.nome ?? "—"}</p>
-                    <p className="text-gray-400 text-xs truncate">{l.email}</p>
-                  </div>
-                </div>
-              </td>
-              {CATEGORIAS.map((c) => (
-                <td key={c.chave} className="px-3 py-3 text-right text-gray-700 tabular-nums">
-                  {formatarPontos(l.categorias[c.chave])}
+
+            {!loading && linhas.length === 0 && (
+              <tr>
+                <td colSpan={CATEGORIAS_PLANTAO.length + 3} className="px-4 py-8 text-center text-gray-400">
+                  Nenhum plantonista com plantão neste mês.
                 </td>
-              ))}
-              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
-            </tr>
-          ))}
-
-          {!loading && linhas.length === 0 && (
-            <tr>
-              <td colSpan={CATEGORIAS.length + 2} className="px-4 py-8 text-center text-gray-400">
-                {busca ? `Nenhum médico encontrado para "${busca}".` : "Nenhum plantonista com plantão neste mês."}
-              </td>
-            </tr>
+              </tr>
+            )}
+          </tbody>
+          {linhas.length > 0 && (
+            <tfoot>
+              <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
+                <td className="px-4 py-3">Total</td>
+                {CATEGORIAS_PLANTAO.map((c) => (
+                  <td key={c.chave} className="px-3 py-3 text-right tabular-nums">
+                    {formatarPontos(somar((l) => l.categorias[c.chave]))}
+                  </td>
+                ))}
+                <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
+                <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarDinheiro(resultado.totalPlantonistas)}</td>
+              </tr>
+            </tfoot>
           )}
-        </tbody>
-        {linhas.length > 0 && (
-          <tfoot>
-            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
-              <td className="px-4 py-3">Total</td>
-              {CATEGORIAS.map((c) => (
-                <td key={c.chave} className="px-3 py-3 text-right tabular-nums">
-                  {formatarPontos(somar((l) => l.categorias[c.chave]))}
-                </td>
-              ))}
-              <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
-  )
-}
-
-// Casos fora do mês, um por linha (o detalhe completo vai na planilha)
-function TabelaCasosFora({ casos, loading, busca }: { casos: CasoFora[]; loading: boolean; busca: string }) {
-  const totalValor = casos.reduce((s, c) => s + (c.valor ?? 0), 0)
-
-  return (
-    <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-            <th className="px-4 py-3">Data</th>
-            <th className="px-4 py-3">Anestesista</th>
-            <th className="px-4 py-3 hidden sm:table-cell">Paciente</th>
-            <th className="px-4 py-3 hidden md:table-cell">Hospital</th>
-            <th className="px-4 py-3 hidden md:table-cell">Recibo</th>
-            <th className="px-4 py-3 text-right">Valor</th>
-          </tr>
-        </thead>
-        <tbody>
-          {casos.map((c) => (
-            <tr key={c.id} className="border-b border-gray-100 last:border-0">
-              <td className="px-4 py-3 whitespace-nowrap">
-                <p className="font-medium text-gray-800">{formatarData(c.data)}</p>
-                <p className="text-xs text-gray-500">{c.escalado ? "Escalado" : "Não escalado"}</p>
-              </td>
-              <td className="px-4 py-3 max-w-0 w-full sm:max-w-none sm:w-auto">
-                <div className="flex items-center gap-2">
-                  {/* Siglas sobrepostas, uma por anestesista do caso */}
-                  <div className="flex shrink-0 -space-x-1.5">
-                    {anestesistasDe(c).map((a) => (
-                      <span key={a.id} className="rounded-full ring-2 ring-white">
-                        <SiglaBadge sigla={a.sigla} size="sm" />
-                      </span>
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-gray-800 truncate">{anestesistasDe(c).map((a) => a.nome ?? a.email ?? "—").join(" e ")}</p>
-                    {/* No celular o paciente aparece aqui, já que a coluna fica escondida */}
-                    <p className="text-xs text-gray-500 truncate sm:hidden">{c.paciente_nome}</p>
-                  </div>
-                </div>
-              </td>
-              <td className="px-4 py-3 hidden sm:table-cell max-w-[16rem]">
-                <p className="text-gray-800 truncate">{c.paciente_nome}</p>
-                <p className="text-xs text-gray-500 truncate">{c.cirurgia}</p>
-              </td>
-              <td className="px-4 py-3 hidden md:table-cell text-gray-700">{c.hospital?.nome ?? "—"}</td>
-              <td className="px-4 py-3 hidden md:table-cell text-gray-700">{rotuloRecibo(c.recibo) || "—"}</td>
-              <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">{formatarValor(c.valor)}</td>
-            </tr>
-          ))}
-
-          {!loading && casos.length === 0 && (
-            <tr>
-              <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                {busca ? `Nenhum caso fora encontrado para "${busca}".` : "Nenhum caso fora neste mês."}
-              </td>
-            </tr>
-          )}
-        </tbody>
-        {casos.length > 0 && (
-          <tfoot>
-            <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
-              <td className="px-4 py-3">Total</td>
-              <td className="px-4 py-3">
-                {casos.length} {casos.length === 1 ? "caso" : "casos"}
-              </td>
-              <td className="hidden sm:table-cell" />
-              <td className="hidden md:table-cell" colSpan={2} />
-              <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarValor(totalValor)}</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
+        </table>
+      </div>
+    </section>
   )
 }
