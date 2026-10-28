@@ -284,7 +284,7 @@ exports.gestao = async (req, res) => {
     const comPerfil = linha => ({ ...(perfis.get(linha.id) ?? { id: linha.id }), ...linha })
     const formatarGeral = p => {
       const { plantao_usuarios, ...plantao } = p
-      return { ...plantao, usuarios: formatarVagas(plantao_usuarios, perfis) }
+      return { ...plantao, usuarios: formatarVagas(plantao.data, plantao_usuarios, perfis) }
     }
 
     return res.json({
