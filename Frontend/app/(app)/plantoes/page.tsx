@@ -12,6 +12,8 @@ import PlantaoCalendario, {
   calcularIntervaloVisivel,
 } from "../../../components/PlantaoCalendario";
 import { apiFetch } from "../../../components/sessao";
+import PlantaoExtraModal from "../../../components/PlantaoExtraModal";
+import { PlantaoExtra } from "../../../components/extras";
 import { EVENTO_TROCAS_ATUALIZADAS } from "../../../components/NotificacaoTrocaSino";
 
 export default function PlantoesPage() {
@@ -27,6 +29,9 @@ export default function PlantoesPage() {
     null,
   );
   const [carregouUmaVez, setCarregouUmaVez] = useState(false);
+  const [extras, setExtras] = useState<PlantaoExtra[]>([]);
+  // undefined: fechado; null: novo plantão extra
+  const [extraAberto, setExtraAberto] = useState<PlantaoExtra | null | undefined>(undefined);
 
   const { inicio, fim } = useMemo(
     () => calcularIntervaloVisivel(dataReferencia, visualizacao),
@@ -39,16 +44,19 @@ export default function PlantoesPage() {
 
     setLoading(true);
     const params = new URLSearchParams({ inicio, fim });
-    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok)
-          throw new Error(
-            data.error ?? "Não foi possível carregar os plantões.",
-          );
-        setPlantoes(data);
+    const buscar = async (caminho: string) => {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok)
+        throw new Error(data.error ?? "Não foi possível carregar os plantões.");
+      return data;
+    };
+    Promise.all([buscar("/plantoes"), buscar("/plantoes-extras")])
+      .then(([plantoesDoPeriodo, extrasDoPeriodo]) => {
+        setPlantoes(plantoesDoPeriodo);
+        setExtras(extrasDoPeriodo);
         setError("");
       })
       .catch((err) => setError(err.message))
@@ -89,12 +97,20 @@ export default function PlantoesPage() {
         <h1 className="text-xl font-bold text-gray-800">Plantões</h1>
 
         {podeCriar && (
-          <button
-            onClick={() => setShowModal(true)}
-            className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-          >
-            + Novo plantão
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setExtraAberto(null)}
+              className="shrink-0 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              + Plantão extra
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="shrink-0 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              + Novo plantão
+            </button>
+          </div>
         )}
       </div>
 
@@ -121,6 +137,8 @@ export default function PlantoesPage() {
             onVisualizacaoChange={setVisualizacao}
             onDataReferenciaChange={setDataReferencia}
             onSelectPlantao={setPlantaoSelecionado}
+            extras={extras}
+            onSelectExtra={setExtraAberto}
           />
         </div>
       )}
@@ -129,6 +147,15 @@ export default function PlantoesPage() {
         <NovoPlantaoModal
           onClose={() => setShowModal(false)}
           onCreated={carregarPlantoes}
+        />
+      )}
+
+      {extraAberto !== undefined && (
+        <PlantaoExtraModal
+          extra={extraAberto}
+          podeEditar={podeCriar}
+          onClose={() => setExtraAberto(undefined)}
+          onSaved={carregarPlantoes}
         />
       )}
 

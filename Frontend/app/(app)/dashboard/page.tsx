@@ -10,6 +10,7 @@ import { Turno, descreverPosicao, rotuloTurno } from "../../../components/posico
 import { formatarIntervalo, formatarPontos } from "../../../components/trocaPorHoras"
 import type { Plantao } from "../../../components/PlantaoCalendario"
 import { apiFetch } from "../../../components/sessao"
+import { formatarHorarioExtra } from "../../../components/extras"
 
 const ROLE_LABELS: Record<string, string> = {
   anestesita_socio: "Anestesista Sócio",
@@ -70,9 +71,23 @@ type Resumo = {
     plantonista: {
       plantoes: number
       categorias: { diurno: number; noturno: number; diurno_fds: number; noturno_fds: number }
+      // Horas de plantão extra no mês (o sócio soma os pontos dele em socio.pontos)
+      horas_extra: number
     }
     socio: { plantoes: number; pontos: number }
   }
+  // Meus plantões extras dos próximos dias que ainda não terminaram
+  extras: ExtraResumo[]
+}
+
+type ExtraResumo = {
+  id: string
+  data: string
+  hora_inicio: string
+  hora_fim: string
+  posicao: number | null
+  observacao: string | null
+  emAndamento: boolean
 }
 
 // Mesma lista do backend em routes/dashboard.js
@@ -84,6 +99,7 @@ type PlantaoGeral = Omit<PlantaoResumo, "emAndamento" | "meuPapel">
 
 type Gestao = {
   emAndamento: PlantaoGeral[]
+  extrasEmAndamento: { id: string; data: string; hora_inicio: string; hora_fim: string; medico: Pessoa }[]
   alertas: { problema: string; plantao: PlantaoGeral }[]
   trocasPendentes: { total: number; maisAntiga: Troca | null }
   mes: {
@@ -352,7 +368,9 @@ export default function DashboardPage() {
 
   const proximo = resumo?.proximoPlantao
   const mes = resumo?.meuMes
-  const mostraPlantonista = !!mes && (mes.plantonista.plantoes > 0 || ["anestesita_plantonista", "anestesita_socio_jr"].some((r) => roles.includes(r)))
+  const mostraPlantonista =
+    !!mes &&
+    (mes.plantonista.plantoes > 0 || mes.plantonista.horas_extra > 0 || ["anestesita_plantonista", "anestesita_socio_jr"].some((r) => roles.includes(r)))
   const mostraSocio = !!mes && (mes.socio.plantoes > 0 || roles.includes("anestesita_socio"))
   const rotuloDoMes = (chave: string) =>
     paraDataLocal(`${chave}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
@@ -428,6 +446,12 @@ export default function DashboardPage() {
                           </dd>
                         </div>
                       ))}
+                      {mes!.plantonista.horas_extra > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-gray-500">Extra (horas)</dt>
+                          <dd className="font-semibold text-gray-800 tabular-nums">{formatarPontos(mes!.plantonista.horas_extra)}</dd>
+                        </div>
+                      )}
                     </dl>
                   </div>
                 )}
@@ -478,7 +502,7 @@ export default function DashboardPage() {
 
           {/* 2. Meus próximos 7 dias */}
           <Card titulo="Meus próximos 7 dias">
-            {resumo.agenda.length === 0 ? (
+            {resumo.agenda.length === 0 && resumo.extras.length === 0 ? (
               <Vazio>Nada agendado nos próximos 7 dias.</Vazio>
             ) : (
               <ul className="space-y-1">
@@ -512,6 +536,22 @@ export default function DashboardPage() {
                       </div>
                       {p.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}
                     </button>
+                  </li>
+                ))}
+                {resumo.extras.map((e) => (
+                  <li key={e.id} className="flex items-center gap-3 rounded-lg px-2 py-2 -mx-2">
+                    <div className="w-14 shrink-0">
+                      <p className="text-xs font-semibold text-gray-800 capitalize">{formatarData(e.data).split(",")[0]}</p>
+                      <p className="text-xs text-gray-500">{formatarData(e.data).split(",")[1]?.trim()}</p>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-amber-900 truncate">Plantão extra{e.observacao ? ` · ${e.observacao}` : ""}</p>
+                      <p className="text-xs text-gray-500">
+                        {formatarHorarioExtra(e)}
+                        {e.posicao != null && ` · pontos de ${descreverPosicao(e.data, e.posicao)}`}
+                      </p>
+                    </div>
+                    {e.emAndamento && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" title="Em andamento" />}
                   </li>
                 ))}
               </ul>
@@ -555,10 +595,20 @@ export default function DashboardPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             {/* 6. Agora no hospital */}
             <Card titulo="Agora no hospital">
-              {gestao.emAndamento.length === 0 ? (
+              {gestao.emAndamento.length === 0 && gestao.extrasEmAndamento.length === 0 ? (
                 <Vazio>Nenhum plantão em andamento.</Vazio>
               ) : (
                 <ul className="space-y-3">
+                  {gestao.extrasEmAndamento.map((e) => (
+                    <li key={e.id} className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                      <SiglaBadge sigla={e.medico.sigla ?? null} size="sm" />
+                      <p className="text-sm text-gray-800 truncate">
+                        <span className="font-medium">Plantão extra</span>{" "}
+                        <span className="text-gray-500">· {nomeDe(e.medico)} · {formatarHorarioExtra(e)}</span>
+                      </p>
+                    </li>
+                  ))}
                   {gestao.emAndamento.map((p) => (
                     <li key={`${p.id}-${p.turno}`}>
                       <button type="button" onClick={() => abrirPlantao(p.id)} className="w-full text-left group">

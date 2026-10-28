@@ -10,6 +10,7 @@ const { buscarCargosDosUsuarios, contaComoSocio, contaComoSocioJr } = require('.
 const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes } = require('./ajustesPontos')
 const { buscarFinanceiro } = require('./financeiroBm')
+const { buscarExtras, duracaoDoExtra } = require('./extras')
 const { MES_INICIAL_CONTA_CORRENTE, calcularMes, saldoInicial, mesSeguinte } = require('./calculoBm')
 
 // Ordem das colunas da planilha do cliente (BM DEZ 26.xlsx). Sócio que não está nela vai depois, pela sigla
@@ -24,7 +25,9 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 //   Troca por horas: a fração das horas. Cobertura de férias: só + para quem cobre (o titular continua com a vaga).
 // - casosForaBm: casos fora com valor (GAMI/ADDS, Sem nota fiscal ou sem recibo ainda), com a parte de cada sócio
 //   (dois anestesistas: metade cada).
-// - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
+// - plantonistas: plantões por categoria e horas de plantão extra (a planilha não tem; fica abaixo do BM).
+// - extrasSocios: os plantões extras dos sócios, com os pontos da posição escolhida, proporcionais às horas do
+//   extra (entram no Tot. substituído, como as substituições). Plantonista e sócio Jr contam só as horas.
 // - sociosJr: quantos plantões cada sócio Jr fez em cada vaga, na semana, no sábado e no domingo. Não têm pontos
 //   nem entram na despesa dos plantonistas.
 // - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, valores por sócio) e o
@@ -47,13 +50,14 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     .lte('data', fim)
   if (error) throw error
 
-  const [trocas, cargos, casosFora, afastamentos, { ajustes, historico }, financeiro] = await Promise.all([
+  const [trocas, cargos, casosFora, afastamentos, { ajustes, historico }, financeiro, extras] = await Promise.all([
     buscarTrocasAceitas(plantoes.map(p => p.id)),
     buscarCargosDosUsuarios(),
     listarCasosFora({ inicio, fim }),
     buscarAfastamentosNoPeriodo(plantoes.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)), inicio, fim),
     buscarAjustesDoMes(inicio),
     buscarFinanceiro(mes),
+    buscarExtras({ inicio, fim }),
   ])
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
   const ehSocioJr = id => contaComoSocioJr(cargos.get(id)?.roles)
@@ -62,13 +66,18 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
 
   const socios = new Map()
   const socioDe = id => {
-    if (!socios.has(id)) socios.set(id, { plantoes: 0, pontos_plantoes: 0, substituicoes: 0, pontos_ajustes: 0 })
+    if (!socios.has(id)) socios.set(id, { plantoes: 0, pontos_plantoes: 0, substituicoes: 0, pontos_ajustes: 0, pontos_extras: 0 })
     return socios.get(id)
   }
   for (const [id, c] of cargos) if (c.ativo && contaComoSocio(c.roles)) socioDe(id)
 
   const plantonistas = new Map()
+  const plantonistaDe = id => {
+    if (!plantonistas.has(id)) plantonistas.set(id, { categorias: categoriasZeradas(), horas_extra: 0 })
+    return plantonistas.get(id)
+  }
   const sociosJr = new Map()
+  const horasExtraJr = new Map()
 
   // Cada vaga ocupada (ou o pedaço dela, na troca por horas) conta como um plantão de quem a fez
   for (const plantao of plantoes) {
@@ -81,10 +90,26 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
         sociosJr.set(usuario_id, [...(sociosJr.get(usuario_id) ?? []), { data: plantao.data, posicao, fracao }])
       } else {
         // categorias: quanto de cada plantão ele fez (1, ou a fração na troca por horas e no congresso)
-        const acc = plantonistas.get(usuario_id) ?? { categorias: categoriasZeradas() }
-        acc.categorias[categoriaDaVaga(plantao.data, posicao)] += fracao
-        plantonistas.set(usuario_id, acc)
+        plantonistaDe(usuario_id).categorias[categoriaDaVaga(plantao.data, posicao)] += fracao
       }
+    }
+  }
+
+  // Plantões extras: o sócio recebe os pontos da posição escolhida, proporcionais às horas do extra (6h numa vaga
+  // de 12h = metade); o plantonista e o sócio Jr contam as horas
+  const extrasSocios = []
+  for (const e of extras) {
+    const minutos = duracaoDoExtra(e)
+    if (ehSocio(e.usuario_id)) {
+      const pontos = e.posicao
+        ? duasCasas(pontosDaVaga(e.data, e.posicao) * minutos / duracaoDaVaga(horarioDaVaga({ data: e.data }, e.posicao)))
+        : 0
+      socioDe(e.usuario_id).pontos_extras += pontos
+      extrasSocios.push({ ...extraResumido(e), pontos: { [e.usuario_id]: pontos } })
+    } else if (ehSocioJr(e.usuario_id)) {
+      horasExtraJr.set(e.usuario_id, (horasExtraJr.get(e.usuario_id) ?? 0) + minutos / 60)
+    } else {
+      plantonistaDe(e.usuario_id).horas_extra += minutos / 60
     }
   }
 
@@ -156,17 +181,21 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     acc.pontos_plantoes = duasCasas(acc.pontos_plantoes)
     acc.valor_escala = duasCasas(acc.pontos_plantoes - acc.substituicoes)
     acc.pontos_ajustes = duasCasas(acc.pontos_ajustes)
-    acc.pontos = duasCasas(acc.pontos_plantoes + acc.pontos_ajustes)
+    acc.pontos_extras = duasCasas(acc.pontos_extras)
+    acc.pontos = duasCasas(acc.pontos_plantoes + acc.pontos_ajustes + acc.pontos_extras)
     delete acc.substituicoes
   }
   for (const acc of plantonistas.values()) {
     for (const c of Object.keys(acc.categorias)) acc.categorias[c] = duasCasas(acc.categorias[c])
+    // total: plantões; as horas extras ficam à parte
     acc.total = duasCasas(Object.values(acc.categorias).reduce((s, n) => s + n, 0))
+    acc.horas_extra = duasCasas(acc.horas_extra)
   }
 
   const perfis = await buscarPerfis([
     ...plantonistas.keys(),
     ...sociosJr.keys(),
+    ...horasExtraJr.keys(),
     ...socios.keys(),
     ...substituicoes.flatMap(s => [s.saida, s.entrada]),
     ...ajustes.flatMap(a => [a.criado_por, a.atualizado_por]),
@@ -186,7 +215,8 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     plantonistas: [...plantonistas]
       .map(([id, valores]) => ({ ...resumoDoPerfil(id, perfis), ...valores }))
       .sort((a, b) => b.total - a.total || (a.nome ?? '').localeCompare(b.nome ?? '')),
-    sociosJr: resumirSociosJr(sociosJr, perfis),
+    sociosJr: resumirSociosJr(sociosJr, horasExtraJr, perfis),
+    extrasSocios: extrasSocios.map(e => ({ ...e, medico: resumoDoPerfil(Object.keys(e.pontos)[0], perfis) })),
     // Todos os casos fora do mês, com todos os campos, para a aba extra do Excel
     casosFora: [...casosFora].reverse(),
     ajustes: ajustes.map(({ usuario_id, criado_por, atualizado_por, pontos, ...a }) => ({
@@ -215,6 +245,9 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
   }
 }
 
+// O que o BM mostra de um plantão extra
+const extraResumido = e => ({ id: e.id, data: e.data, hora_inicio: e.hora_inicio, hora_fim: e.hora_fim, posicao: e.posicao, observacao: e.observacao })
+
 const DIAS_DA_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
 const TIPOS_DE_DIA = ['Semana', 'Sábado', 'Domingo']
 const tipoDoDia = diaDaSemana => (diaDaSemana === 6 ? 'Sábado' : diaDaSemana === 0 ? 'Domingo' : 'Semana')
@@ -222,8 +255,8 @@ const tipoDoDia = diaDaSemana => (diaDaSemana === 6 ? 'Sábado' : diaDaSemana ==
 // Sócios Jr do mês, no formato da grade: cada um é uma coluna (socios, com o total de plantões) e cada linha é uma
 // vaga num tipo de dia ("2º" do diurno de sábado), com quantos plantões cada um fez nela. plantoes: um por linha,
 // com a data, para a conferência no Excel. O noturno conta no dia em que começa (o de sexta é de semana); a fração
-// vem da troca por horas e do congresso
-function resumirSociosJr(plantoesPorSocio, perfis) {
+// vem da troca por horas e do congresso. horas_extra: as horas de plantão extra de cada um, à parte do total
+function resumirSociosJr(plantoesPorSocio, horasExtra, perfis) {
   const linhas = new Map()
   const plantoes = []
   for (const [id, doSocio] of plantoesPorSocio) {
@@ -241,8 +274,12 @@ function resumirSociosJr(plantoesPorSocio, perfis) {
     }
   }
   return {
-    socios: [...plantoesPorSocio]
-      .map(([id, doSocio]) => ({ ...resumoDoPerfil(id, perfis), total: duasCasas(doSocio.reduce((s, p) => s + p.fracao, 0)) }))
+    socios: [...new Set([...plantoesPorSocio.keys(), ...horasExtra.keys()])]
+      .map(id => ({
+        ...resumoDoPerfil(id, perfis),
+        total: duasCasas((plantoesPorSocio.get(id) ?? []).reduce((s, p) => s + p.fracao, 0)),
+        horas_extra: duasCasas(horasExtra.get(id) ?? 0),
+      }))
       .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '')),
     // Semana, sábado e domingo; em cada um, na ordem da escala (o diurno antes do noturno)
     linhas: [...linhas.values()]

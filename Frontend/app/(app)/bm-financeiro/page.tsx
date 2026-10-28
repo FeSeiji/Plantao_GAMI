@@ -11,6 +11,7 @@ import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoMo
 import CampoNumero from "../../../components/bm/CampoNumero"
 import DespesasBm from "../../../components/bm/DespesasBm"
 import { Recibo, rotuloRecibo } from "../../../components/casosFora"
+import { formatarHorarioExtra } from "../../../components/extras"
 import HistoricoFinanceiro, { EventoFinanceiro } from "../../../components/bm/HistoricoFinanceiro"
 import {
   CATEGORIAS_PLANTAO,
@@ -28,6 +29,7 @@ import {
   edicoesVazias,
   formatarDinheiro,
   pagamentoPlantonista,
+  valorHoraExtra,
   socioVazio,
   temEdicoes,
   valoresPlantao,
@@ -45,6 +47,7 @@ type Socio = Perfil & {
   valor_escala: number
   pontos_plantoes: number
   pontos_ajustes: number
+  pontos_extras: number
   pontos: number
 }
 
@@ -80,13 +83,27 @@ type LinhaPlantonista = Perfil & {
   // Plantões em cada categoria (a fração na troca por horas e no congresso) e a soma deles
   categorias: Record<(typeof CATEGORIAS_PLANTAO)[number]["chave"], number>
   total: number
+  // Horas de plantão extra no mês (à parte do total de plantões)
+  horas_extra: number
+}
+
+// Plantão extra de um sócio: os pontos da posição escolhida, proporcionais às horas (entram no Tot. substituído)
+type ExtraSocio = {
+  id: string
+  data: string
+  hora_inicio: string
+  hora_fim: string
+  posicao: number | null
+  observacao: string | null
+  medico: Perfil
+  pontos: PorSocio
 }
 
 // Sócios Jr do mês: cada um é uma coluna, com o total de plantões, e cada linha é uma vaga num tipo de dia
 // ("2º" do diurno de sábado), com quantos plantões cada um fez nela (a fração na troca por horas e no congresso).
 // Sem pontos
 type SociosJr = {
-  socios: (Perfil & { total: number })[]
+  socios: (Perfil & { total: number; horas_extra: number })[]
   linhas: { dia: "Semana" | "Sábado" | "Domingo"; turno: "diurno" | "noturno"; vaga: string; plantoes: PorSocio }[]
 }
 
@@ -123,6 +140,7 @@ type Bm = {
   substituicoes: Substituicao[]
   casosForaBm: CasoForaBm[]
   plantonistas: LinhaPlantonista[]
+  extrasSocios: ExtraSocio[]
   sociosJr: SociosJr
   ajustes: Ajuste[]
   historico: EventoHistorico[]
@@ -292,7 +310,16 @@ function montarPontos(
   const administrativo = somaDoTipo("administrativo")
   const reuniao = somaDoTipo("reuniao")
   const totSubstituido = multiplicar(
-    somar([...bm.substituicoes.map((s) => s.pontos), administrativo, reuniao, ...outros.map((a) => ({ [a.medico.id]: a.pontos }))], socios),
+    somar(
+      [
+        ...bm.substituicoes.map((s) => s.pontos),
+        ...bm.extrasSocios.map((e) => e.pontos),
+        administrativo,
+        reuniao,
+        ...outros.map((a) => ({ [a.medico.id]: a.pontos })),
+      ],
+      socios,
+    ),
     fator,
   )
   const total = somar([corrigido, totSubstituido], socios)
@@ -320,6 +347,18 @@ function montarPontos(
         rotulo: `Substituído ${rotuloSubstituicao(s)}`,
         detalhe: detalheSubstituicao(s),
         valores: s.pontos,
+        formato: "pontos",
+      }),
+    ),
+    ...bm.extrasSocios.map(
+      (e): LinhaGrade => ({
+        tipo: "valores",
+        chave: `extra-${e.id}`,
+        rotulo: `Extra ${formatarDiaMes(e.data)} · ${formatarHorarioExtra(e)}`,
+        detalhe: [e.posicao != null ? `Pontos de ${descreverPosicao(e.data, e.posicao)}, proporcionais às horas` : "Sem posição", e.observacao]
+          .filter(Boolean)
+          .join(" · "),
+        valores: e.pontos,
         formato: "pontos",
       }),
     ),
@@ -1383,6 +1422,17 @@ function SecaoSociosJr({ dados: { socios, linhas }, loading }: { dados: SociosJr
                 ))}
                 <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(total)}</td>
               </tr>
+              {socios.some((s) => s.horas_extra > 0) && (
+                <tr className="bg-amber-50/60 text-amber-900">
+                  <td className="px-4 py-2 text-xs font-semibold">Extras (horas)</td>
+                  {socios.map((s) => (
+                    <td key={s.id} className="px-3 py-2 text-center tabular-nums">
+                      {s.horas_extra ? formatarPontos(s.horas_extra) : <span className="text-amber-300">—</span>}
+                    </td>
+                  ))}
+                  <td className="px-4 py-2 text-right tabular-nums">{formatarPontos(socios.reduce((t, s) => t + s.horas_extra, 0))}</td>
+                </tr>
+              )}
             </tfoot>
           </table>
         )}
@@ -1407,13 +1457,16 @@ function SecaoPlantonistas({
   editar?: (campo: CampoMes, valor: number | null) => void
 }) {
   const valores = valoresPlantao(fin)
+  const valorHora = valorHoraExtra(fin)
+  const horaHerdada = fin.valor_hora_extra == null && fin.valores_plantao_anteriores.valor_hora_extra != null
   const somar = (valor: (l: LinhaPlantonista) => number) => linhas.reduce((s, l) => s + valor(l), 0)
 
   return (
     <section>
       <h2 className="font-semibold text-gray-800 mb-1">Plantonistas</h2>
       <p className="text-xs text-gray-500 mb-3">
-        Plantões do mês por categoria e o valor pago por plantão. O total entra na despesa &ldquo;Plantonistas&rdquo; da PMP.
+        Plantões do mês por categoria e o valor pago por plantão, mais as horas de plantão extra e o valor da hora. O total
+        entra na despesa &ldquo;Plantonistas&rdquo; da PMP.
       </p>
       <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
         <table className="w-full text-sm">
@@ -1426,6 +1479,7 @@ function SecaoPlantonistas({
                 </th>
               ))}
               <th className="px-3 py-3 text-right">Total</th>
+              <th className="px-3 py-3 text-right">Extra (horas)</th>
               <th className="px-4 py-3 text-right">A receber</th>
             </tr>
             <tr className="border-b border-gray-200 bg-amber-50/30">
@@ -1448,7 +1502,21 @@ function SecaoPlantonistas({
                   </td>
                 )
               })}
-              <td colSpan={2} />
+              <td />
+              <td className="px-2 py-1.5 text-right min-w-[7rem]">
+                {editar ? (
+                  <CampoNumero
+                    valor={fin.valor_hora_extra}
+                    onChange={(v) => editar("valor_hora_extra", v)}
+                    ariaLabel="Valor da hora do plantão extra"
+                    placeholder={horaHerdada ? formatarDinheiro(fin.valores_plantao_anteriores.valor_hora_extra) : "0,00"}
+                  />
+                ) : (
+                  <span className="tabular-nums text-gray-700">{valorHora == null ? "—" : formatarDinheiro(valorHora)}</span>
+                )}
+                <p className="text-[11px] text-gray-400 mt-0.5">por hora{horaHerdada ? ", do mês anterior" : ""}</p>
+              </td>
+              <td />
             </tr>
           </thead>
           <tbody>
@@ -1469,15 +1537,16 @@ function SecaoPlantonistas({
                   </td>
                 ))}
                 <td className="px-3 py-3 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(l.total)}</td>
+                <td className="px-3 py-3 text-right text-gray-700 tabular-nums">{l.horas_extra ? formatarPontos(l.horas_extra) : "—"}</td>
                 <td className="px-4 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
-                  {formatarDinheiro(pagamentoPlantonista(l, valores))}
+                  {formatarDinheiro(pagamentoPlantonista(l, valores, valorHora))}
                 </td>
               </tr>
             ))}
 
             {!loading && linhas.length === 0 && (
               <tr>
-                <td colSpan={CATEGORIAS_PLANTAO.length + 3} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={CATEGORIAS_PLANTAO.length + 4} className="px-4 py-8 text-center text-gray-400">
                   Nenhum plantonista com plantão neste mês.
                 </td>
               </tr>
@@ -1493,6 +1562,7 @@ function SecaoPlantonistas({
                   </td>
                 ))}
                 <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.total))}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{formatarPontos(somar((l) => l.horas_extra))}</td>
                 <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatarDinheiro(resultado.totalPlantonistas)}</td>
               </tr>
             </tfoot>

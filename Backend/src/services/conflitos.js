@@ -4,16 +4,24 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { horarioDaVaga } = require('./posicoes')
 const { buscarCoberturas, dataDaCobertura, duracaoDaCobertura } = require('./coberturas')
+const { buscarExtras } = require('./extras')
 
 // Médicos ocupados na janela { data, hora_inicio, hora_fim }: escalados numa vaga cujo turno se sobrepõe a ela
-// (em qualquer plantão perto dessa data, inclusive o próprio) ou cobrindo parte de uma vaga nesse horário.
-// O diurno (07h–19h) e o noturno (19h–07h) só se encostam, então o mesmo médico pode fazer os dois.
+// (em qualquer plantão perto dessa data, inclusive o próprio), cobrindo parte de uma vaga ou num plantão extra
+// nesse horário. O diurno (07h–19h) e o noturno (19h–07h) só se encostam, então o mesmo médico pode fazer os dois.
 // ignorar: vagas { plantao_id, posicao } que não contam, como a que o médico está deixando.
-async function usuariosComConflito(usuarioIds, janela, { ignorar = [] } = {}) {
+// ignorarExtra: id do plantão extra que está sendo editado (não conflita com ele mesmo)
+async function usuariosComConflito(usuarioIds, janela, { ignorar = [], ignorarExtra = null } = {}) {
   const idsUnicos = [...new Set(usuarioIds)]
   if (idsUnicos.length === 0) return new Set()
 
   const alvo = calcularJanela(janela.data, janela.hora_inicio, janela.hora_fim)
+  const ocupados = new Set()
+
+  const extras = await buscarExtras({ inicio: deslocarData(janela.data, -1), fim: deslocarData(janela.data, 1), usuarioIds: idsUnicos })
+  for (const e of extras) {
+    if (e.id !== ignorarExtra && seSobrepoe(alvo, calcularJanela(e.data, e.hora_inicio, e.hora_fim))) ocupados.add(e.usuario_id)
+  }
 
   const { data: plantoes, error: plantoesError } = await supabase
     .from('plantoes')
@@ -22,7 +30,7 @@ async function usuariosComConflito(usuarioIds, janela, { ignorar = [] } = {}) {
     .lte('data', deslocarData(janela.data, 1))
 
   if (plantoesError) throw plantoesError
-  if (plantoes.length === 0) return new Set()
+  if (plantoes.length === 0) return ocupados
   const porId = new Map(plantoes.map(p => [p.id, p]))
 
   const { data: vagas, error: vagasError } = await supabase
@@ -33,7 +41,6 @@ async function usuariosComConflito(usuarioIds, janela, { ignorar = [] } = {}) {
 
   if (vagasError) throw vagasError
 
-  const ocupados = new Set()
   for (const v of vagas) {
     if (ignorar.some(i => i.plantao_id === v.plantao_id && i.posicao === v.posicao)) continue
     const h = horarioDaVaga(porId.get(v.plantao_id), v.posicao)

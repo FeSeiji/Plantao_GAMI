@@ -68,14 +68,17 @@ function calcularCasosFora(bm, fin) {
   }
 }
 
-// Valor do plantão de cada categoria: o do mês ou, se vazio, o do último mês preenchido
+// Valor do plantão de cada categoria e o da hora extra: o do mês ou, se vazio, o do último mês preenchido
+const CAMPO_VALOR = { diurno: 'valor_diurno', noturno: 'valor_noturno', diurno_fds: 'valor_diurno_fds', noturno_fds: 'valor_noturno_fds' }
 function valoresPlantao(fin) {
-  const campo = { diurno: 'valor_diurno', noturno: 'valor_noturno', diurno_fds: 'valor_diurno_fds', noturno_fds: 'valor_noturno_fds' }
-  return Object.fromEntries(Object.entries(campo).map(([cat, c]) => [cat, fin[c] ?? fin.valores_plantao_anteriores[c]]))
+  return Object.fromEntries(Object.entries(CAMPO_VALOR).map(([cat, c]) => [cat, fin[c] ?? fin.valores_plantao_anteriores[c]]))
 }
+const valorHoraExtra = fin => fin.valor_hora_extra ?? fin.valores_plantao_anteriores.valor_hora_extra
 
-function pagamentoPlantonista(p, valores) {
-  return arredondar(Object.keys(valores).reduce((t, cat) => t + p.categorias[cat] * (valores[cat] ?? 0), 0))
+// Plantões de cada categoria × valor da categoria, mais as horas de plantão extra × valor da hora
+function pagamentoPlantonista(p, valores, valorHora) {
+  const plantoes = Object.keys(valores).reduce((t, cat) => t + p.categorias[cat] * (valores[cat] ?? 0), 0)
+  return arredondar(plantoes + (p.horas_extra ?? 0) * (valorHora ?? 0))
 }
 
 // Faturamento, despesas e rateio (calcularFinanceiro de calculos.ts)
@@ -90,7 +93,7 @@ function calcularFinanceiro(fin, { casosFora100, custasCasosFora, plantonistas }
     gami: calcularImpostos('gami', (fin.recibos_gami ?? 0) + casosFora100),
   }
   const valores = valoresPlantao(fin)
-  const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores), 0))
+  const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores, valorHoraExtra(fin)), 0))
 
   const valorDespesa = d =>
     d.calculo === 'produtividade' ? produtividade[d.empresa]
@@ -118,6 +121,7 @@ function calcularPontos(bm, fin, valorParaDistribuir) {
   const totSubstituido = multiplicar(
     somar([
       ...bm.substituicoes.map(s => s.pontos),
+      ...bm.extrasSocios.map(e => e.pontos),
       somaDoTipo('administrativo'),
       somaDoTipo('reuniao'),
       ...bm.ajustes.filter(a => a.tipo === 'outro').map(doAjuste),

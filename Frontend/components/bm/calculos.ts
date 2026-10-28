@@ -37,7 +37,9 @@ export const CATEGORIAS_PLANTAO = [
 export type CategoriaPlantao = (typeof CATEGORIAS_PLANTAO)[number]["chave"]
 export type CampoValorPlantao = (typeof CATEGORIAS_PLANTAO)[number]["campo"]
 export type CampoFaturamento = "faturamento_pmp" | "recibos_gami" | "gami_total"
-export type CampoMes = CampoFaturamento | CampoValorPlantao
+// Valor da hora do plantão extra do plantonista (horas × valor entram na despesa "Plantonistas")
+export type CampoValorHoraExtra = "valor_hora_extra"
+export type CampoMes = CampoFaturamento | CampoValorPlantao | CampoValorHoraExtra
 
 export type Empresa = "pmp" | "gami"
 
@@ -82,7 +84,7 @@ export const socioVazio = (): SocioFinanceiro => ({
 // O que vem do backend em bm.financeiro. conta_corrente.desde: primeiro mês da conta corrente ('AAAA-MM');
 // dif_mes_anterior: a diferença final do mês anterior de cada sócio (vazia no primeiro mês e antes dele)
 export type Financeiro = Record<CampoMes, number | null> & {
-  valores_plantao_anteriores: Record<CampoValorPlantao, number | null>
+  valores_plantao_anteriores: Record<CampoValorPlantao | CampoValorHoraExtra, number | null>
   socios: Record<string, SocioFinanceiro>
   despesas: Despesa[]
   conta_corrente: { desde: string; dif_mes_anterior: Record<string, number> | null }
@@ -115,7 +117,8 @@ export function aplicarEdicoes(f: Financeiro, e: Edicoes): Financeiro {
   }
 }
 
-type Plantonista = { id: string; categorias: Record<CategoriaPlantao, number> }
+// horas_extra: horas de plantão extra no mês
+type Plantonista = { id: string; categorias: Record<CategoriaPlantao, number>; horas_extra: number }
 
 // Valor do plantão de cada categoria: o do mês ou, se vazio, o do último mês preenchido
 export function valoresPlantao(f: Financeiro): Record<CategoriaPlantao, number | null> {
@@ -124,9 +127,14 @@ export function valoresPlantao(f: Financeiro): Record<CategoriaPlantao, number |
   ) as Record<CategoriaPlantao, number | null>
 }
 
-// Quanto cada plantonista recebe no mês: plantões de cada categoria × valor da categoria
-export function pagamentoPlantonista(p: Plantonista, valores: Record<CategoriaPlantao, number | null>) {
-  return arredondar(CATEGORIAS_PLANTAO.reduce((t, c) => t + p.categorias[c.chave] * (valores[c.chave] ?? 0), 0))
+// Valor da hora do plantão extra: o do mês ou, se vazio, o do último mês preenchido
+export const valorHoraExtra = (f: Financeiro) => f.valor_hora_extra ?? f.valores_plantao_anteriores.valor_hora_extra
+
+// Quanto cada plantonista recebe no mês: plantões de cada categoria × valor da categoria, mais as horas de
+// plantão extra × valor da hora
+export function pagamentoPlantonista(p: Plantonista, valores: Record<CategoriaPlantao, number | null>, valorHora: number | null) {
+  const plantoes = CATEGORIAS_PLANTAO.reduce((t, c) => t + p.categorias[c.chave] * (valores[c.chave] ?? 0), 0)
+  return arredondar(plantoes + p.horas_extra * (valorHora ?? 0))
 }
 
 export type ResultadoFinanceiro = {
@@ -157,7 +165,7 @@ export function calcularFinanceiro(
     gami: calcularImpostos("gami", (f.recibos_gami ?? 0) + casosFora100),
   }
   const valores = valoresPlantao(f)
-  const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores), 0))
+  const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores, valorHoraExtra(f)), 0))
 
   const valorDespesa = (d: Despesa) =>
     d.calculo === "produtividade"

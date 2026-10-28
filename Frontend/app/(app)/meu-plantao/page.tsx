@@ -2,7 +2,10 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import PlantaoModal from "../../../components/PlantaoModal"
+import PlantaoModal, { ROLES_EDITAR_PLANTAO } from "../../../components/PlantaoModal"
+import PlantaoExtraModal from "../../../components/PlantaoExtraModal"
+import SiglaBadge from "../../../components/SiglaBadge"
+import { PlantaoExtra, formatarHorarioExtra } from "../../../components/extras"
 import {
   BadgeComMarcador,
   Plantao,
@@ -57,6 +60,9 @@ export default function MeuPlantaoPage() {
   const [error, setError] = useState("")
   const [meuId, setMeuId] = useState<string | null>(null)
   const [plantaoSelecionado, setPlantaoSelecionado] = useState<Plantao | null>(null)
+  const [extras, setExtras] = useState<PlantaoExtra[]>([])
+  const [extraSelecionado, setExtraSelecionado] = useState<PlantaoExtra | null>(null)
+  const [souGestao, setSouGestao] = useState(false)
 
   const { inicio, fim } = useMemo(() => calcularIntervaloVisivel(dataReferencia, "semana"), [dataReferencia])
 
@@ -76,6 +82,7 @@ export default function MeuPlantaoPage() {
       return
     }
     setMeuId(localStorage.getItem("userId"))
+    setSouGestao(lerRoles().some((r) => ROLES_EDITAR_PLANTAO.includes(r)))
   }, [router])
 
   const carregarPlantoes = useCallback(() => {
@@ -85,13 +92,18 @@ export default function MeuPlantaoPage() {
     setLoading(true)
     setError("")
     const params = new URLSearchParams({ inicio, fim })
-    apiFetch(`${process.env.NEXT_PUBLIC_API_URL}/plantoes?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar os plantões.")
-        setPlantoes(data)
+    const buscar = async (caminho: string) => {
+      const res = await apiFetch(`${process.env.NEXT_PUBLIC_API_URL}${caminho}?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível carregar os plantões.")
+      return data
+    }
+    Promise.all([buscar("/plantoes"), buscar("/plantoes-extras")])
+      .then(([plantoesDaSemana, extrasDaSemana]) => {
+        setPlantoes(plantoesDaSemana)
+        setExtras(extrasDaSemana)
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
@@ -245,9 +257,61 @@ export default function MeuPlantaoPage() {
                 ))}
               </Fragment>
             ))}
+
+            {/* Plantões extras da semana, em paralelo ao plantão do dia */}
+            {extras.length > 0 && (
+              <>
+                <tr className="bg-amber-50/60 border-y border-amber-100">
+                  <td className="py-1.5 text-center text-[11px] font-semibold text-amber-800 uppercase tracking-wide">
+                    <span className="sm:hidden">Ext</span>
+                    <span className="hidden sm:inline">Extras</span>
+                  </td>
+                  <td colSpan={7} className="py-1.5 px-2 text-[11px] text-amber-800">
+                    Horário livre, sem troca
+                  </td>
+                </tr>
+                <tr>
+                  <td />
+                  {dias.map((dia) => {
+                    const chave = formatarDataLocal(dia)
+                    return (
+                      <td key={chave} className={`py-2 align-top text-center ${chave === hoje ? "bg-brand-50" : ""}`}>
+                        <div className="flex flex-col items-center gap-1.5">
+                          {extras
+                            .filter((e) => e.data === chave)
+                            .map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onClick={() => setExtraSelecionado(e)}
+                                title={`${e.medico.nome ?? e.medico.email ?? ""} · ${formatarHorarioExtra(e)}`}
+                                className="flex flex-col items-center gap-0.5 rounded-lg px-1 py-0.5 hover:bg-amber-50"
+                              >
+                                <span className={`inline-flex rounded-full ${e.medico.id === meuId ? "ring-2 ring-offset-1 ring-amber-400" : ""}`}>
+                                  <SiglaBadge sigla={e.medico.sigla ?? null} size="responsivo" semTitulo />
+                                </span>
+                                <span className="text-[9px] sm:text-[10px] leading-none text-amber-900">{formatarHorarioExtra(e)}</span>
+                              </button>
+                            ))}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              </>
+            )}
           </tbody>
         </table>
       </div>
+
+      {extraSelecionado && (
+        <PlantaoExtraModal
+          extra={extraSelecionado}
+          podeEditar={souGestao}
+          onClose={() => setExtraSelecionado(null)}
+          onSaved={carregarPlantoes}
+        />
+      )}
 
       {plantaoSelecionado && (
         <PlantaoModal

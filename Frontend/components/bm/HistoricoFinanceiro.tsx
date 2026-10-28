@@ -25,6 +25,7 @@ const ROTULO_CAMPO: Record<string, string> = {
   valor_noturno: "Valor do plantão noturno",
   valor_diurno_fds: "Valor do plantão diurno de fim de semana",
   valor_noturno_fds: "Valor do plantão noturno de fim de semana",
+  valor_hora_extra: "Valor da hora do plantão extra",
   gami_pro_sem_recibo: "GAMI PRO sem recibo",
   saldo_inicial: "saldo inicial",
   darf: "DARF",
