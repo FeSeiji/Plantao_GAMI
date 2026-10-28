@@ -8,6 +8,9 @@ const ROLES_ANESTESISTA = ['anestesita_socio', 'anestesita_socio_jr', 'anestesit
 // da gestão. A flag admin não é papel e continua sendo dada só pela gestão.
 const ROLES_CADASTRO_PUBLICO = [...ROLES_ANESTESISTA, 'tecnico', 'escritorio']
 
+// Senha mínima no cadastro, na criação pela gestão, na troca e na redefinição (as telas pedem o mesmo)
+const TAMANHO_MINIMO_SENHA = 8
+
 // ~100 anos: o Supabase não tem ban permanente, só por duração
 const DURACAO_DESATIVACAO = '876000h'
 
@@ -76,6 +79,10 @@ async function validarDadosUsuario({ sigla, roles, crm, crm_uf }, ignorarId = nu
 // Espera dados já validados por validarDadosUsuario. Retorna { user } ou { error, status }.
 // pendente: cadastro público — a conta nasce desativada até alguém da gestão aprovar.
 async function criarUsuario({ email, password, nome, sigla, roles, crm, crm_uf, is_admin = false, bm_access = false }, { pendente = false } = {}) {
+  if (String(password).length < TAMANHO_MINIMO_SENHA) {
+    return { error: `A senha precisa ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres`, status: 400 }
+  }
+
   const { data, error } = await supabase.auth.admin.createUser({
     email,
     password,
@@ -136,6 +143,6 @@ function contaComoSocioJr(roles) {
 }
 
 module.exports = {
-  ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, UFS, validarDadosUsuario, criarUsuario,
+  ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, TAMANHO_MINIMO_SENHA, UFS, validarDadosUsuario, criarUsuario,
   buscarCargosDosUsuarios, buscarRolesDosUsuarios, contaComoSocio, contaComoSocioJr, estaDesativado,
 }

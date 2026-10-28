@@ -311,7 +311,8 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
                   id="password"
                   type="text"
                   required
-                  minLength={6}
+                  minLength={8}
+                  placeholder="Mínimo 8 caracteres"
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
