@@ -1257,7 +1257,14 @@ export default function PlantaoModal({
               <button
                 key={r.id}
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  // A gestão registra direto, sem confirmação (pedido da Dra. Aline, 28/10/2026): já vale na hora
+                  if (podeGerirEquipe) {
+                    solicitarTroca(trocandoPosicao!, r, trocandoFerias ? null : intervaloTroca);
+                    return;
+                  }
+                  // O médico confirma o pedido, que só vale depois do aceite
+                  const quemAceita = nomeDe(r.id === meuId ? usuarioTrocando : r);
                   setConfirmacao(trocandoFerias ? {
                     titulo: "Pedir cobertura?",
                     mensagem: (
@@ -1268,16 +1275,13 @@ export default function PlantaoModal({
                           {nomeDe(usuarioTrocando)}
                         </span>
                         , que está de férias e continua na vaga. Os dois recebem
-                        os pontos.{" "}
-                        {podeGerirEquipe
-                          ? "A cobertura vale na hora."
-                          : `A cobertura só vale depois que ${nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.`}
+                        os pontos. A cobertura só vale depois que {quemAceita} aceitar.
                       </p>
                     ),
-                    rotuloConfirmar: podeGerirEquipe ? "Registrar cobertura" : "Pedir cobertura",
+                    rotuloConfirmar: "Pedir cobertura",
                     acao: () => solicitarTroca(trocandoPosicao!, r, null),
                   } : {
-                    titulo: podeGerirEquipe ? "Registrar troca?" : "Solicitar troca?",
+                    titulo: "Solicitar troca?",
                     mensagem: (
                       <p>
                         Trocar{" "}
@@ -1290,17 +1294,14 @@ export default function PlantaoModal({
                           : usuarioTrocando.coordenador
                             ? " (inclusive como coordenador)"
                             : ""}
-                        .{" "}
-                        {podeGerirEquipe
-                          ? "A troca vale na hora."
-                          : `A troca só vale depois que ${nomeDe(r.id === meuId ? usuarioTrocando : r)} aceitar.`}
+                        . A troca só vale depois que {quemAceita} aceitar.
                       </p>
                     ),
-                    rotuloConfirmar: podeGerirEquipe ? "Registrar troca" : "Solicitar troca",
+                    rotuloConfirmar: "Solicitar troca",
                     acao: () =>
                       solicitarTroca(trocandoPosicao!, r, intervaloTroca),
-                  })
-                }
+                  });
+                }}
                 disabled={!!r.afastamento}
                 className="w-full flex items-center gap-2 text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
               >
