@@ -1,10 +1,31 @@
 // Contas do BM Financeiro, as mesmas da planilha do cliente (BM DEZ 26.xlsx). Tudo é refeito na tela a cada
-// valor digitado; o backend só guarda o que foi digitado (Backend/src/services/financeiroBm.js).
+// valor digitado; o backend guarda o que foi digitado (Backend/src/services/financeiroBm.js) e refaz as mesmas
+// contas em Backend/src/services/calculoBm.js para a conta corrente em cascata e o Excel. Mudou uma conta aqui,
+// muda lá também.
 
 // G108: a produtividade de cada funcionária é 0,1% do faturamento
 export const PERCENTUAL_PRODUTIVIDADE = 0.001
 // R127: parte do resultado que é distribuída aos sócios
 export const FATOR_DISTRIBUICAO = 0.63
+
+// Previsão de impostos trimestrais (N115 a R120 da planilha). A PMP calcula CSLL e IRPJ sobre o faturamento
+// "por dentro" (× 100 ÷ (100 − 4,65 − 1,5)); a GAMI, sobre recibos + casos fora. O adicional de IRPJ
+// é 10% do que passar de R$ 20.000 em 32% do faturamento (nunca negativo)
+const IMPOSTOS = {
+  pmp: { csll: 0.0188, irpj: 0.033, porDentro: true },
+  gami: { csll: 0.0288, irpj: 0.048, porDentro: false },
+}
+
+export type Impostos = { csll: number; irpj: number; total: number }
+
+export function calcularImpostos(empresa: Empresa, faturamento: number): Impostos {
+  const { csll, irpj, porDentro } = IMPOSTOS[empresa]
+  const base = porDentro ? (faturamento * 100) / (100 - 4.65 - 1.5) : faturamento
+  const adicional = Math.max(0, faturamento * 0.32 - 20000) * 0.1
+  const valorCsll = arredondar(base * csll)
+  const valorIrpj = arredondar(base * irpj + adicional)
+  return { csll: valorCsll, irpj: valorIrpj, total: arredondar(valorCsll + valorIrpj) }
+}
 
 export const CATEGORIAS_PLANTAO = [
   { chave: "diurno", rotulo: "Diurno", campo: "valor_diurno" },
@@ -21,26 +42,50 @@ export type CampoMes = CampoFaturamento | CampoValorPlantao
 export type Empresa = "pmp" | "gami"
 
 // Uma despesa do mês: o item da lista e o que foi digitado nele.
-// calculo: produtividade (0,1% do faturamento) ou plantonistas (plantões × valor); vazio = digitado
+// calculo: produtividade (0,1% do faturamento), plantonistas (plantões × valor) ou impostos; vazio = digitado
 export type Despesa = {
   id: string
   empresa: Empresa
   nome: string
   ordem: number
-  calculo: "produtividade" | "plantonistas" | null
+  calculo: "produtividade" | "plantonistas" | "impostos" | null
   ativo: boolean
   banco: string | null
   data_pago: string | null
   valor: number | null
 }
 
-export type SocioFinanceiro = { gami_pro_sem_recibo: number | null; fator_correcao: number }
+// Valores em reais digitados por sócio: GAMI PRO sem recibo e a conta corrente (o saldo inicial só existe no
+// primeiro mês dela)
+export const CAMPOS_SOCIO_DINHEIRO = [
+  "gami_pro_sem_recibo",
+  "saldo_inicial",
+  "darf",
+  "pro_labore",
+  "distr_dia_05",
+  "distr_dia_10",
+  "bradesco_dia_05",
+  "itau_dia_05",
+  "bradesco_dia_10",
+  "itau_dia_10",
+  "cef",
+] as const
+export type CampoSocioDinheiro = (typeof CAMPOS_SOCIO_DINHEIRO)[number]
 
-// O que vem do backend em bm.financeiro
+export type SocioFinanceiro = Record<CampoSocioDinheiro, number | null> & { fator_correcao: number }
+
+export const socioVazio = (): SocioFinanceiro => ({
+  ...(Object.fromEntries(CAMPOS_SOCIO_DINHEIRO.map((c) => [c, null])) as Record<CampoSocioDinheiro, number | null>),
+  fator_correcao: 1,
+})
+
+// O que vem do backend em bm.financeiro. conta_corrente.desde: primeiro mês da conta corrente ('AAAA-MM');
+// dif_mes_anterior: a diferença final do mês anterior de cada sócio (vazia no primeiro mês e antes dele)
 export type Financeiro = Record<CampoMes, number | null> & {
   valores_plantao_anteriores: Record<CampoValorPlantao, number | null>
   socios: Record<string, SocioFinanceiro>
   despesas: Despesa[]
+  conta_corrente: { desde: string; dif_mes_anterior: Record<string, number> | null }
 }
 
 // O que foi editado na tela e ainda não foi salvo, no mesmo formato do PUT /bm-financeiro/financeiro
@@ -59,7 +104,7 @@ export const temEdicoes = (e: Edicoes) =>
 export function aplicarEdicoes(f: Financeiro, e: Edicoes): Financeiro {
   const socios = { ...f.socios }
   for (const [id, campos] of Object.entries(e.socios)) {
-    const gravado: SocioFinanceiro = socios[id] ?? { gami_pro_sem_recibo: null, fator_correcao: 1 }
+    const gravado: SocioFinanceiro = socios[id] ?? socioVazio()
     socios[id] = { ...gravado, ...campos }
   }
   return {
@@ -86,9 +131,10 @@ export function pagamentoPlantonista(p: Plantonista, valores: Record<CategoriaPl
 
 export type ResultadoFinanceiro = {
   gamiProSemRecibo: number // soma da linha 2 (Q110)
-  casosForaRecibo100: number // R122: 100% dos casos fora com recibo
+  casosFora100: number // R122: 100% dos casos fora
   custasCasosFora: number // R124: a parte da casa nos casos fora, que entra no rateio
   produtividade: Record<Empresa, number> // F106 e L106: de cada funcionária, em cada empresa
+  impostos: Record<Empresa, Impostos> // Q117 a R120: previsão de CSLL e IRPJ
   totalPlantonistas: number
   valorDespesa: (d: Despesa) => number
   totalDespesas: Record<Empresa, number> // F126 e L126
@@ -96,21 +142,31 @@ export type ResultadoFinanceiro = {
   valorParaDistribuir: number // R128
 }
 
-// casosForaRecibo100 e custasCasosFora vêm da grade dos casos fora (R122 e R124 da planilha)
+// casosFora100 e custasCasosFora vêm da grade dos casos fora (R122 e R124 da planilha)
 export function calcularFinanceiro(
   f: Financeiro,
-  { casosForaRecibo100, custasCasosFora, plantonistas }: { casosForaRecibo100: number; custasCasosFora: number; plantonistas: Plantonista[] },
+  { casosFora100, custasCasosFora, plantonistas }: { casosFora100: number; custasCasosFora: number; plantonistas: Plantonista[] },
 ): ResultadoFinanceiro {
   const gamiProSemRecibo = arredondar(Object.values(f.socios).reduce((t, s) => t + (s.gami_pro_sem_recibo ?? 0), 0))
   const produtividade = {
     pmp: arredondar((f.faturamento_pmp ?? 0) * PERCENTUAL_PRODUTIVIDADE),
-    gami: arredondar((gamiProSemRecibo + (f.gami_total ?? 0) + casosForaRecibo100) * PERCENTUAL_PRODUTIVIDADE),
+    gami: arredondar((gamiProSemRecibo + (f.gami_total ?? 0) + casosFora100) * PERCENTUAL_PRODUTIVIDADE),
+  }
+  const impostos = {
+    pmp: calcularImpostos("pmp", f.faturamento_pmp ?? 0),
+    gami: calcularImpostos("gami", (f.recibos_gami ?? 0) + casosFora100),
   }
   const valores = valoresPlantao(f)
   const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores), 0))
 
   const valorDespesa = (d: Despesa) =>
-    d.calculo === "produtividade" ? produtividade[d.empresa] : d.calculo === "plantonistas" ? totalPlantonistas : d.valor ?? 0
+    d.calculo === "produtividade"
+      ? produtividade[d.empresa]
+      : d.calculo === "plantonistas"
+        ? totalPlantonistas
+        : d.calculo === "impostos"
+          ? impostos[d.empresa].total
+          : d.valor ?? 0
 
   const totalDespesas = { pmp: 0, gami: 0 }
   for (const d of f.despesas) totalDespesas[d.empresa] = arredondar(totalDespesas[d.empresa] + valorDespesa(d))
@@ -120,9 +176,10 @@ export function calcularFinanceiro(
 
   return {
     gamiProSemRecibo,
-    casosForaRecibo100,
+    casosFora100,
     custasCasosFora,
     produtividade,
+    impostos,
     totalPlantonistas,
     valorDespesa,
     totalDespesas,
