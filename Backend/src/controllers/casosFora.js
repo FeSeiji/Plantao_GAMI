@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
 const { listarCasosFora } = require('../services/casosFora')
 const { ehGestao } = require('../middleware/auth')
+const { ehUuid, erroDoPeriodo } = require('../middleware/parametros')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -20,6 +21,9 @@ const podeEditar = (user, caso) => ehGestao(user) || caso.criado_por === user.id
 
 exports.listar = async (req, res) => {
   const { inicio, fim, anestesista_id } = req.query
+  const erroPeriodo = erroDoPeriodo({ inicio, fim })
+  if (erroPeriodo) return res.status(400).json({ error: erroPeriodo })
+  if (anestesista_id && !ehUuid(anestesista_id)) return res.status(400).json({ error: 'anestesista_id inválido' })
 
   try {
     const casos = await listarCasosFora({ inicio, fim, anestesista_id })

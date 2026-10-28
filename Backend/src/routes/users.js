@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
+const { exigirUuid } = require('../middleware/parametros')
 const {
   getUsers, listarGestao, criarUsuarioGestao, atualizarUsuario, alterarAtivo, enviarResetSenha,
 } = require('../controllers/users')
@@ -8,6 +9,9 @@ const {
 const podeVerGestao = requireRole('escritorio', 'admin', 'anestesita_socio', 'tecnico')
 // Técnico também edita (inclusive admins), mas o controller o impede de conceder ou remover a flag admin
 const podeEditarGestao = requireRole('escritorio', 'admin', 'tecnico')
+
+// Ids de rota fora do formato uuid: 404, em vez do erro de sintaxe do banco
+exigirUuid(router, 'id')
 
 router.get('/', getUsers)
 router.get('/gestao', podeVerGestao, listarGestao)

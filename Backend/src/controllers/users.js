@@ -6,12 +6,23 @@ const { liberarEscalasFuturas } = require('../services/escalas')
 const { usuariosAfastados } = require('../services/afastamentos')
 const { usuariosComConflito } = require('../services/conflitos')
 const { ehAdmin, temAcessoBm } = require('../middleware/auth')
+const { ehData } = require('../middleware/parametros')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+// O cargo de sócio dá acesso ao BM Financeiro e uma coluna no rateio: só um administrador dá ou tira
+const ROLE_SOCIO = 'anestesita_socio'
+const ehSocio = roles => (roles ?? []).includes(ROLE_SOCIO)
 
 exports.getUsers = async (req, res) => {
   const { search, role, data: dataAlvo, horaInicio, horaFim } = req.query
   const rolesFiltro = role ? role.split(',').map(r => r.trim()).filter(Boolean) : null
+
+  if (dataAlvo && !ehData(dataAlvo)) return res.status(400).json({ error: 'data deve estar no formato AAAA-MM-DD' })
+  const hora = /^([01]\d|2[0-3]):[0-5]\d(:00)?$/
+  if ((horaInicio && !hora.test(horaInicio)) || (horaFim && !hora.test(horaFim))) {
+    return res.status(400).json({ error: 'horaInicio e horaFim devem estar no formato HH:MM' })
+  }
 
   if (rolesFiltro) {
     const invalidas = rolesFiltro.filter(r => !ROLES_VALIDAS.includes(r))
@@ -132,6 +143,9 @@ exports.criarUsuarioGestao = async (req, res) => {
   if (is_admin && !ehAdmin(req.user)) {
     return res.status(403).json({ error: 'Apenas administradores podem criar outro administrador' })
   }
+  if (ehSocio(roles) && !ehAdmin(req.user)) {
+    return res.status(403).json({ error: 'Apenas administradores podem dar o cargo de sócio' })
+  }
 
   let dados
   try {
@@ -191,9 +205,20 @@ exports.atualizarUsuario = async (req, res) => {
     return res.status(400).json({ error: 'nome não pode ser vazio' })
   }
 
-  const rolesFinais = roles ?? auth.user.app_metadata?.roles ?? []
+  const rolesAtuais = auth.user.app_metadata?.roles ?? []
+  const rolesFinais = roles ?? rolesAtuais
   if (!Array.isArray(rolesFinais) || rolesFinais.length === 0) {
     return res.status(400).json({ error: 'roles deve ser um array não vazio' })
+  }
+  // Fora os administradores, ninguém muda os próprios cargos nem dá ou tira o de sócio
+  if (!ehAdmin(req.user)) {
+    const mudaCargos = [...new Set([...rolesAtuais, ...rolesFinais])].some(r => rolesAtuais.includes(r) !== rolesFinais.includes(r))
+    if (mudaCargos && id === req.user.id) {
+      return res.status(403).json({ error: 'Você não pode mudar os próprios cargos. Peça a um administrador.' })
+    }
+    if (ehSocio(rolesAtuais) !== ehSocio(rolesFinais)) {
+      return res.status(403).json({ error: 'Apenas administradores podem dar ou tirar o cargo de sócio' })
+    }
   }
 
   let dados
@@ -248,6 +273,19 @@ exports.alterarAtivo = async (req, res) => {
 
   if (id === req.user.id && !ativo) {
     return res.status(400).json({ error: 'Você não pode desativar a própria conta' })
+  }
+
+  // Fora os administradores: ninguém desativa ou reativa um administrador, nem aprova ou reativa a conta de um
+  // sócio (aprovar um cadastro público de sócio daria a ele o acesso ao BM)
+  if (!ehAdmin(req.user)) {
+    const { data: alvo, error: alvoError } = await supabase.auth.admin.getUserById(id)
+    if (alvoError || !alvo?.user) return res.status(404).json({ error: 'Usuário não encontrado' })
+    if (ehAdmin(alvo.user)) {
+      return res.status(403).json({ error: 'Apenas administradores podem desativar ou reativar um administrador' })
+    }
+    if (ativo && ehSocio(alvo.user.app_metadata?.roles)) {
+      return res.status(403).json({ error: 'Apenas administradores podem aprovar ou reativar a conta de um sócio' })
+    }
   }
 
   // Ativar também conclui a aprovação de um cadastro público pendente

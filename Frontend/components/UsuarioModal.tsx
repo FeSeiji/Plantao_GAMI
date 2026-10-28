@@ -81,6 +81,10 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
   const [email, setEmail] = useState(usuario?.email ?? "")
   const [password, setPassword] = useState("")
   const [roles, setRoles] = useState<string[]>(usuario?.roles ?? [])
+  // Fora os administradores, ninguém muda os próprios cargos nem dá ou tira o de sócio (o backend confere de novo)
+  const [meuId] = useState(() => (typeof window === "undefined" ? null : localStorage.getItem("userId")))
+  const cargoTravado = (role: string) =>
+    !podeGerenciarAdmin && (role === "anestesita_socio" || (!criando && usuario?.id === meuId))
   const [isAdmin, setIsAdmin] = useState(usuario?.is_admin ?? false)
   const [acessoBm, setAcessoBm] = useState(usuario?.bm_access ?? false)
   const [crm, setCrm] = useState(usuario?.crm ?? "")
@@ -323,14 +327,16 @@ export default function UsuarioModal({ usuario, podeGerenciarAdmin, onClose, onS
               {ROLES.map((r) => (
                 <label
                   key={r.value}
-                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer ${
-                    roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"
-                  }`}
+                  title={cargoTravado(r.value) ? "Só administradores podem mudar" : undefined}
+                  className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm transition-colors ${
+                    cargoTravado(r.value) ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                  } ${roles.includes(r.value) ? "border-brand-600 bg-brand-50 text-brand-800" : "border-gray-300 text-gray-700"}`}
                 >
                   <input
                     type="checkbox"
                     checked={roles.includes(r.value)}
                     onChange={() => alternarRole(r.value)}
+                    disabled={cargoTravado(r.value)}
                     className="accent-brand-700"
                   />
                   {r.label}

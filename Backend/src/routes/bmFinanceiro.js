@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
+const { exigirUuid } = require('../middleware/parametros')
 const {
   resumoMensal, exportar, salvarFinanceiro, criarItemDespesa, atualizarItemDespesa,
 } = require('../controllers/bmFinanceiro')
@@ -10,6 +11,9 @@ const { criar, atualizar, excluir } = require('../controllers/ajustesPontos')
 const podeVerBm = requireRole('admin', 'tecnico', 'anestesita_socio', 'bm_access')
 // Editar (financeiro e ajustes de pontos): só quem tem a flag bm_access, que o admin concede
 const podeEditarBm = requireRole('bm_access')
+
+// Ids de rota fora do formato uuid: 404, em vez do erro de sintaxe do banco
+exigirUuid(router, 'id')
 
 router.get('/', podeVerBm, resumoMensal)
 router.get('/exportar', podeVerBm, exportar)

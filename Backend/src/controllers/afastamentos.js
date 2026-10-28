@@ -221,11 +221,13 @@ exports.definirTipoCongresso = async (req, res) => {
   return res.json(data)
 }
 
-// O médico apaga o próprio pedido pendente ou recusado; um aprovado só a gestão remove
+// O médico apaga o próprio pedido pendente ou recusado; um aprovado só a gestão remove. Férias aprovadas
+// removidas levam junto as coberturas de férias do período (aceitas ou pedidas): sem as férias, quem cobria
+// continuaria ganhando a vaga inteira junto com o titular
 exports.remover = async (req, res) => {
   const { data: afastamento, error: buscaError } = await supabase
     .from('afastamentos')
-    .select('id, usuario_id, status')
+    .select('id, usuario_id, tipo, status, data_inicio, data_fim')
     .eq('id', req.params.id)
     .maybeSingle()
 
@@ -242,7 +244,37 @@ exports.remover = async (req, res) => {
   const { error } = await supabase.from('afastamentos').delete().eq('id', afastamento.id)
   if (error) return res.status(400).json({ error: error.message })
 
+  if (afastamento.tipo === 'ferias' && afastamento.status === 'aprovado') {
+    try {
+      await cancelarCoberturasDasFerias(afastamento)
+    } catch (err) {
+      console.error(err)
+      return res.status(500).json({
+        error: `Férias removidas, mas as coberturas de férias do período não foram canceladas (${err.message}). Desfaça-as no plantão.`
+      })
+    }
+  }
+
   return res.status(204).send()
+}
+
+async function cancelarCoberturasDasFerias({ usuario_id, data_inicio, data_fim }) {
+  const { data: coberturas, error } = await supabase
+    .from('plantao_trocas')
+    .select('id, plantoes!inner(data)')
+    .eq('usuario_saida', usuario_id)
+    .eq('cobertura_ferias', true)
+    .in('status', ['pendente', 'aceita'])
+    .gte('plantoes.data', data_inicio)
+    .lte('plantoes.data', data_fim)
+  if (error) throw error
+  if (coberturas.length === 0) return
+
+  const { error: cancelarError } = await supabase
+    .from('plantao_trocas')
+    .update({ status: 'cancelada', respondido_em: new Date().toISOString() })
+    .in('id', coberturas.map(c => c.id))
+  if (cancelarError) throw cancelarError
 }
 
 // Pedidos aguardando a gestão (os que já terminaram ficam de fora), com o nome do médico

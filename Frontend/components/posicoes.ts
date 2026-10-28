@@ -105,6 +105,14 @@ export function horarioDaVaga(data: string, posicao: number) {
   }
 }
 
+// O turno dessa vaga já terminou (no horário do navegador). O noturno termina no dia seguinte
+export function turnoJaTerminou(data: string, posicao: number) {
+  const { hora_inicio, hora_fim } = horarioDaVaga(data, posicao)
+  const fim = new Date(`${data}T${hora_fim}:00`)
+  if (hora_fim <= hora_inicio) fim.setDate(fim.getDate() + 1)
+  return fim <= new Date()
+}
+
 // A vaga 1 é de coordenador só de segunda a sexta: no fim de semana ela é a do plantonista
 export function ehVagaDeCoordenador(data: string, posicao: number | null | undefined) {
   return posicao != null && vagaDa(data, posicao)?.coordenador === true
