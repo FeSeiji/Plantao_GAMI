@@ -133,10 +133,11 @@ async function salvarFinanceiro(mes, corpo, usuarioId) {
   const sociosEnviados = Object.entries(corpo?.socios ?? {})
   if (sociosEnviados.length > 0) {
     const cargos = await buscarCargosDosUsuarios()
-    for (const [id, campos] of sociosEnviados) {
+    for (const [id, enviado] of sociosEnviados) {
       if (!UUID_REGEX.test(id) || !contaComoSocio(cargos.get(id)?.roles)) return { error: 'Sócio não encontrado' }
+      const campos = enviado ?? {}
       valoresSocios[id] = {}
-      for (const [campo, valor] of Object.entries(campos ?? {})) {
+      for (const [campo, valor] of Object.entries(campos)) {
         if (campo === 'fator_correcao') continue
         if (!CAMPOS_SOCIO_DINHEIRO.includes(campo)) return { error: `Campo desconhecido: ${campo}` }
         if (campo === 'saldo_inicial' && mes !== MES_INICIAL_CONTA_CORRENTE) {
@@ -163,9 +164,10 @@ async function salvarFinanceiro(mes, corpo, usuarioId) {
     if (!ids.every(id => UUID_REGEX.test(id))) return { error: 'Despesa não encontrada' }
     const { data: itens, error } = await supabase.from('bm_despesa_itens').select('id, nome, calculo').in('id', ids)
     if (error) throw error
-    for (const [id, campos] of despesasEnviadas) {
+    for (const [id, enviado] of despesasEnviadas) {
       const item = itens.find(i => i.id === id)
       if (!item) return { error: 'Despesa não encontrada' }
+      const campos = enviado ?? {}
       valoresDespesas[id] = {}
       if (campos.valor !== undefined) {
         if (item.calculo) return { error: `${item.nome} é calculado pelo sistema` }
@@ -195,28 +197,33 @@ async function salvarFinanceiro(mes, corpo, usuarioId) {
   const mudou = (atual, novos) => Object.entries(novos).some(([c, v]) => String(atual?.[c] ?? '') !== String(v ?? ''))
   const linha = (atual, novos, chave) => ({ ...semControle(atual), ...novos, ...chave, atualizado_por: usuarioId, atualizado_em: agora })
 
-  if (mudou(atualMes.data, valoresMes)) {
-    const { error } = await supabase.from('bm_meses').upsert(linha(atualMes.data, valoresMes, { mes: inicio }))
-    if (error) throw error
+  // Grava em até três etapas (mês, sócios, despesas), sem transação entre elas. Se uma falhar depois de outra já
+  // gravada, salvar de novo completa: só o que ainda difere do banco é enviado
+  let gravouAlgo = false
+  const gravar = async (tabela, linhas) => {
+    const { error } = await supabase.from(tabela).upsert(linhas)
+    if (error) {
+      console.error(error)
+      throw new Error(gravouAlgo
+        ? 'Parte dos valores foi salva, mas não tudo. Clique em Salvar de novo para completar.'
+        : `Não foi possível salvar: ${error.message}`)
+    }
+    gravouAlgo = true
   }
+
+  if (mudou(atualMes.data, valoresMes)) await gravar('bm_meses', linha(atualMes.data, valoresMes, { mes: inicio }))
 
   const sociosMudados = Object.entries(valoresSocios)
     .map(([id, novos]) => [atuaisSocios.data.find(s => s.usuario_id === id), novos, id])
     .filter(([atual, novos]) => mudou(atual, novos))
     .map(([atual, novos, id]) => linha(atual, novos, { mes: inicio, usuario_id: id }))
-  if (sociosMudados.length > 0) {
-    const { error } = await supabase.from('bm_socios_mes').upsert(sociosMudados)
-    if (error) throw error
-  }
+  if (sociosMudados.length > 0) await gravar('bm_socios_mes', sociosMudados)
 
   const despesasMudadas = Object.entries(valoresDespesas)
     .map(([id, novos]) => [atuaisDespesas.data.find(d => d.item_id === id), novos, id])
     .filter(([atual, novos]) => mudou(atual, novos))
     .map(([atual, novos, id]) => linha(atual, novos, { mes: inicio, item_id: id }))
-  if (despesasMudadas.length > 0) {
-    const { error } = await supabase.from('bm_despesas').upsert(despesasMudadas)
-    if (error) throw error
-  }
+  if (despesasMudadas.length > 0) await gravar('bm_despesas', despesasMudadas)
 
   return {}
 }

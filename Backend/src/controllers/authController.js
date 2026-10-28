@@ -1,6 +1,6 @@
 const { createClient } = require('@supabase/supabase-js')
 
-const { ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
+const { ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, TAMANHO_MINIMO_SENHA, validarDadosUsuario, criarUsuario } = require('../services/usuarios')
 const { supabaseIndisponivel, ERRO_INDISPONIVEL } = require('../middleware/auth')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -177,9 +177,6 @@ exports.atualizarMe = async (req, res) => {
 
   return exports.me(req, res)
 }
-
-// Mesmo mínimo da tela de cadastro
-const TAMANHO_MINIMO_SENHA = 8
 
 // Troca de senha de quem está logado (sem depender do e-mail de redefinição).
 // Trocar a senha pela service role encerra todas as sessões da conta, inclusive a de quem pediu,
