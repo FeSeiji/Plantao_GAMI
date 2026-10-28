@@ -2,31 +2,40 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const { buscarEmPaginas } = require('./paginas')
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const CAMPOS = 'id, data, anestesista_id, segundo_anestesista_id, escalado, cirurgiao, cirurgiao_id, paciente_nome, paciente_cpf, cirurgia, hospital_id, recibo, valor, comentarios, criado_por, criado_em, atualizado_por, atualizado_em'
 
 // Casos fora do período, já com anestesista, hospital e autores preenchidos.
-// Usado pela tela de casos fora e pelo BM Financeiro.
-async function listarCasosFora({ inicio, fim, anestesista_id } = {}) {
-  let query = supabase
-    .from('casos_fora')
-    .select(CAMPOS)
-    .order('data', { ascending: false })
-    .order('criado_em', { ascending: false })
-    .limit(500)
-
-  if (inicio) query = query.gte('data', inicio)
-  if (fim) query = query.lte('data', fim)
+// Usado pela tela de casos fora (os 500 mais recentes) e pelo BM Financeiro (todos: o período inteiro, em páginas).
+async function listarCasosFora({ inicio, fim, anestesista_id, todos = false } = {}) {
   // O médico pode estar no caso como primeiro ou segundo anestesista. O id vai dentro do texto do filtro,
   // então precisa ser um uuid de verdade (uma vírgula mudaria o filtro)
-  if (anestesista_id) {
-    if (!UUID_REGEX.test(anestesista_id)) throw new Error('anestesista_id inválido')
-    query = query.or(`anestesista_id.eq.${anestesista_id},segundo_anestesista_id.eq.${anestesista_id}`)
+  if (anestesista_id && !UUID_REGEX.test(anestesista_id)) throw new Error('anestesista_id inválido')
+
+  const consulta = () => {
+    let query = supabase
+      .from('casos_fora')
+      .select(CAMPOS)
+      .order('data', { ascending: false })
+      .order('criado_em', { ascending: false })
+      .order('id', { ascending: false })
+    if (inicio) query = query.gte('data', inicio)
+    if (fim) query = query.lte('data', fim)
+    if (anestesista_id) query = query.or(`anestesista_id.eq.${anestesista_id},segundo_anestesista_id.eq.${anestesista_id}`)
+    return query
   }
 
-  const { data, error } = await query
-  if (error) throw error
+  let data
+  if (todos) {
+    data = await buscarEmPaginas(consulta)
+  } else {
+    const resposta = await consulta().limit(500)
+    if (resposta.error) throw resposta.error
+    data = resposta.data
+  }
 
   const [perfis, hospitais, cirurgioes] = await Promise.all([
     buscarPerfis(data.flatMap(c => [c.anestesista_id, c.segundo_anestesista_id, c.criado_por, c.atualizado_por])),

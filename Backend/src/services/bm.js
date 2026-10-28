@@ -8,8 +8,9 @@ const { horarioDaVaga, turnoDaPosicao, rotuloDaVaga } = require('./posicoes')
 const { buscarAfastamentosNoPeriodo } = require('./afastamentos')
 const { buscarCargosDosUsuarios, contaComoSocio, contaComoSocioJr } = require('./usuarios')
 const { listarCasosFora } = require('./casosFora')
-const { buscarAjustesDoMes } = require('./ajustesPontos')
-const { buscarFinanceiro } = require('./financeiroBm')
+const { buscarAjustesDoMes, buscarAjustesDoPeriodo } = require('./ajustesPontos')
+const { buscarFinanceiroDosMeses } = require('./financeiroBm')
+const { buscarEmPaginas } = require('./paginas')
 const { buscarExtras, duracaoDoExtra } = require('./extras')
 const { MES_INICIAL_CONTA_CORRENTE, calcularMes, saldoInicial, mesSeguinte } = require('./calculoBm')
 
@@ -34,31 +35,71 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 //   histórico deles. conta_corrente.dif_mes_anterior: a diferença final do mês anterior de cada sócio, refeita em
 //   cascata desde o primeiro mês da conta corrente (vazia nesse mês, que usa o saldo inicial, e antes dele).
 // O noturno conta no mês em que o plantão começa.
-// Opções (só para a cascata): contaCorrente: false não refaz os meses anteriores; incluir: ids de sócios que
-// viram coluna mesmo sem nada no mês (quem tem saldo vindo do mês anterior)
-async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
-  const difMesAnterior = contaCorrente ? await calcularDifMesAnterior(mes) : null
+async function montarBm(mes) {
+  const [difMesAnterior, periodo] = await Promise.all([calcularDifMesAnterior(mes), carregarPeriodo([mes], { completo: true })])
+  return montarDoMes(mes, dadosDoMes(periodo, mes), { difMesAnterior, comPerfis: true })
+}
 
+// Primeiro e último dia do mês 'AAAA-MM'
+function limitesDoMes(mes) {
   const [ano, mesNum] = mes.split('-').map(Number)
-  const inicio = `${mes}-01`
-  const fim = `${mes}-${String(new Date(Date.UTC(ano, mesNum, 0)).getUTCDate()).padStart(2, '0')}`
+  return { inicio: `${mes}-01`, fim: `${mes}-${String(new Date(Date.UTC(ano, mesNum, 0)).getUTCDate()).padStart(2, '0')}` }
+}
 
-  const { data: plantoes, error } = await supabase
-    .from('plantoes')
-    .select('id, data, plantao_usuarios(usuario_id, posicao)')
-    .gte('data', inicio)
-    .lte('data', fim)
-  if (error) throw error
+// Tudo o que o BM lê do banco para os meses ('AAAA-MM', em ordem), com uma consulta por tabela para o período
+// inteiro: assim a conta corrente em cascata não repete as consultas mês a mês. completo: o histórico (dos
+// ajustes e do financeiro), que só a tela do mês mostra
+async function carregarPeriodo(meses, { completo = false } = {}) {
+  const { inicio } = limitesDoMes(meses[0])
+  const { fim } = limitesDoMes(meses[meses.length - 1])
 
-  const [trocas, cargos, casosFora, afastamentos, { ajustes, historico }, financeiro, extras] = await Promise.all([
-    buscarTrocasAceitas(plantoes.map(p => p.id)),
+  const plantoes = await buscarEmPaginas(() =>
+    supabase
+      .from('plantoes')
+      .select('id, data, plantao_usuarios(usuario_id, posicao)')
+      .gte('data', inicio)
+      .lte('data', fim)
+      .order('data')
+      .order('id')
+  )
+
+  const [trocas, cargos, casosFora, afastamentos, ajustes, financeiros, extras] = await Promise.all([
+    buscarTrocasAceitas(inicio, fim),
     buscarCargosDosUsuarios(),
-    listarCasosFora({ inicio, fim }),
+    listarCasosFora({ inicio, fim, todos: true }),
     buscarAfastamentosNoPeriodo(plantoes.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)), inicio, fim),
-    buscarAjustesDoMes(inicio),
-    buscarFinanceiro(mes),
+    completo ? buscarAjustesDoMes(inicio) : buscarAjustesDoPeriodo(inicio, `${meses[meses.length - 1]}-01`).then(a => ({ ajustes: a, historico: [] })),
+    buscarFinanceiroDosMeses(meses, { comHistorico: completo }),
     buscarExtras({ inicio, fim }),
   ])
+  return { plantoes, trocas, cargos, casosFora, afastamentos, ...ajustes, financeiros, extras }
+}
+
+// A parte do período que é do mês (o que montarDoMes usa)
+function dadosDoMes(periodo, mes) {
+  const { inicio, fim } = limitesDoMes(mes)
+  const doMes = data => data >= inicio && data <= fim
+  const plantoes = periodo.plantoes.filter(p => doMes(p.data))
+  const idsPlantoes = new Set(plantoes.map(p => p.id))
+  return {
+    plantoes,
+    trocas: periodo.trocas.filter(t => idsPlantoes.has(t.plantao_id)),
+    cargos: periodo.cargos,
+    casosFora: periodo.casosFora.filter(c => doMes(c.data)),
+    afastamentos: periodo.afastamentos.filter(a => a.data_inicio <= fim && a.data_fim >= inicio),
+    // Na cascata os ajustes vêm com o mês; no mês sozinho, já são só dele
+    ajustes: periodo.ajustes.filter(a => !a.mes || a.mes === inicio).map(({ mes: _mes, ...a }) => a),
+    historico: periodo.historico,
+    financeiro: periodo.financeiros.get(mes),
+    extras: periodo.extras.filter(e => doMes(e.data)),
+  }
+}
+
+// As contas do BM de um mês, a partir dos dados já lidos. difMesAnterior: a diferença final do mês anterior (só no
+// BM da tela e do Excel). incluir (só na cascata): sócios que viram coluna mesmo sem nada no mês (quem tem saldo
+// vindo do mês anterior). comPerfis: busca nome e sigla de cada um (a cascata só precisa das contas)
+async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], comPerfis = false } = {}) {
+  const { plantoes, trocas, cargos, casosFora, afastamentos, ajustes, historico, financeiro, extras } = dados
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
   const ehSocioJr = id => contaComoSocioJr(cargos.get(id)?.roles)
   // Trocas por horas e coberturas de férias: a vaga continua do titular (repartirPlantao divide)
@@ -192,7 +233,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     acc.horas_extra = duasCasas(acc.horas_extra)
   }
 
-  const perfis = await buscarPerfis([
+  const perfis = !comPerfis ? new Map() : await buscarPerfis([
     ...plantonistas.keys(),
     ...sociosJr.keys(),
     ...horasExtraJr.keys(),
@@ -291,30 +332,36 @@ function resumirSociosJr(plantoesPorSocio, horasExtra, perfis) {
 
 // Diferença final do mês anterior de cada sócio: refaz as contas de cada mês desde o primeiro da conta corrente
 // (que parte do saldo inicial digitado). null no primeiro mês e antes dele
+// Os meses anteriores são lidos do banco de uma vez (carregarPeriodo) e refeitos em memória, um depois do outro
 async function calcularDifMesAnterior(mes) {
   if (mes <= MES_INICIAL_CONTA_CORRENTE) return null
+  const meses = []
+  for (let m = MES_INICIAL_CONTA_CORRENTE; m < mes; m = mesSeguinte(m)) meses.push(m)
+  const periodo = await carregarPeriodo(meses)
+
   let dif = null
-  for (let m = MES_INICIAL_CONTA_CORRENTE; m < mes; m = mesSeguinte(m)) {
+  for (const m of meses) {
     const incluir = Object.entries(dif ?? {}).filter(([, v]) => v !== 0).map(([id]) => id)
-    const bm = await montarBm(m, { contaCorrente: false, incluir })
+    const bm = await montarDoMes(m, dadosDoMes(periodo, m), { incluir })
     const anterior = m === MES_INICIAL_CONTA_CORRENTE ? saldoInicial(bm) : dif
     dif = calcularMes(bm, anterior).contaCorrente.diferencaFinal
   }
   return dif
 }
 
-// Trocas aceitas desses plantões: da vaga inteira (o médico já foi trocado em plantao_usuarios),
+// Trocas aceitas dos plantões do período: da vaga inteira (o médico já foi trocado em plantao_usuarios),
 // por horas e coberturas de férias
-async function buscarTrocasAceitas(plantaoIds) {
-  const ids = [...new Set(plantaoIds)]
-  if (ids.length === 0) return []
-  const { data, error } = await supabase
-    .from('plantao_trocas')
-    .select('id, plantao_id, posicao, usuario_saida, usuario_entrada, hora_inicio, hora_fim, cobertura_ferias')
-    .in('plantao_id', ids)
-    .eq('status', 'aceita')
-  if (error) throw error
-  return data
+async function buscarTrocasAceitas(inicio, fim) {
+  const trocas = await buscarEmPaginas(() =>
+    supabase
+      .from('plantao_trocas')
+      .select('id, plantao_id, posicao, usuario_saida, usuario_entrada, hora_inicio, hora_fim, cobertura_ferias, plantoes!inner(data)')
+      .eq('status', 'aceita')
+      .gte('plantoes.data', inicio)
+      .lte('plantoes.data', fim)
+      .order('id')
+  )
+  return trocas.map(({ plantoes: _plantao, ...t }) => t)
 }
 
 function ordenarColunas(socios) {

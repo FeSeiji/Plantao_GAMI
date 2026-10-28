@@ -2,6 +2,8 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
+const { buscarEmPaginas } = require('./paginas')
+
 const CAMPOS_AJUSTE = 'id, usuario_id, tipo, pontos, motivo, criado_por, criado_em, atualizado_por, atualizado_em'
 
 // Ajustes manuais de pontos do mês (os excluídos ficam só no histórico) e o histórico deles, do mais recente
@@ -39,7 +41,22 @@ async function buscarAjustesDoMes(inicioDoMes) {
   return { ajustes: ajustes.data, historico: eventos.reverse() }
 }
 
+// Ajustes (não excluídos) de vários meses de uma vez, com o mês de cada um, sem o histórico: é o que a conta corrente
+// em cascata usa. primeiro e ultimo: 'AAAA-MM-01'
+async function buscarAjustesDoPeriodo(primeiro, ultimo) {
+  return buscarEmPaginas(() =>
+    supabase
+      .from('ajustes_pontos')
+      .select(`mes, ${CAMPOS_AJUSTE}`)
+      .gte('mes', primeiro)
+      .lte('mes', ultimo)
+      .is('excluido_em', null)
+      .order('criado_em')
+      .order('id')
+  )
+}
+
 // Tipo do ajuste: a linha em que ele cai no BM (Administrativo e Reunião têm linha própria, como na planilha)
 const TIPOS_AJUSTE = ['administrativo', 'reuniao', 'outro']
 
-module.exports = { CAMPOS_AJUSTE, TIPOS_AJUSTE, buscarAjustesDoMes }
+module.exports = { CAMPOS_AJUSTE, TIPOS_AJUSTE, buscarAjustesDoMes, buscarAjustesDoPeriodo }
