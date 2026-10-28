@@ -27,7 +27,7 @@ type Props = {
   onSaved: () => void
 }
 
-const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista"]
 
 const nomeDe = (p: Pessoa) => p.nome ?? p.email ?? p.id
 

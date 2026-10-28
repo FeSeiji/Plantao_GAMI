@@ -14,9 +14,9 @@ const {
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
 // Mudar médicos de vaga: gestão e os médicos escalados no plantão (conferido no controller).
 // Mudar de vaga é também como se define o coordenador
-const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'anestesita_plantonista', 'tecnico')
+const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista', 'tecnico')
 // Pedir uma vaga livre: só médicos (a gestão aprova ou recusa)
-const medicos = requireRole('anestesita_socio', 'anestesita_plantonista')
+const medicos = requireRole('anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)

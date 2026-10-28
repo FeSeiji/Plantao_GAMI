@@ -4,9 +4,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { pontosDaVaga, categoriaDaVaga, categoriasZeradas, duasCasas } = require('./pontuacao')
 const { repartirPlantao, duracaoDaVaga, duracaoDaCobertura } = require('./coberturas')
-const { horarioDaVaga } = require('./posicoes')
+const { horarioDaVaga, turnoDaPosicao, rotuloDaVaga } = require('./posicoes')
 const { buscarAfastamentosNoPeriodo } = require('./afastamentos')
-const { buscarCargosDosUsuarios, contaComoSocio } = require('./usuarios')
+const { buscarCargosDosUsuarios, contaComoSocio, contaComoSocioJr } = require('./usuarios')
 const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes } = require('./ajustesPontos')
 const { buscarFinanceiro } = require('./financeiroBm')
@@ -25,6 +25,8 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 // - casosForaBm: casos fora com valor (GAMI/ADDS, Sem nota fiscal ou sem recibo ainda), com a parte de cada sócio
 //   (dois anestesistas: metade cada).
 // - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
+// - sociosJr: os plantões de cada sócio Jr, agrupados pela vaga e pelo dia da semana. Não têm pontos nem entram
+//   na despesa dos plantonistas.
 // - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, valores por sócio) e o
 //   histórico deles. conta_corrente.dif_mes_anterior: a diferença final do mês anterior de cada sócio, refeita em
 //   cascata desde o primeiro mês da conta corrente (vazia nesse mês, que usa o saldo inicial, e antes dele).
@@ -54,6 +56,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     buscarFinanceiro(mes),
   ])
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
+  const ehSocioJr = id => contaComoSocioJr(cargos.get(id)?.roles)
   // Trocas por horas e coberturas de férias: a vaga continua do titular (repartirPlantao divide)
   const coberturas = trocas.filter(t => t.hora_inicio)
 
@@ -65,6 +68,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
   for (const [id, c] of cargos) if (c.ativo && contaComoSocio(c.roles)) socioDe(id)
 
   const plantonistas = new Map()
+  const sociosJr = new Map()
 
   // Cada vaga ocupada (ou o pedaço dela, na troca por horas) conta como um plantão de quem a fez
   for (const plantao of plantoes) {
@@ -73,6 +77,8 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
         const acc = socioDe(usuario_id)
         acc.plantoes += 1
         acc.pontos_plantoes += pontosDaVaga(plantao.data, posicao) * fracao
+      } else if (ehSocioJr(usuario_id)) {
+        sociosJr.set(usuario_id, [...(sociosJr.get(usuario_id) ?? []), { data: plantao.data, posicao, fracao }])
       } else {
         // categorias: quanto de cada plantão ele fez (1, ou a fração na troca por horas e no congresso)
         const acc = plantonistas.get(usuario_id) ?? { categorias: categoriasZeradas() }
@@ -160,6 +166,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
 
   const perfis = await buscarPerfis([
     ...plantonistas.keys(),
+    ...sociosJr.keys(),
     ...socios.keys(),
     ...substituicoes.flatMap(s => [s.saida, s.entrada]),
     ...ajustes.flatMap(a => [a.criado_por, a.atualizado_por]),
@@ -179,6 +186,13 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     plantonistas: [...plantonistas]
       .map(([id, valores]) => ({ ...resumoDoPerfil(id, perfis), ...valores }))
       .sort((a, b) => b.total - a.total || (a.nome ?? '').localeCompare(b.nome ?? '')),
+    sociosJr: [...sociosJr]
+      .map(([id, plantoesJr]) => ({
+        ...resumoDoPerfil(id, perfis),
+        total: duasCasas(plantoesJr.reduce((s, p) => s + p.fracao, 0)),
+        grupos: agruparPlantoesJr(plantoesJr),
+      }))
+      .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '')),
     // Todos os casos fora do mês, com todos os campos, para a aba extra do Excel
     casosFora: [...casosFora].reverse(),
     ajustes: ajustes.map(({ usuario_id, criado_por, atualizado_por, pontos, ...a }) => ({
@@ -205,6 +219,31 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
       })),
     },
   }
+}
+
+const DIAS_DA_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+
+// Plantões de um sócio Jr agrupados pelo dia da semana, pelo turno e pelo nome da vaga naquele dia ("2º" do
+// diurno de sábado), de segunda a domingo e na ordem da escala. plantoes: quanto do plantão ele fez (a fração na
+// troca por horas e no congresso); o noturno conta no dia em que começa
+function agruparPlantoesJr(plantoes) {
+  const grupos = new Map()
+  for (const { data, posicao, fracao } of plantoes) {
+    const diaDaSemana = new Date(`${data}T12:00:00Z`).getUTCDay()
+    const turno = turnoDaPosicao(posicao)
+    const vaga = rotuloDaVaga(data, posicao)
+    const chave = `${diaDaSemana}|${turno}|${vaga}`
+    // ordem: de segunda a domingo e, no dia, pela vaga
+    const grupo = grupos.get(chave) ??
+      { dia_semana: DIAS_DA_SEMANA[diaDaSemana], turno, vaga, plantoes: 0, datas: [], ordem: [(diaDaSemana + 6) % 7, posicao] }
+    grupo.plantoes += fracao
+    grupo.datas.push({ data, fracao: duasCasas(fracao) })
+    grupo.ordem[1] = Math.min(grupo.ordem[1], posicao)
+    grupos.set(chave, grupo)
+  }
+  return [...grupos.values()]
+    .sort((a, b) => a.ordem[0] - b.ordem[0] || a.ordem[1] - b.ordem[1])
+    .map(({ ordem, ...g }) => ({ ...g, plantoes: duasCasas(g.plantoes), datas: g.datas.sort((a, b) => a.data.localeCompare(b.data)) }))
 }
 
 // Diferença final do mês anterior de cada sócio: refaz as contas de cada mês desde o primeiro da conta corrente

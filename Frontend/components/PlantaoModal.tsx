@@ -116,13 +116,13 @@ type EventoHistorico =
 
 // Quem pode mudar médicos de vaga — mesma lista do requireRole em Backend/src/routes/plantoes.js.
 // Fora da gestão, só nos plantões em que está escalado
-const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "anestesita_plantonista", "tecnico"];
+const ROLES_MUDAR_POSICAO = ["escritorio", "admin", "anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista", "tecnico"];
 // Preencher e esvaziar vagas: só a gestão — mesma lista em Backend/src/routes/plantoes.js
 const ROLES_GERIR_EQUIPE = ["escritorio", "admin", "tecnico"];
 // Criar e editar plantões (dia, título): só a gestão — mesma lista em Backend/src/routes/plantoes.js
 export const ROLES_EDITAR_PLANTAO = ["escritorio", "admin", "tecnico"];
 // Pedir uma vaga livre: só médicos — mesma lista em Backend/src/routes/plantoes.js
-const ROLES_MEDICO = ["anestesita_socio", "anestesita_plantonista"];
+const ROLES_MEDICO = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista"];
 
 type Usuario = {
   id: string;
@@ -290,7 +290,7 @@ export default function PlantaoModal({
       // O substituto precisa estar livre no turno da vaga; na troca por horas, só no intervalo
       const params = new URLSearchParams({
         search: termo,
-        role: "anestesita_plantonista,anestesita_socio",
+        role: "anestesita_plantonista,anestesita_socio,anestesita_socio_jr",
         data: intervaloTroca
           ? dataDaCobertura(horarioTrocando, intervaloTroca.horaInicio)
           : plantao.data,
@@ -327,7 +327,7 @@ export default function PlantaoModal({
       const horario = horarioDaVaga(plantao.data, adicionando.posicao);
       const params = new URLSearchParams({
         search: termo,
-        role: "anestesita_plantonista,anestesita_socio",
+        role: "anestesita_plantonista,anestesita_socio,anestesita_socio_jr",
         data: plantao.data,
         horaInicio: horario.hora_inicio,
         horaFim: horario.hora_fim,

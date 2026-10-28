@@ -5,7 +5,7 @@ const { listar, criar, atualizar, remover } = require('../controllers/casosFora'
 
 // Casos fora: todos os usuários logados veem; criam os anestesistas e a gestão.
 // Editar e excluir (quem criou ou a gestão) é conferido no controller, caso a caso.
-const podeCriar = requireRole('anestesita_socio', 'anestesita_plantonista', 'escritorio', 'admin', 'tecnico')
+const podeCriar = requireRole('anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista', 'escritorio', 'admin', 'tecnico')
 
 router.get('/', listar)
 router.post('/', podeCriar, criar)

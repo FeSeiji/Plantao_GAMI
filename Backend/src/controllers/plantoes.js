@@ -14,7 +14,7 @@ const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { esvaziarVaga } = require('../services/escalas')
 const { estaDesativado } = require('../services/usuarios')
 
-const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio']
+const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio', 'anestesita_socio_jr']
 // Um plantão por dia, com as vagas do diurno e do noturno (services/posicoes.js)
 const SELECT_PLANTAO = '*, plantao_usuarios(usuario_id, posicao)'
 
@@ -452,7 +452,7 @@ exports.criarTroca = async (req, res) => {
   try {
     const invalidos = await usuariosSemRoleMedico([usuario_entrada])
     if (invalidos.length > 0) {
-      return res.status(400).json({ error: 'usuario_entrada precisa ser um médico ativo (anestesita_socio ou anestesita_plantonista)' })
+      return res.status(400).json({ error: 'usuario_entrada precisa ser um médico ativo (sócio, sócio Jr ou plantonista)' })
     }
 
     // Uma vaga tem no máximo uma troca por horas (ou cobertura de férias) valendo; com ela ativa, nem a troca inteira é aceita
@@ -1053,7 +1053,7 @@ async function validarFila(fila, { data }) {
   const usuarioIds = [...new Set(fila.map(f => f.usuario_id))]
   const invalidos = await usuariosSemRoleMedico(usuarioIds)
   if (invalidos.length > 0) {
-    throw new Error(`Usuários que não são médicos ativos (anestesita_socio ou anestesita_plantonista): ${invalidos.join(', ')}`)
+    throw new Error(`Usuários que não são médicos ativos (sócio, sócio Jr ou plantonista): ${invalidos.join(', ')}`)
   }
 
   await validarHorariosLivres(fila, data)

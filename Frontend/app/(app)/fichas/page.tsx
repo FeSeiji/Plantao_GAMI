@@ -10,7 +10,7 @@ import { FichaResumo, Pessoa, rotuloTipo } from "../../../components/fichas"
 import { apiFetch } from "../../../components/sessao"
 
 // Quem cria fichas — mesma lista do requireRole em Backend/src/routes/fichas.js
-const ROLES_CRIAR_FICHA = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
+const ROLES_CRIAR_FICHA = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
 // O backend devolve a lista em páginas desse tamanho (FICHAS_POR_PAGINA em Backend/src/controllers/fichas.js)
 const FICHAS_POR_PAGINA = 200
 

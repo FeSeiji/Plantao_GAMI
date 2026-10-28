@@ -71,7 +71,7 @@ export default function NovoPlantaoModal({ onClose, onCreated }: Props) {
     setBuscando(true)
     const timeoutId = setTimeout(() => {
       const token = localStorage.getItem("token")
-      const params = new URLSearchParams({ search: termo, role: "anestesita_plantonista,anestesita_socio" })
+      const params = new URLSearchParams({ search: termo, role: "anestesita_plantonista,anestesita_socio,anestesita_socio_jr" })
       // A data marca quem está de férias/congresso e, com o horário do turno da vaga, esconde quem já está ocupado
       if (data) {
         const horario = horarioDaVaga(data, adicionando.posicao)

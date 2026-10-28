@@ -10,7 +10,7 @@ import { CasoFora, anestesistasDe, formatarValor } from "../../../components/cas
 import { apiFetch } from "../../../components/sessao"
 
 // Quem registra casos — mesma lista do requireRole em Backend/src/routes/casosFora.js
-const ROLES_CRIAR_CASO = ["anestesita_socio", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
+const ROLES_CRIAR_CASO = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista", "escritorio", "admin", "tecnico"]
 
 // Listas da tela: hospitais a gestão cadastra; cirurgiões, só o escritório e o técnico (Backend/src/routes/cirurgioes.js)
 const CADASTROS = {
