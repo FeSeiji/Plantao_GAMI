@@ -10,6 +10,7 @@ import AjustePontosModal, { AjusteEditavel, TipoAjuste, rotuloTipoAjuste } from 
 import ConfirmacaoModal, { Confirmacao } from "../../../components/ConfirmacaoModal"
 import CampoNumero from "../../../components/bm/CampoNumero"
 import DespesasBm from "../../../components/bm/DespesasBm"
+import { Recibo, rotuloRecibo } from "../../../components/casosFora"
 import HistoricoFinanceiro, { EventoFinanceiro } from "../../../components/bm/HistoricoFinanceiro"
 import {
   CATEGORIAS_PLANTAO,
@@ -63,11 +64,12 @@ type Substituicao = {
   pontos: PorSocio
 }
 
-// Caso fora com recibo GAMI/ADDS e a parte de cada sócio (dois anestesistas: metade cada)
-type CasoForaRecibo = {
+// Caso fora com valor (com ou sem recibo) e a parte de cada sócio (dois anestesistas: metade cada)
+type CasoForaBm = {
   id: string
   data: string
   escalado: boolean
+  recibo: Recibo | null
   hospital: string | null
   cirurgia: string
   valor: number
@@ -111,7 +113,7 @@ type Bm = {
   mes: string
   socios: Socio[]
   substituicoes: Substituicao[]
-  casosForaRecibo: CasoForaRecibo[]
+  casosForaBm: CasoForaBm[]
   plantonistas: LinhaPlantonista[]
   ajustes: Ajuste[]
   historico: EventoHistorico[]
@@ -159,9 +161,12 @@ const somarTudo = (linha: PorSocio) => arredondar(Object.values(linha).reduce((t
 
 const formatarDiaMes = (data: string) => `${data.slice(8, 10)}/${data.slice(5, 7)}`
 
+// Caso fora sem recibo GAMI/ADDS: entra nas mesmas contas, com o aviso no rótulo
+const avisoRecibo = (recibo: Recibo | null) => (recibo === "gami" ? null : rotuloRecibo(recibo) || "Sem recibo ainda")
+
 // Bloco de casos fora (escalado ou não): um caso por linha, o total e a divisão entre médico e custas
 function linhasCasosFora(
-  casos: CasoForaRecibo[],
+  casos: CasoForaBm[],
   socios: Socio[],
   { titulo, subtitulo, medico, custas, chave }: { titulo: string; subtitulo: string; medico: number; custas: number; chave: string },
 ): { linhas: LinhaGrade[]; total: PorSocio; medico: PorSocio; custas: PorSocio } {
@@ -182,7 +187,7 @@ function linhasCasosFora(
               tipo: "valores",
               chave: `caso-${c.id}`,
               rotulo: `${formatarDiaMes(c.data)} · ${c.hospital ?? c.cirurgia}`,
-              detalhe: c.hospital ? c.cirurgia : undefined,
+              detalhe: [c.hospital ? c.cirurgia : null, avisoRecibo(c.recibo)].filter(Boolean).join(" · ") || undefined,
               valores: c.partes,
               formato: "dinheiro",
             }),
@@ -206,20 +211,20 @@ function detalheSubstituicao(s: Substituicao) {
   return vaga
 }
 
-// Primeira parte da planilha: GAMI PRO sem recibo (linha 2), casos fora com recibo e a prévia dos sócios.
+// Primeira parte da planilha: GAMI PRO sem recibo (linha 2), casos fora e a prévia dos sócios.
 // Devolve também os totais que entram no faturamento, 100% dos casos fora (R122) e as custas (R124), e o que vai
 // para a conta corrente: a prévia (distribuição CF) e a parte do médico nos casos fora (CF)
 function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, campos: Partial<SocioFinanceiro>) => void) {
   const { socios } = bm
   const escalado = linhasCasosFora(
-    bm.casosForaRecibo.filter((c) => c.escalado),
+    bm.casosForaBm.filter((c) => c.escalado),
     socios,
-    { titulo: "Casos fora com recibo — escalado", subtitulo: "Valor integral; custas de 50%", medico: 0.5, custas: 0.5, chave: "escalado" },
+    { titulo: "Casos fora — escalado", subtitulo: "Valor integral; custas de 50%", medico: 0.5, custas: 0.5, chave: "escalado" },
   )
   const naoEscalado = linhasCasosFora(
-    bm.casosForaRecibo.filter((c) => !c.escalado),
+    bm.casosForaBm.filter((c) => !c.escalado),
     socios,
-    { titulo: "Casos fora com recibo — não escalado", subtitulo: "Valor integral; custas de 20%", medico: 0.8, custas: 0.2, chave: "nao-escalado" },
+    { titulo: "Casos fora — não escalado", subtitulo: "Valor integral; custas de 20%", medico: 0.8, custas: 0.2, chave: "nao-escalado" },
   )
   const gamiPro: PorSocio = Object.fromEntries(
     socios.filter((s) => fin.socios[s.id]?.gami_pro_sem_recibo != null).map((s) => [s.id, fin.socios[s.id].gami_pro_sem_recibo!]),
@@ -251,7 +256,7 @@ function montarCasosFora(bm: Bm, fin: Financeiro, editarSocio?: (id: string, cam
   ]
   return {
     linhas,
-    casosForaRecibo100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
+    casosFora100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
     custasCasosFora: somarTudo(custas),
     previa,
     medico: somar([escalado.medico, naoEscalado.medico], socios),
@@ -407,7 +412,7 @@ function montarContaCorrente(
     digitada("distr_dia_10", "Distr. dia 10"),
     { tipo: "valores", chave: "distr-total", rotulo: "Distr. total", valores: distrTotal, formato: "dinheiro", destaque: "subtotal" },
     { tipo: "valores", chave: "diferenca-final", rotulo: "Diferença final", detalhe: "Prev. atualizada − distr. total", valores: diferencaFinal, formato: "dinheiro", destaque: "total" },
-    { tipo: "valores", chave: "cf", rotulo: "CF", detalhe: "Parte do médico nos casos fora com recibo", valores: medico, formato: "dinheiro" },
+    { tipo: "valores", chave: "cf", rotulo: "CF", detalhe: "Parte do médico nos casos fora", valores: medico, formato: "dinheiro" },
     { tipo: "valores", chave: "pro-e-cf", rotulo: "Pró e CF", detalhe: "Distr. total + CF", valores: somar([distrTotal, medico], socios), formato: "dinheiro", destaque: "subtotal" },
     { tipo: "secao", titulo: "Bancos da distribuição", subtitulo: "Onde saiu a distribuição dos dias 05 e 10" },
     { tipo: "siglas" },
@@ -560,7 +565,7 @@ function CardFaturamento({
       </div>
       <p className="text-xs text-gray-500 mt-3">
         GAMI PRO sem recibo (soma dos sócios): <strong className="tabular-nums">{formatarDinheiro(resultado.gamiProSemRecibo)}</strong> · Casos fora
-        com recibo (100%): <strong className="tabular-nums">{formatarDinheiro(resultado.casosForaRecibo100)}</strong>
+        (100%): <strong className="tabular-nums">{formatarDinheiro(resultado.casosFora100)}</strong>
       </p>
     </section>
   )
@@ -967,7 +972,7 @@ export default function BmFinanceiroPage() {
   const resultado =
     bm && fin && casosFora
       ? calcularFinanceiro(fin, {
-          casosForaRecibo100: casosFora.casosForaRecibo100,
+          casosFora100: casosFora.casosFora100,
           custasCasosFora: casosFora.custasCasosFora,
           plantonistas: bm.plantonistas,
         })

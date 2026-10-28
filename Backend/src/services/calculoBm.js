@@ -11,7 +11,7 @@ const FATOR_DISTRIBUICAO = 0.63
 const MES_INICIAL_CONTA_CORRENTE = '2026-11'
 
 // Previsão de impostos trimestrais (N115 a R120 da planilha), por empresa. A PMP calcula CSLL e IRPJ sobre o
-// faturamento "por dentro" (× 100 ÷ (100 − 4,65 − 1,5)); a GAMI, sobre recibos + casos fora com recibo. O
+// faturamento "por dentro" (× 100 ÷ (100 − 4,65 − 1,5)); a GAMI, sobre recibos + casos fora. O
 // adicional de IRPJ é 10% do que passar de R$ 20.000 em 32% do faturamento — a planilha não tinha o MAX(0) e,
 // abaixo disso, dava um valor negativo. PIS e Cofins estão com alíquota zero na planilha
 const IMPOSTOS = {
@@ -46,7 +46,7 @@ function calcularImpostos(empresa, faturamento) {
   return { csll: valorCsll, irpj: valorIrpj, total: arredondar(valorCsll + valorIrpj) }
 }
 
-// Casos fora com recibo (linhas 8 a 57): o total de cada bloco, a parte do médico e as custas, e a prévia
+// Casos fora (linhas 8 a 57): o total de cada bloco, a parte do médico e as custas, e a prévia
 // dos sócios (GAMI PRO sem recibo + custas), que é a "distribuição CF" da conta corrente
 function calcularCasosFora(bm, fin) {
   const ids = bm.socios.map(s => s.id)
@@ -54,8 +54,8 @@ function calcularCasosFora(bm, fin) {
     const total = somar(casos.map(c => c.partes), ids)
     return { total, medico: multiplicar(total, medico), custas: multiplicar(total, custas) }
   }
-  const escalado = bloco(bm.casosForaRecibo.filter(c => c.escalado), 0.5, 0.5)
-  const naoEscalado = bloco(bm.casosForaRecibo.filter(c => !c.escalado), 0.8, 0.2)
+  const escalado = bloco(bm.casosForaBm.filter(c => c.escalado), 0.5, 0.5)
+  const naoEscalado = bloco(bm.casosForaBm.filter(c => !c.escalado), 0.8, 0.2)
   const gamiPro = Object.fromEntries(
     ids.filter(id => fin.socios[id]?.gami_pro_sem_recibo != null).map(id => [id, fin.socios[id].gami_pro_sem_recibo])
   )
@@ -63,7 +63,7 @@ function calcularCasosFora(bm, fin) {
   return {
     previa: somar([gamiPro, custas], ids),
     medico: somar([escalado.medico, naoEscalado.medico], ids),
-    casosForaRecibo100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
+    casosFora100: arredondar(somarTudo(escalado.total) + somarTudo(naoEscalado.total)),
     custasCasosFora: somarTudo(custas),
   }
 }
@@ -79,15 +79,15 @@ function pagamentoPlantonista(p, valores) {
 }
 
 // Faturamento, despesas e rateio (calcularFinanceiro de calculos.ts)
-function calcularFinanceiro(fin, { casosForaRecibo100, custasCasosFora, plantonistas }) {
+function calcularFinanceiro(fin, { casosFora100, custasCasosFora, plantonistas }) {
   const gamiProSemRecibo = arredondar(Object.values(fin.socios).reduce((t, s) => t + (s.gami_pro_sem_recibo ?? 0), 0))
   const produtividade = {
     pmp: arredondar((fin.faturamento_pmp ?? 0) * PERCENTUAL_PRODUTIVIDADE),
-    gami: arredondar((gamiProSemRecibo + (fin.gami_total ?? 0) + casosForaRecibo100) * PERCENTUAL_PRODUTIVIDADE),
+    gami: arredondar((gamiProSemRecibo + (fin.gami_total ?? 0) + casosFora100) * PERCENTUAL_PRODUTIVIDADE),
   }
   const impostos = {
     pmp: calcularImpostos('pmp', fin.faturamento_pmp ?? 0),
-    gami: calcularImpostos('gami', (fin.recibos_gami ?? 0) + casosForaRecibo100),
+    gami: calcularImpostos('gami', (fin.recibos_gami ?? 0) + casosFora100),
   }
   const valores = valoresPlantao(fin)
   const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores), 0))

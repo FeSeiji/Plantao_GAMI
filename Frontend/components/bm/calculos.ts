@@ -9,7 +9,7 @@ export const PERCENTUAL_PRODUTIVIDADE = 0.001
 export const FATOR_DISTRIBUICAO = 0.63
 
 // Previsão de impostos trimestrais (N115 a R120 da planilha). A PMP calcula CSLL e IRPJ sobre o faturamento
-// "por dentro" (× 100 ÷ (100 − 4,65 − 1,5)); a GAMI, sobre recibos + casos fora com recibo. O adicional de IRPJ
+// "por dentro" (× 100 ÷ (100 − 4,65 − 1,5)); a GAMI, sobre recibos + casos fora. O adicional de IRPJ
 // é 10% do que passar de R$ 20.000 em 32% do faturamento (nunca negativo)
 const IMPOSTOS = {
   pmp: { csll: 0.0188, irpj: 0.033, porDentro: true },
@@ -131,7 +131,7 @@ export function pagamentoPlantonista(p: Plantonista, valores: Record<CategoriaPl
 
 export type ResultadoFinanceiro = {
   gamiProSemRecibo: number // soma da linha 2 (Q110)
-  casosForaRecibo100: number // R122: 100% dos casos fora com recibo
+  casosFora100: number // R122: 100% dos casos fora
   custasCasosFora: number // R124: a parte da casa nos casos fora, que entra no rateio
   produtividade: Record<Empresa, number> // F106 e L106: de cada funcionária, em cada empresa
   impostos: Record<Empresa, Impostos> // Q117 a R120: previsão de CSLL e IRPJ
@@ -142,19 +142,19 @@ export type ResultadoFinanceiro = {
   valorParaDistribuir: number // R128
 }
 
-// casosForaRecibo100 e custasCasosFora vêm da grade dos casos fora (R122 e R124 da planilha)
+// casosFora100 e custasCasosFora vêm da grade dos casos fora (R122 e R124 da planilha)
 export function calcularFinanceiro(
   f: Financeiro,
-  { casosForaRecibo100, custasCasosFora, plantonistas }: { casosForaRecibo100: number; custasCasosFora: number; plantonistas: Plantonista[] },
+  { casosFora100, custasCasosFora, plantonistas }: { casosFora100: number; custasCasosFora: number; plantonistas: Plantonista[] },
 ): ResultadoFinanceiro {
   const gamiProSemRecibo = arredondar(Object.values(f.socios).reduce((t, s) => t + (s.gami_pro_sem_recibo ?? 0), 0))
   const produtividade = {
     pmp: arredondar((f.faturamento_pmp ?? 0) * PERCENTUAL_PRODUTIVIDADE),
-    gami: arredondar((gamiProSemRecibo + (f.gami_total ?? 0) + casosForaRecibo100) * PERCENTUAL_PRODUTIVIDADE),
+    gami: arredondar((gamiProSemRecibo + (f.gami_total ?? 0) + casosFora100) * PERCENTUAL_PRODUTIVIDADE),
   }
   const impostos = {
     pmp: calcularImpostos("pmp", f.faturamento_pmp ?? 0),
-    gami: calcularImpostos("gami", (f.recibos_gami ?? 0) + casosForaRecibo100),
+    gami: calcularImpostos("gami", (f.recibos_gami ?? 0) + casosFora100),
   }
   const valores = valoresPlantao(f)
   const totalPlantonistas = arredondar(plantonistas.reduce((t, p) => t + pagamentoPlantonista(p, valores), 0))
@@ -176,7 +176,7 @@ export function calcularFinanceiro(
 
   return {
     gamiProSemRecibo,
-    casosForaRecibo100,
+    casosFora100,
     custasCasosFora,
     produtividade,
     impostos,

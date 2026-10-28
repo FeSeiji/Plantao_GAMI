@@ -71,13 +71,15 @@ async function gerarPlanilhaBm(bm) {
   porColuna(LINHA_VALOR, s => s?.valor_escala)
   porColuna(LINHA_FATOR, s => (s ? financeiro.socios[s.id]?.fator_correcao ?? 1 : null))
 
-  // Casos fora: um por linha, a parte de cada sócio na coluna dele e a data + hospital no rótulo (coluna B)
-  const casos = bm.casosForaRecibo.map(c => ({
-    rotulo: [formatarDiaMes(c.data), c.hospital ?? c.cirurgia].filter(Boolean).join(' '),
+  // Casos fora: um por linha, a parte de cada sócio na coluna dele e a data + hospital no rótulo (coluna B), com o
+  // recibo quando não é GAMI/ADDS
+  const casos = bm.casosForaBm.map(c => ({
+    rotulo: [formatarDiaMes(c.data), c.hospital ?? c.cirurgia, c.recibo === 'gami' ? null : `(${ROTULO_RECIBO[c.recibo] ?? 'sem recibo'})`]
+      .filter(Boolean).join(' '),
     pontos: c.partes,
   }))
-  preencherBloco(planilha, colunaDe, ESCALADO, casos.filter((_, i) => bm.casosForaRecibo[i].escalado), 'casos')
-  preencherBloco(planilha, colunaDe, NAO_ESCALADO, casos.filter((_, i) => !bm.casosForaRecibo[i].escalado), 'casos')
+  preencherBloco(planilha, colunaDe, ESCALADO, casos.filter((_, i) => bm.casosForaBm[i].escalado), 'casos')
+  preencherBloco(planilha, colunaDe, NAO_ESCALADO, casos.filter((_, i) => !bm.casosForaBm[i].escalado), 'casos')
 
   // Substituições (− para quem saiu, + para quem entrou) e depois os ajustes "Outro", com o motivo
   const linhasSubstituicao = [

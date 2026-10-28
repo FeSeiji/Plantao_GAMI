@@ -22,7 +22,8 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 //   pontos: pontos_plantoes + ajustes manuais.
 // - substituicoes: uma linha por troca aceita do mês que envolve sócio, com − para quem saiu e + para quem entrou.
 //   Troca por horas: a fração das horas. Cobertura de férias: só + para quem cobre (o titular continua com a vaga).
-// - casosForaRecibo: casos fora com recibo GAMI/ADDS, com a parte de cada sócio (dois anestesistas: metade cada).
+// - casosForaBm: casos fora com valor (GAMI/ADDS, Sem nota fiscal ou sem recibo ainda), com a parte de cada sócio
+//   (dois anestesistas: metade cada).
 // - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
 // - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, valores por sócio) e o
 //   histórico deles. conta_corrente.dif_mes_anterior: a diferença final do mês anterior de cada sócio, refeita em
@@ -122,10 +123,10 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
   const comSaldo = [...incluir, ...Object.entries(difMesAnterior ?? {}).filter(([, v]) => v !== 0).map(([id]) => id)]
   for (const id of comSaldo) if (ehSocio(id)) socioDe(id)
 
-  // Casos fora com recibo GAMI/ADDS: os "Sem nota fiscal" ficam fora da planilha
-  const casosForaRecibo = []
+  // Casos fora com valor entram todos, com ou sem recibo, nas mesmas contas; o recibo só aparece no rótulo
+  const casosForaBm = []
   for (const c of [...casosFora].reverse()) {
-    if (c.recibo !== 'gami' || !c.valor) continue
+    if (!c.valor) continue
     const anestesistas = [c.anestesista?.id, c.segundoAnestesista?.id].filter(Boolean)
     const partes = {}
     for (const id of anestesistas) {
@@ -133,10 +134,11 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     }
     if (Object.keys(partes).length === 0) continue // caso só de plantonista: não há coluna para ele
     for (const id of Object.keys(partes)) socioDe(id)
-    casosForaRecibo.push({
+    casosForaBm.push({
       id: c.id,
       data: c.data,
       escalado: c.escalado,
+      recibo: c.recibo,
       hospital: c.hospital?.nome ?? null,
       cirurgia: c.cirurgia,
       valor: c.valor,
@@ -173,7 +175,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
       saida: resumoDoPerfil(s.saida, perfis),
       entrada: resumoDoPerfil(s.entrada, perfis),
     })),
-    casosForaRecibo,
+    casosForaBm,
     plantonistas: [...plantonistas]
       .map(([id, valores]) => ({ ...resumoDoPerfil(id, perfis), ...valores }))
       .sort((a, b) => b.total - a.total || (a.nome ?? '').localeCompare(b.nome ?? '')),
