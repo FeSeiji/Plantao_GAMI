@@ -222,8 +222,8 @@ exports.definirTipoCongresso = async (req, res) => {
 }
 
 // O médico apaga o próprio pedido pendente ou recusado; um aprovado só a gestão remove. Férias aprovadas
-// removidas levam junto as coberturas de férias do período (aceitas ou pedidas): sem as férias, quem cobria
-// continuaria ganhando a vaga inteira junto com o titular
+// removidas levam junto as coberturas de férias do período (aceitas ou pedidas) e as subidas de escala nas vagas
+// dele: sem as férias, quem cobria continuaria ganhando a vaga inteira, e a escala continuaria subida
 exports.remover = async (req, res) => {
   const { data: afastamento, error: buscaError } = await supabase
     .from('afastamentos')
@@ -250,7 +250,7 @@ exports.remover = async (req, res) => {
     } catch (err) {
       console.error(err)
       return res.status(500).json({
-        error: `Férias removidas, mas as coberturas de férias do período não foram canceladas (${err.message}). Desfaça-as no plantão.`
+        error: `Férias removidas, mas as coberturas e subidas de escala do período não foram desfeitas (${err.message}). Desfaça-as no plantão.`
       })
     }
   }
@@ -259,6 +259,18 @@ exports.remover = async (req, res) => {
 }
 
 async function cancelarCoberturasDasFerias({ usuario_id, data_inicio, data_fim }) {
+  const { data: subidas, error: subidasError } = await supabase
+    .from('plantao_subidas')
+    .select('id, plantoes!inner(data)')
+    .eq('usuario_id', usuario_id)
+    .gte('plantoes.data', data_inicio)
+    .lte('plantoes.data', data_fim)
+  if (subidasError) throw subidasError
+  if (subidas.length > 0) {
+    const { error } = await supabase.from('plantao_subidas').delete().in('id', subidas.map(s => s.id))
+    if (error) throw error
+  }
+
   const { data: coberturas, error } = await supabase
     .from('plantao_trocas')
     .select('id, plantoes!inner(data)')

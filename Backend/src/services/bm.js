@@ -11,6 +11,7 @@ const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes, buscarAjustesDoPeriodo } = require('./ajustesPontos')
 const { buscarFinanceiroDosMeses } = require('./financeiroBm')
 const { buscarEmPaginas } = require('./paginas')
+const { buscarSubidasDoPeriodo, posicoesEfetivas } = require('./subidas')
 const { buscarExtras, duracaoDoExtra } = require('./extras')
 const { MES_INICIAL_CONTA_CORRENTE, calcularMes, saldoInicial, mesSeguinte } = require('./calculoBm')
 
@@ -63,7 +64,7 @@ async function carregarPeriodo(meses, { completo = false } = {}) {
       .order('id')
   )
 
-  const [trocas, cargos, casosFora, afastamentos, ajustes, financeiros, extras] = await Promise.all([
+  const [trocas, cargos, casosFora, afastamentos, ajustes, financeiros, extras, subidas] = await Promise.all([
     buscarTrocasAceitas(inicio, fim),
     buscarCargosDosUsuarios(),
     listarCasosFora({ inicio, fim, todos: true }),
@@ -71,8 +72,9 @@ async function carregarPeriodo(meses, { completo = false } = {}) {
     completo ? buscarAjustesDoMes(inicio) : buscarAjustesDoPeriodo(inicio, `${meses[meses.length - 1]}-01`).then(a => ({ ajustes: a, historico: [] })),
     buscarFinanceiroDosMeses(meses, { comHistorico: completo }),
     buscarExtras({ inicio, fim }),
+    buscarSubidasDoPeriodo(inicio, fim),
   ])
-  return { plantoes, trocas, cargos, casosFora, afastamentos, ...ajustes, financeiros, extras }
+  return { plantoes, trocas, cargos, casosFora, afastamentos, ...ajustes, financeiros, extras, subidas }
 }
 
 // A parte do período que é do mês (o que montarDoMes usa)
@@ -92,6 +94,7 @@ function dadosDoMes(periodo, mes) {
     historico: periodo.historico,
     financeiro: periodo.financeiros.get(mes),
     extras: periodo.extras.filter(e => doMes(e.data)),
+    subidas: periodo.subidas.filter(s => idsPlantoes.has(s.plantao_id)),
   }
 }
 
@@ -99,7 +102,7 @@ function dadosDoMes(periodo, mes) {
 // BM da tela e do Excel). incluir (só na cascata): sócios que viram coluna mesmo sem nada no mês (quem tem saldo
 // vindo do mês anterior). comPerfis: busca nome e sigla de cada um (a cascata só precisa das contas)
 async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], comPerfis = false } = {}) {
-  const { plantoes, trocas, cargos, casosFora, afastamentos, ajustes, historico, financeiro, extras } = dados
+  const { plantoes, trocas, cargos, casosFora, afastamentos, ajustes, historico, financeiro, extras, subidas } = dados
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
   const ehSocioJr = id => contaComoSocioJr(cargos.get(id)?.roles)
   // Trocas por horas e coberturas de férias: a vaga continua do titular (repartirPlantao divide)
@@ -120,15 +123,19 @@ async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], co
   const sociosJr = new Map()
   const horasExtraJr = new Map()
 
+  // Subida de escala: a posição que cada vaga vale no plantão (quem está abaixo da vaga de férias sobe)
+  const efetivasPorPlantao = new Map(plantoes.map(p => [p.id, posicoesEfetivas(p, p.plantao_usuarios, subidas)]))
+  const efetiva = (plantao, posicao) => efetivasPorPlantao.get(plantao.id)?.get(posicao) ?? posicao
+
   // Cada vaga ocupada (ou o pedaço dela, na troca por horas) conta como um plantão de quem a fez
   for (const plantao of plantoes) {
     for (const { usuario_id, posicao, fracao } of repartirPlantao(plantao, plantao.plantao_usuarios, coberturas, afastamentos)) {
       if (ehSocio(usuario_id)) {
         const acc = socioDe(usuario_id)
         acc.plantoes += 1
-        acc.pontos_plantoes += pontosDaVaga(plantao.data, posicao) * fracao
+        acc.pontos_plantoes += pontosDaVaga(plantao.data, efetiva(plantao, posicao)) * fracao
       } else if (ehSocioJr(usuario_id)) {
-        sociosJr.set(usuario_id, [...(sociosJr.get(usuario_id) ?? []), { data: plantao.data, posicao, fracao }])
+        sociosJr.set(usuario_id, [...(sociosJr.get(usuario_id) ?? []), { data: plantao.data, posicao: efetiva(plantao, posicao), fracao }])
       } else {
         // categorias: quanto de cada plantão ele fez (1, ou a fração na troca por horas e no congresso)
         plantonistaDe(usuario_id).categorias[categoriaDaVaga(plantao.data, posicao)] += fracao
@@ -158,7 +165,7 @@ async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], co
   const substituicoes = []
   for (const troca of trocas) {
     const plantao = plantaoPorId.get(troca.plantao_id)
-    const pontosVaga = pontosDaVaga(plantao.data, troca.posicao)
+    const pontosVaga = pontosDaVaga(plantao.data, efetiva(plantao, troca.posicao))
     let tipo = 'vaga'
     let valor = pontosVaga
     if (troca.cobertura_ferias) {
