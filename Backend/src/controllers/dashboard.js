@@ -10,6 +10,7 @@ const { buscarCoberturas, repartirPlantao, duracaoDaVaga, duracaoDaCobertura } =
 const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { contaComoSocio } = require('../services/usuarios')
 const { buscarAfastamentosNoPeriodo, fatorDoDia } = require('../services/afastamentos')
+const { buscarExtras, duracaoDoExtra } = require('../services/extras')
 
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
@@ -121,12 +122,13 @@ exports.resumo = async (req, res) => {
     .filter(Boolean)
   const porData = (a, b) => (a.data + a.hora_inicio).localeCompare(b.data + b.hora_inicio)
 
-  // Partes das minhas vagas que outra pessoa cobre, e meus congressos do mês (descontam na vaga)
-  let coberturasDasMinhas, meusAfastamentos
+  // Partes das minhas vagas que outra pessoa cobre, meus congressos do mês (descontam na vaga) e meus plantões extras
+  let coberturasDasMinhas, meusAfastamentos, meusExtras
   try {
-    [coberturasDasMinhas, meusAfastamentos] = await Promise.all([
+    [coberturasDasMinhas, meusAfastamentos, meusExtras] = await Promise.all([
       buscarCoberturas([...janela.data, ...proximos.data].map(p => p.id)),
       buscarAfastamentosNoPeriodo([eu], inicioMes, fimMes),
+      buscarExtras({ inicio: inicioJanela, fim: ultimoDiaAgenda > fimMes ? ultimoDiaAgenda : fimMes, usuarioIds: [eu] }),
     ])
     coberturasDasMinhas = coberturasDasMinhas.filter(c => c.usuario_saida === eu)
   } catch (err) {
@@ -167,6 +169,16 @@ exports.resumo = async (req, res) => {
       meuMes.plantonista.categorias[categoriaDaVaga(p.data, posicao)] += minutos / total
     }
   }
+  // Plantões extras do mês: o sócio soma os pontos da posição, proporcionais às horas; os outros, as horas
+  meuMes.plantonista.horas_extra = 0
+  for (const e of meusExtras.filter(x => x.data >= inicioMes && x.data <= fimMes)) {
+    if (souSocio && e.posicao) {
+      meuMes.socio.pontos += pontosDaVaga(e.data, e.posicao) * duracaoDoExtra(e) / duracaoDaVaga(horarioDaVaga({ data: e.data }, e.posicao))
+    } else if (!souSocio) {
+      meuMes.plantonista.horas_extra += duracaoDoExtra(e) / 60
+    }
+  }
+  meuMes.plantonista.horas_extra = duasCasas(meuMes.plantonista.horas_extra)
   meuMes.socio.pontos = duasCasas(meuMes.socio.pontos)
   for (const c of Object.keys(meuMes.plantonista.categorias)) {
     meuMes.plantonista.categorias[c] = duasCasas(meuMes.plantonista.categorias[c])
@@ -189,6 +201,18 @@ exports.resumo = async (req, res) => {
       trocasParaMim: trocasParaMim.data.map(t => formatTroca(t, perfis)),
       trocasSolicitadas: trocasSolicitadas.data.map(t => formatTroca(t, perfis)),
       meuMes,
+      // Meus plantões extras dos próximos dias que ainda não terminaram
+      extras: meusExtras
+        .filter(e => e.data <= ultimoDiaAgenda && calcularJanela(e.data, e.hora_inicio, e.hora_fim).fim > agoraMin)
+        .map(e => ({
+          id: e.id,
+          data: e.data,
+          hora_inicio: e.hora_inicio,
+          hora_fim: e.hora_fim,
+          posicao: e.posicao,
+          observacao: e.observacao,
+          emAndamento: calcularJanela(e.data, e.hora_inicio, e.hora_fim).inicio <= agoraMin,
+        })),
     })
   } catch (err) {
     return res.status(500).json({ error: err.message })
@@ -225,10 +249,12 @@ exports.gestao = async (req, res) => {
   if (erro) return res.status(500).json({ error: erro.error.message })
   trocas.data = trocas.data.filter(t => !trocaVencida(t, t.plantoes?.data))
 
-  let coberturas, afastamentos
+  let coberturas, afastamentos, extrasRecentes
   try {
-    [coberturas, afastamentos] = await Promise.all([
+    [coberturas, extrasRecentes, afastamentos] = await Promise.all([
       buscarCoberturas(plantoes.data.map(p => p.id)),
+      // Ontem e hoje: o extra que passou da meia-noite ainda pode estar em andamento
+      buscarExtras({ inicio: deslocarData(hoje, -1), fim: hoje }),
       buscarAfastamentosNoPeriodo(
         plantoes.data.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
         mesAnterior.inicio,
@@ -247,6 +273,11 @@ exports.gestao = async (req, res) => {
   // 6. Agora no hospital
   const emAndamento = turnos.filter(p => {
     const { inicio, fim } = janelaDe(p)
+    return inicio <= agoraMin && agoraMin < fim
+  })
+
+  const extrasEmAndamento = extrasRecentes.filter(e => {
+    const { inicio, fim } = janelaDe(e)
     return inicio <= agoraMin && agoraMin < fim
   })
 
@@ -277,6 +308,7 @@ exports.gestao = async (req, res) => {
   try {
     const perfis = await buscarPerfis([
       ...[...emAndamento, ...alertas.map(a => a.plantao)].flatMap(p => p.plantao_usuarios.map(u => u.usuario_id)),
+      ...extrasEmAndamento.map(e => e.usuario_id),
       ...resumoAtual.topPlantonistas.map(l => l.id),
       ...resumoAtual.topPontos.map(l => l.id),
       ...trocas.data.slice(0, 1).flatMap(t => [t.usuario_saida, t.usuario_entrada, t.solicitado_por]),
@@ -290,6 +322,13 @@ exports.gestao = async (req, res) => {
     return res.json({
       agora,
       emAndamento: emAndamento.map(formatarGeral),
+      extrasEmAndamento: extrasEmAndamento.map(e => ({
+        id: e.id,
+        data: e.data,
+        hora_inicio: e.hora_inicio,
+        hora_fim: e.hora_fim,
+        medico: perfis.get(e.usuario_id) ?? { id: e.usuario_id },
+      })),
       alertas: alertas.map(a => ({ problema: a.problema, plantao: formatarGeral(a.plantao) })),
       trocasPendentes: {
         total: trocas.data.length,

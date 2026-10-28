@@ -9,7 +9,8 @@ const { MES_INICIAL_CONTA_CORRENTE } = require('./calculoBm')
 // Só guarda o que foi digitado; as contas são feitas na tela e, para a conta corrente e o Excel, em calculoBm.js.
 
 const CAMPOS_FATURAMENTO = ['faturamento_pmp', 'recibos_gami', 'gami_total']
-const CAMPOS_VALOR_PLANTAO = ['valor_diurno', 'valor_noturno', 'valor_diurno_fds', 'valor_noturno_fds']
+// Valor do plantão de cada categoria e da hora do plantão extra: vazio no mês, vale o do último mês preenchido
+const CAMPOS_VALOR_PLANTAO = ['valor_diurno', 'valor_noturno', 'valor_diurno_fds', 'valor_noturno_fds', 'valor_hora_extra']
 const CAMPOS_MES = [...CAMPOS_FATURAMENTO, ...CAMPOS_VALOR_PLANTAO]
 // Valores em reais de cada sócio no mês: GAMI PRO sem recibo, a conta corrente e os bancos da distribuição.
 // O saldo inicial só existe no primeiro mês da conta corrente

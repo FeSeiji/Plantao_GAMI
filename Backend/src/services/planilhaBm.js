@@ -2,6 +2,7 @@ const fs = require('fs/promises')
 const path = require('path')
 const JSZip = require('jszip')
 
+const { rotuloDaVaga } = require('./posicoes')
 const { MES_INICIAL_CONTA_CORRENTE, CAMPOS_CONTA_CORRENTE, CAMPOS_BANCOS, calcularMes, saldoInicial } = require('./calculoBm')
 
 // Exportação do BM no modelo do cliente (modelos/bm-modelo.xlsx, cópia do BM DEZ 26.xlsx que eles usam).
@@ -11,7 +12,7 @@ const { MES_INICIAL_CONTA_CORRENTE, CAMPOS_CONTA_CORRENTE, CAMPOS_BANCOS, calcul
 // Linhas do modelo que o sistema preenche (as demais são digitadas pelo escritório, por enquanto):
 //   1, 132 e 190: siglas  ·  T2, U2, V2: faturamento PMP, recibos GAMI e GAMI total  ·  2: GAMI PRO sem recibo
 //   8–22: casos fora escalados  ·  28–52: não escalados  ·  133: VALOR (pontos da escala)
-//   134: fator de correção  ·  136–166: substituições e ajustes "Outro"  ·  167: Administrativo  ·  168: Reunião
+//   134: fator de correção  ·  136–166: substituições, plantões extras dos sócios e ajustes "Outro"  ·  167: Administrativo  ·  168: Reunião
 //   83–124: despesas da PMP (banco B, data C, nome E, valor F) e da GAMI (H, I, K, L)
 //   175: DIF MÊS ANTERIOR (puxava a aba do mês anterior de outro arquivo, no Dropbox: o vínculo sai e entra o valor
 //   da conta corrente do sistema)  ·  176: DARF  ·  179: pró-labore  ·  180 e 181: distribuição dos dias 05 e 10
@@ -81,9 +82,11 @@ async function gerarPlanilhaBm(bm) {
   preencherBloco(planilha, colunaDe, ESCALADO, casos.filter((_, i) => bm.casosForaBm[i].escalado), 'casos')
   preencherBloco(planilha, colunaDe, NAO_ESCALADO, casos.filter((_, i) => !bm.casosForaBm[i].escalado), 'casos')
 
-  // Substituições (− para quem saiu, + para quem entrou) e depois os ajustes "Outro", com o motivo
+  // Substituições (− para quem saiu, + para quem entrou), os plantões extras dos sócios e depois os ajustes "Outro",
+  // com o motivo
   const linhasSubstituicao = [
     ...bm.substituicoes.map(s => ({ rotulo: rotuloSubstituicao(s), pontos: s.pontos })),
+    ...bm.extrasSocios.map(e => ({ rotulo: rotuloExtra(e), pontos: e.pontos })),
     ...bm.ajustes
       .filter(a => a.tipo === 'outro')
       .map(a => ({ rotulo: `Ajuste: ${a.motivo}`, pontos: { [a.medico.id]: a.pontos } })),
@@ -183,6 +186,12 @@ function rotuloSubstituicao(s) {
       ? ` ${s.hora_inicio.slice(0, 5)}–${s.hora_fim.slice(0, 5)}`
       : ''
   return `${formatarDiaMes(s.data)} ${quem}${detalhe}`
+}
+
+// "15/11 Extra 13:00–19:00 3º"
+function rotuloExtra(e) {
+  const vaga = e.posicao ? ` ${rotuloDaVaga(e.data, e.posicao)}` : ''
+  return `${formatarDiaMes(e.data)} Extra ${e.hora_inicio}–${e.hora_fim}${vaga}`
 }
 
 const formatarDiaMes = data => `${data.slice(8, 10)}/${data.slice(5, 7)}`
@@ -309,10 +318,10 @@ function xmlDaAba({ larguras, linhas }) {
 function abaPlantonistas(plantonistas) {
   const categorias = Object.keys(ROTULO_CATEGORIA)
   return {
-    larguras: [8, 32, 12, 12, 22, 22, 10],
+    larguras: [8, 32, 12, 12, 22, 22, 10, 14],
     linhas: [
-      ['Sigla', 'Nome', ...categorias.map(c => ROTULO_CATEGORIA[c]), 'Total'],
-      ...plantonistas.map(p => [p.sigla, p.nome ?? p.email, ...categorias.map(c => p.categorias[c]), p.total]),
+      ['Sigla', 'Nome', ...categorias.map(c => ROTULO_CATEGORIA[c]), 'Total', 'Extra (horas)'],
+      ...plantonistas.map(p => [p.sigla, p.nome ?? p.email, ...categorias.map(c => p.categorias[c]), p.total, p.horas_extra || null]),
     ],
   }
 }
@@ -330,6 +339,7 @@ function abaSociosJr({ socios, linhas, plantoes }) {
       ['Dia', 'Turno', 'Vaga', ...socios.map(s => s.sigla ?? s.nome), 'Total'],
       ...linhas.map(l => [l.dia, turno[l.turno], l.vaga, ...socios.map(s => l.plantoes[s.id] ?? null), soma(l.plantoes)]),
       ['Total', null, null, ...socios.map(s => s.total), soma(Object.fromEntries(socios.map(s => [s.id, s.total])))],
+      ['Extras (horas)', null, null, ...socios.map(s => s.horas_extra || null), soma(Object.fromEntries(socios.map(s => [s.id, s.horas_extra]))) || null],
       [],
       ['Sigla', 'Nome', 'Data', 'Dia da semana', 'Turno', 'Vaga', 'Plantões'],
       ...plantoes.map(p => {

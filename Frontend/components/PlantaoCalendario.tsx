@@ -5,6 +5,7 @@ import SiglaBadge from "./SiglaBadge"
 import { Afastamento, afastamentoPendente, avisoAfastamento } from "./disponibilidade"
 import { TURNOS, Turno, formatarTurno, rotuloPosicaoCurto, turnoDaPosicao } from "./posicoes"
 import { formatarIntervalo } from "./trocaPorHoras"
+import { PlantaoExtra, formatarHorarioExtra } from "./extras"
 
 export type TrocaPendente = {
   id: string
@@ -130,6 +131,27 @@ type Props = {
   onVisualizacaoChange: (v: Visualizacao) => void
   onDataReferenciaChange: (d: Date) => void
   onSelectPlantao: (plantao: Plantao) => void
+  // Plantões extras do período (em paralelo ao plantão do dia)
+  extras?: PlantaoExtra[]
+  onSelectExtra?: (extra: PlantaoExtra) => void
+}
+
+// Um plantão extra: a sigla do médico e o horário
+function ChipExtra({ extra, onClick, compacto = false }: { extra: PlantaoExtra; onClick?: () => void; compacto?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Plantão extra · ${extra.medico.nome ?? extra.medico.email ?? ""} · ${formatarHorarioExtra(extra)}`}
+      className="w-full flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border-l-[3px] border-amber-400 rounded px-1 py-0.5 text-left transition-colors"
+    >
+      {!compacto && <SiglaBadge sigla={extra.medico.sigla ?? null} size="sm" semTitulo />}
+      <span className="min-w-0 truncate text-[10px] sm:text-[11px] font-medium text-amber-900">
+        {compacto && extra.medico.sigla ? `${extra.medico.sigla} ` : ""}
+        {formatarHorarioExtra(extra)}
+      </span>
+    </button>
+  )
 }
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
@@ -272,11 +294,15 @@ export default function PlantaoCalendario({
   onVisualizacaoChange,
   onDataReferenciaChange,
   onSelectPlantao,
+  extras = [],
+  onSelectExtra,
 }: Props) {
   const hojeChave = formatarDataLocal(new Date())
 
-  // Um plantão por dia
+  // Um plantão por dia; plantões extras, quantos houver
   const plantaoPorDia = new Map(plantoes.map((p) => [p.data, p]))
+  const extrasDoDia = (chave: string) => extras.filter((e) => e.data === chave)
+  const temExtraNaSemana = gerarCelulasSemana(dataReferencia).some((d) => extrasDoDia(formatarDataLocal(d)).length > 0)
   const diasSemana = gerarCelulasSemana(dataReferencia)
 
   function anterior() {
@@ -421,6 +447,22 @@ export default function PlantaoCalendario({
                   })}
                 </Fragment>
               ))}
+
+              {temExtraNaSemana && (
+                <>
+                  <div className="pt-1.5 text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Extras</div>
+                  {diasSemana.map((data) => {
+                    const chave = formatarDataLocal(data)
+                    return (
+                      <div key={chave} className="flex flex-col gap-1 rounded-lg p-1.5 bg-gray-50 border border-gray-100">
+                        {extrasDoDia(chave).map((e) => (
+                          <ChipExtra key={e.id} extra={e} onClick={() => onSelectExtra?.(e)} />
+                        ))}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
             </div>
           </div>
 
@@ -442,12 +484,15 @@ export default function PlantaoCalendario({
                       {data.getDate()}
                     </span>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                  <div className="bg-gray-50 rounded-lg p-2 border border-gray-100 space-y-1.5">
                     {plantao ? (
                       <CartaoPlantao plantao={plantao} onClick={() => onSelectPlantao(plantao)} />
                     ) : (
                       <p className="text-xs text-gray-300 text-center py-2">Sem plantão</p>
                     )}
+                    {extrasDoDia(chave).map((e) => (
+                      <ChipExtra key={e.id} extra={e} onClick={() => onSelectExtra?.(e)} />
+                    ))}
                   </div>
                 </div>
               )
@@ -512,6 +557,14 @@ export default function PlantaoCalendario({
                           )
                         })}
                       </button>
+                    )}
+
+                    {/* Plantões extras: até dois e quantos mais */}
+                    {extrasDoDia(chave).slice(0, 2).map((e) => (
+                      <ChipExtra key={e.id} extra={e} compacto onClick={() => onSelectExtra?.(e)} />
+                    ))}
+                    {extrasDoDia(chave).length > 2 && (
+                      <span className="text-[9px] text-amber-700">+{extrasDoDia(chave).length - 2} extras</span>
                     )}
                   </div>
                 )
