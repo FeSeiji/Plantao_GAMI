@@ -228,7 +228,13 @@ export default function MeuPlantaoPage() {
                           }`}
                           title={semVaga ? "Essa vaga não existe no fim de semana" : undefined}
                         >
-                          {outroNome && (
+                          {usuario?.posicaoEfetiva != null ? (
+                            // Subida de escala: ele está nessa linha, mas vale a posição de cima
+                            <span className="block text-[9px] leading-none font-semibold text-brand-700 mb-0.5" title="A escala subiu">
+                              <span className="sm:hidden">↑{rotuloPosicaoCurto(chave, usuario.posicaoEfetiva)}</span>
+                              <span className="hidden sm:inline">↑ {rotuloPosicao(chave, usuario.posicaoEfetiva)}</span>
+                            </span>
+                          ) : outroNome && (
                             <span className="block text-[9px] leading-none font-semibold text-gray-400 mb-0.5">
                               <span className="sm:hidden">{rotuloPosicaoCurto(chave, posicao)}</span>
                               <span className="hidden sm:inline">{rotuloPosicao(chave, posicao)}</span>

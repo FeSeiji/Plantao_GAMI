@@ -15,8 +15,10 @@ type Vaga = Nome & {
   posicao: number
   turno: Turno
   coordenador?: boolean
+  // Posição numerada, que entra na subida de escala (coordenadores, plantonista, intermediário e manhã ficam de fora)
+  sobe?: boolean
   // Sábado e domingo: false quando a vaga não existe; senão, o que muda (nome, horário, se é de coordenador)
-  fimDeSemana?: false | (Partial<Nome> & { coordenador?: boolean; hora_inicio?: string; hora_fim?: string })
+  fimDeSemana?: false | (Partial<Nome> & { coordenador?: boolean; sobe?: boolean; hora_inicio?: string; hora_fim?: string })
 }
 
 // frase: como a vaga aparece no meio de uma frase, quando não é "3º do diurno"
@@ -27,22 +29,22 @@ const VAGAS: Vaga[] = [
   },
   { posicao: 2, turno: "diurno", rotulo: "Coordenador", curto: "C", abrev: "Coord.", frase: "coordenador", coordenador: true },
   {
-    posicao: 3, turno: "diurno", rotulo: "2º", curto: "2",
-    fimDeSemana: { rotulo: "Manhã", curto: "M", frase: "manhã", hora_fim: "13:00" },
+    posicao: 3, turno: "diurno", rotulo: "2º", curto: "2", sobe: true,
+    fimDeSemana: { rotulo: "Manhã", curto: "M", frase: "manhã", hora_fim: "13:00", sobe: false },
   },
-  { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3", fimDeSemana: { rotulo: "2º", curto: "2" } },
-  { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4", fimDeSemana: { rotulo: "3º", curto: "3" } },
-  { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5", fimDeSemana: { rotulo: "4º", curto: "4" } },
-  { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6", fimDeSemana: { rotulo: "5º", curto: "5" } },
-  { posicao: 8, turno: "diurno", rotulo: "7º", curto: "7", fimDeSemana: false },
+  { posicao: 4, turno: "diurno", rotulo: "3º", curto: "3", sobe: true, fimDeSemana: { rotulo: "2º", curto: "2" } },
+  { posicao: 5, turno: "diurno", rotulo: "4º", curto: "4", sobe: true, fimDeSemana: { rotulo: "3º", curto: "3" } },
+  { posicao: 6, turno: "diurno", rotulo: "5º", curto: "5", sobe: true, fimDeSemana: { rotulo: "4º", curto: "4" } },
+  { posicao: 7, turno: "diurno", rotulo: "6º", curto: "6", sobe: true, fimDeSemana: { rotulo: "5º", curto: "5" } },
+  { posicao: 8, turno: "diurno", rotulo: "7º", curto: "7", sobe: true, fimDeSemana: false },
   {
     posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int", abrev: "Interm.", frase: "intermediário",
     fimDeSemana: { rotulo: "Plantonista", curto: "P", abrev: "Plant.", frase: "plantonista do noturno" },
   },
   { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1" },
-  { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1", fimDeSemana: { rotulo: "2º", curto: "2" } },
-  { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2", fimDeSemana: { rotulo: "3º", curto: "3" } },
-  { posicao: 13, turno: "noturno", rotulo: "3º", curto: "3", fimDeSemana: { rotulo: "4º", curto: "4" } },
+  { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1", fimDeSemana: { rotulo: "2º", curto: "2", sobe: true } },
+  { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2", sobe: true, fimDeSemana: { rotulo: "3º", curto: "3" } },
+  { posicao: 13, turno: "noturno", rotulo: "3º", curto: "3", sobe: true, fimDeSemana: { rotulo: "4º", curto: "4" } },
 ]
 
 // Sábado ou domingo. Vale a data do plantão: o noturno de domingo para segunda é de fim de semana, o de sexta não
@@ -83,6 +85,12 @@ export function linhasDoTurno(turno: Turno) {
 export function vagaNaoExisteNoDia(data: string, posicao: number) {
   const vaga = VAGAS.find((v) => v.posicao === posicao)
   return vaga != null && !existeNoDia(data, vaga)
+}
+
+// A vaga entra na subida de escala nesse dia (mesma regra de Backend/src/services/posicoes.js, vagasQueSobem)
+export function vagaSobe(data: string, posicao: number) {
+  const vaga = VAGAS.find((v) => v.posicao === posicao)
+  return vaga != null && existeNoDia(data, vaga) && vagaDa(data, posicao)?.sobe === true
 }
 
 export function turnoDaPosicao(posicao: number): Turno {

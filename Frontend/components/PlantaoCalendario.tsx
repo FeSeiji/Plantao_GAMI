@@ -3,7 +3,7 @@
 import { Fragment } from "react"
 import SiglaBadge from "./SiglaBadge"
 import { Afastamento, afastamentoPendente, avisoAfastamento } from "./disponibilidade"
-import { TURNOS, Turno, formatarTurno, rotuloPosicaoCurto, turnoDaPosicao } from "./posicoes"
+import { TURNOS, Turno, formatarTurno, rotuloPosicao, rotuloPosicaoCurto, turnoDaPosicao } from "./posicoes"
 import { formatarIntervalo } from "./trocaPorHoras"
 import { PlantaoExtra, formatarHorarioExtra } from "./extras"
 
@@ -37,6 +37,9 @@ export type Usuario = {
   trocaPendente?: TrocaPendente | null
   afastamento?: Afastamento | null
   cobertura?: Cobertura | null
+  // Subida de escala: a vaga dele (de férias) subiu a escala; posicaoEfetiva: a posição que ele vale com a subida
+  subida?: boolean
+  posicaoEfetiva?: number | null
 }
 
 // Um plantão por dia, com as vagas do diurno e do noturno (components/posicoes.ts).
@@ -62,8 +65,8 @@ export function doTurno(plantao: Plantao, turno: Turno) {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado ou "?" de pedido pendente, a sigla de quem cobre (troca por horas ou férias)
-// e a posição na fila ou na equipe.
+// "!" de afastamento aprovado (cinza quando a escala já subiu) ou "?" de pedido pendente, a sigla de quem cobre
+// (troca por horas ou férias) e a posição na fila ou na equipe (com "↑" quando subiu na escala).
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 // data: o dia do plantão, porque o nome da vaga muda no fim de semana
 export function BadgeComMarcador({
@@ -84,6 +87,8 @@ export function BadgeComMarcador({
         [
           usuario.nome ?? usuario.email,
           usuario.afastamento && avisoAfastamento(usuario.afastamento),
+          usuario.subida && "A escala subiu",
+          usuario.posicaoEfetiva != null && `Subiu para ${rotuloPosicao(data, usuario.posicaoEfetiva)}`,
           usuario.trocaPendente && "Troca pendente de aceite",
           usuario.cobertura &&
             (usuario.cobertura.ferias
@@ -103,7 +108,7 @@ export function BadgeComMarcador({
       {usuario.afastamento && (
         <span
           className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none ${
-            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : "bg-red-600"
+            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : usuario.subida ? "bg-gray-400" : "bg-red-600"
           }`}
         >
           {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
@@ -117,7 +122,8 @@ export function BadgeComMarcador({
       {/* O coordenador já tem o anel; os demais mostram a vaga */}
       {mostrarPosicao && usuario.posicao != null && !usuario.coordenador && (
         <span className="absolute -bottom-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-gray-700 text-white text-[8px] font-bold flex items-center justify-center leading-none">
-          {rotuloPosicaoCurto(data, usuario.posicao)}
+          {usuario.posicaoEfetiva != null && "↑"}
+          {rotuloPosicaoCurto(data, usuario.posicaoEfetiva ?? usuario.posicao)}
         </span>
       )}
     </div>

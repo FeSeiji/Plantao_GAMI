@@ -24,9 +24,11 @@ import {
   ehVagaDeCoordenador,
   formatarTurnoDoDia,
   horarioDaVaga,
+  rotuloPosicao,
   rotuloPosicaoAbreviado,
   turnoDaPosicao,
   turnoJaTerminou,
+  vagaSobe,
   vagasDoTurno,
 } from "./posicoes";
 import { apiFetch } from "./sessao";
@@ -136,6 +138,9 @@ type Usuario = {
   dias_disponiveis?: number[] | null;
   afastamento?: Afastamento | null;
   cobertura?: Cobertura | null;
+  // Subida de escala: a vaga dele (de férias) subiu a escala; posicaoEfetiva: a posição que ele vale com a subida
+  subida?: boolean;
+  posicaoEfetiva?: number | null;
 };
 
 // Um plantão por dia, com as vagas do diurno e do noturno (components/posicoes.ts)
@@ -454,6 +459,51 @@ export default function PlantaoModal({
           ? err.message
           : "Não foi possível solicitar a troca.",
       );
+    }
+  }
+
+  // Subida de escala (só a gestão): a vaga de quem está de férias fica sem cobertura e quem está abaixo dela, nas
+  // posições numeradas do turno, passa a valer uma posição acima. O titular continua com os pontos da vaga
+  function subirEscala(u: Usuario) {
+    const posicao = u.posicao!;
+    const abaixo = selecionados
+      .filter((o) => o.posicao != null && o.posicao > posicao && turnoDaPosicao(o.posicao) === turnoDaPosicao(posicao) && vagaSobe(plantao.data, o.posicao))
+      .sort((a, b) => a.posicao! - b.posicao!);
+    setConfirmacao({
+      titulo: "Subir a escala?",
+      mensagem: (
+        <p>
+          A vaga de <span className="font-semibold">{nomeDe(u)}</span> ({rotuloPosicao(plantao.data, posicao)}) fica sem
+          cobertura e quem está abaixo sobe uma posição
+          {abaixo.length > 0 ? `: ${abaixo.map((o) => nomeDe(o)).join(", ")}` : ""}. {nomeDe(u)} continua com os pontos
+          da vaga. Se alguém cobrir as férias depois, a subida é desfeita.
+        </p>
+      ),
+      rotuloConfirmar: "Subir a escala",
+      acao: () => alterarSubida(posicao, true),
+    });
+  }
+
+  async function alterarSubida(posicao: number, subir: boolean) {
+    setError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await apiFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/subidas${subir ? "" : `/${posicao}`}`,
+        {
+          method: subir ? "POST" : "DELETE",
+          headers: { Authorization: `Bearer ${token}`, ...(subir ? { "Content-Type": "application/json" } : {}) },
+          body: subir ? JSON.stringify({ posicao }) : undefined,
+        },
+      );
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}));
+        throw new Error(result.error ?? (subir ? "Não foi possível subir a escala." : "Não foi possível desfazer a subida."));
+      }
+      await recarregarPlantao();
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível alterar a subida de escala.");
     }
   }
 
@@ -921,6 +971,11 @@ export default function PlantaoModal({
             : ferias ? "Cobrir a vaga" : "Pedir a vaga",
         onClick: () => abrirTroca(posicao),
       });
+    // Férias sem cobertura: a gestão pode subir a escala (só nas posições numeradas) ou desfazer a subida
+    if (podeGerirEquipe && ferias && !u.cobertura && !u.subida && vagaSobe(plantao.data, posicao))
+      acoes.push({ rotulo: "Subir escala", onClick: () => subirEscala(u) });
+    if (podeGerirEquipe && u.subida)
+      acoes.push({ rotulo: "Desfazer subida", perigo: true, onClick: () => alterarSubida(posicao, false) });
     if (pendente && (podeGerirEquipe || pendente.solicitadoPor.id === meuId))
       acoes.push({
         rotulo: "Cancelar pedido de troca",
@@ -981,7 +1036,8 @@ export default function PlantaoModal({
       pessoa: u,
       rotulo,
       // Afastamento (férias/congresso) tem prioridade visual: a gestão precisa resolver essa escala
-      destaque: u.afastamento && !afastamentoPendente(u.afastamento)
+      // Com a escala subida, as férias já estão resolvidas: a vaga sai do vermelho
+      destaque: u.afastamento && !afastamentoPendente(u.afastamento) && !u.subida
         ? "indisponivel"
         : pendente
           ? "pendente"
@@ -989,12 +1045,16 @@ export default function PlantaoModal({
             ? "coordenador"
             : undefined,
       status:
-        u.afastamento || pendente || u.cobertura ? (
+        u.afastamento || pendente || u.cobertura || u.posicaoEfetiva != null ? (
           <>
             {u.afastamento && (
               <span className="block font-semibold not-italic">
                 {avisoAfastamento(u.afastamento)}
+                {u.subida && " · a escala subiu"}
               </span>
+            )}
+            {u.posicaoEfetiva != null && (
+              <span className="block">Subiu para {rotuloPosicao(plantao.data, u.posicaoEfetiva)}</span>
             )}
             {u.cobertura && (
               <span className="block">

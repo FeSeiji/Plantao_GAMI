@@ -8,6 +8,7 @@ const {
   listarAvisosTroca, marcarAvisoTrocaCiente,
   alterarPosicao, listarMudancasPosicaoDoPlantao, cancelarTroca,
   pedirVaga, listarPedidosVagaDoPlantao, listarPedidosVagaPendentes, responderPedidoVaga, cancelarPedidoVaga,
+  subirEscala, desfazerSubidaDaVaga,
 } = require('../controllers/plantoes')
 
 // Criar e editar o plantão e preencher ou esvaziar vagas é da gestão.
@@ -40,6 +41,9 @@ router.patch('/:id', gestao, updatePlantao)
 router.post('/:id/usuarios', gestao, addUsuarios)
 router.patch('/:id/posicao', mudarPosicao, alterarPosicao)
 router.delete('/:id/vagas/:posicao', gestao, removerDaVaga)
+// Subida de escala na vaga de quem está de férias sem cobertura: só a gestão
+router.post('/:id/subidas', gestao, subirEscala)
+router.delete('/:id/subidas/:posicao', gestao, desfazerSubidaDaVaga)
 router.get('/:id/trocas', listarTrocasDoPlantao)
 router.get('/:id/remocoes', listarRemocoesDoPlantao)
 router.get('/:id/mudancas-posicao', listarMudancasPosicaoDoPlantao)

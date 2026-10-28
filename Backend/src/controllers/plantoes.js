@@ -7,13 +7,14 @@ const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastad
 const { ehGestao } = require('../middleware/auth')
 const { erroDoPeriodo } = require('../middleware/parametros')
 const {
-  POSICOES, vagaExisteNoDia, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou,
+  POSICOES, vagaExisteNoDia, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou, vagasQueSobem,
 } = require('../services/posicoes')
 const { dataDaCobertura, validarIntervalo, buscarCoberturas } = require('../services/coberturas')
 const { usuariosComConflito } = require('../services/conflitos')
 const { respondenteDaTroca, trocaVencida } = require('../services/trocas')
 const { esvaziarVaga } = require('../services/escalas')
 const { estaDesativado } = require('../services/usuarios')
+const { buscarSubidas, subidasValidas, posicoesEfetivas } = require('../services/subidas')
 
 const ROLES_MEDICO = ['anestesita_plantonista', 'anestesita_socio', 'anestesita_socio_jr']
 // Um plantão por dia, com as vagas do diurno e do noturno (services/posicoes.js)
@@ -90,7 +91,8 @@ exports.listPlantoes = async (req, res) => {
     const trocasPendentes = await buscarTrocasPendentesPorSlot(data.map(row => row.id))
     const afastamentos = await buscarAfastamentosDosPlantoes(data)
     const coberturas = await buscarCoberturasPorSlot(data.map(row => row.id))
-    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes, afastamentos, coberturas)))
+    const subidas = await buscarSubidas(data.map(row => row.id))
+    return res.json(data.map(row => formatPlantao(row, perfis, trocasPendentes, afastamentos, coberturas, subidas)))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -110,7 +112,8 @@ exports.getPlantao = async (req, res) => {
     const perfis = await buscarPerfis(data.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([data.id])
     const coberturas = await buscarCoberturasPorSlot([data.id])
-    return res.json(formatPlantao(data, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([data]), coberturas))
+    const subidas = await buscarSubidas([data.id])
+    return res.json(formatPlantao(data, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([data]), coberturas, subidas))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -177,7 +180,8 @@ exports.updatePlantao = async (req, res) => {
     const perfis = await buscarPerfis(plantao.plantao_usuarios.map(u => u.usuario_id))
     const trocasPendentes = await buscarTrocasPendentesPorSlot([plantao.id])
     const coberturas = await buscarCoberturasPorSlot([plantao.id])
-    return res.json(formatPlantao(plantao, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([plantao]), coberturas))
+    const subidas = await buscarSubidas([plantao.id])
+    return res.json(formatPlantao(plantao, perfis, trocasPendentes, await buscarAfastamentosDosPlantoes([plantao]), coberturas, subidas))
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -729,6 +733,15 @@ exports.responderTroca = (aceitar) => async (req, res) => {
   if (error) return res.status(400).json({ error: error.message })
   if (!atualizada) return res.status(400).json({ error: 'Essa solicitação já foi respondida ou cancelada' })
 
+  // Alguém cobriu as férias: a escala não precisa mais subir
+  if (aceitar && troca.cobertura_ferias) {
+    try {
+      await desfazerSubida(troca.plantao_id, troca.posicao)
+    } catch (err) {
+      console.error('Falha ao desfazer a subida de escala:', err.message)
+    }
+  }
+
   // Troca por horas (e cobertura de férias) não mexe na vaga: ela continua do titular e a troca aceita é a cobertura
   if (aceitar && !troca.hora_inicio) {
     const { data: linhasAtualizadas, error: swapError } = await supabase
@@ -1001,6 +1014,8 @@ async function aplicarTrocaDaGestao(troca) {
     .eq('status', 'pendente')
   if (cancelarError) throw cancelarError
 
+  if (troca.cobertura_ferias) await desfazerSubida(troca.plantao_id, troca.posicao)
+
   const avisar = [troca.usuario_entrada, troca.usuario_saida].filter(id => id !== troca.solicitado_por)
   if (avisar.length > 0) {
     const { error: avisoError } = await supabase
@@ -1010,6 +1025,66 @@ async function aplicarTrocaDaGestao(troca) {
   }
 
   return null
+}
+
+// Subida de escala (services/subidas.js): a vaga de quem está de férias ficou sem cobertura e quem está abaixo dela
+// passa a valer uma posição acima. Só a gestão sobe ou desfaz
+exports.subirEscala = async (req, res) => {
+  const { posicao } = req.body ?? {}
+  if (!POSICOES.includes(posicao)) return res.status(400).json({ error: 'posicao é obrigatória' })
+
+  const { data: plantao, error } = await supabase
+    .from('plantoes')
+    .select('id, data, plantao_usuarios(usuario_id, posicao)')
+    .eq('id', req.params.id)
+    .maybeSingle()
+  if (error) return res.status(500).json({ error: error.message })
+  if (!plantao) return res.status(404).json({ error: 'Plantão não encontrado' })
+
+  const titular = plantao.plantao_usuarios.find(u => u.posicao === posicao)
+  if (!titular) return res.status(400).json({ error: 'Essa vaga está vazia' })
+  if (!vagasQueSobem(plantao.data, turnoDaPosicao(posicao)).includes(posicao)) {
+    return res.status(400).json({ error: 'Só as posições numeradas sobem a escala (coordenador, plantonista, intermediário e manhã, não)' })
+  }
+
+  try {
+    if (!(await estaDeFerias(titular.usuario_id, plantao.data))) {
+      return res.status(400).json({ error: 'A escala só sobe na vaga de quem está de férias aprovadas' })
+    }
+    if ((await buscarCoberturas([plantao.id])).some(c => c.posicao === posicao)) {
+      return res.status(400).json({ error: 'Essas férias já têm cobertura' })
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
+  }
+
+  const { error: insertError } = await supabase
+    .from('plantao_subidas')
+    .insert({ plantao_id: plantao.id, posicao, usuario_id: titular.usuario_id, criado_por: req.user.id })
+  if (insertError) {
+    if (insertError.code === '23505') return res.status(409).json({ error: 'A escala já subiu nessa vaga' })
+    return res.status(400).json({ error: insertError.message })
+  }
+  return res.status(201).json({ message: 'Escala subida' })
+}
+
+exports.desfazerSubidaDaVaga = async (req, res) => {
+  const posicao = Number(req.params.posicao)
+  if (!POSICOES.includes(posicao)) return res.status(404).json({ error: 'Subida não encontrada' })
+  const { data, error } = await supabase
+    .from('plantao_subidas')
+    .delete()
+    .eq('plantao_id', req.params.id)
+    .eq('posicao', posicao)
+    .select('id')
+  if (error) return res.status(400).json({ error: error.message })
+  if (data.length === 0) return res.status(404).json({ error: 'Subida não encontrada' })
+  return res.status(204).send()
+}
+
+async function desfazerSubida(plantaoId, posicao) {
+  const { error } = await supabase.from('plantao_subidas').delete().eq('plantao_id', plantaoId).eq('posicao', posicao)
+  if (error) throw error
 }
 
 async function validarEntradaNaVaga(usuarioId, plantao, posicao, mensagemConflito) {
@@ -1214,9 +1289,12 @@ function formatTroca(row, perfis) {
   }
 }
 
-// Cada médico com a vaga que ocupa, na ordem da escala. Quem está no diurno e no noturno aparece duas vezes
-function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = [], coberturas = new Map()) {
+// Cada médico com a vaga que ocupa, na ordem da escala. Quem está no diurno e no noturno aparece duas vezes.
+// subida: a vaga dele (de férias) subiu a escala; posicaoEfetiva: a posição que ele vale com a subida, se mudou
+function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = [], coberturas = new Map(), subidas = []) {
   const { plantao_usuarios, ...plantao } = row
+  const subiram = new Set(subidasValidas(plantao, plantao_usuarios, subidas).map(s => s.posicao))
+  const efetivas = posicoesEfetivas(plantao, plantao_usuarios, subidas)
   const usuarios = plantao_usuarios
     // Sem posição só no meio de uma troca de lugar entre duas vagas
     .filter(u => u.posicao != null)
@@ -1227,6 +1305,8 @@ function formatPlantao(row, perfis, trocasPendentes = new Map(), afastamentos = 
       trocaPendente: trocasPendentes.get(`${plantao.id}:${u.posicao}`) ?? null,
       afastamento: afastamentoEm(afastamentos, u.usuario_id, plantao.data),
       cobertura: coberturas.get(`${plantao.id}:${u.posicao}`) ?? null,
+      subida: subiram.has(u.posicao),
+      posicaoEfetiva: efetivas.get(u.posicao) ?? null,
     }))
     .sort((a, b) => a.posicao - b.posicao)
 
