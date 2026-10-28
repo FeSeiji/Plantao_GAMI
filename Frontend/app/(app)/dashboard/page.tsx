@@ -14,6 +14,7 @@ import { apiFetch } from "../../../components/sessao"
 const ROLE_LABELS: Record<string, string> = {
   anestesita_socio: "Anestesista Sócio",
   anestesita_plantonista: "Anestesista Plantonista",
+  anestesita_socio_jr: "Plantonista Sócio Jr",
   tecnico: "Técnico",
   coordenador: "Coordenador",
   escritorio: "Escritório",
@@ -77,7 +78,7 @@ type Resumo = {
 // Mesma lista do backend em routes/dashboard.js
 const ROLES_VISAO_GESTAO = ["escritorio", "admin", "tecnico"]
 // Só quem trabalha em plantões tem cards pessoais — admin/técnico puros veem só a gestão
-const ROLES_MEDICO = ["anestesita_socio", "anestesita_plantonista"]
+const ROLES_MEDICO = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista"]
 
 type PlantaoGeral = Omit<PlantaoResumo, "emAndamento" | "meuPapel">
 
@@ -351,7 +352,7 @@ export default function DashboardPage() {
 
   const proximo = resumo?.proximoPlantao
   const mes = resumo?.meuMes
-  const mostraPlantonista = !!mes && (mes.plantonista.plantoes > 0 || roles.includes("anestesita_plantonista"))
+  const mostraPlantonista = !!mes && (mes.plantonista.plantoes > 0 || ["anestesita_plantonista", "anestesita_socio_jr"].some((r) => roles.includes(r)))
   const mostraSocio = !!mes && (mes.socio.plantoes > 0 || roles.includes("anestesita_socio"))
   const rotuloDoMes = (chave: string) =>
     paraDataLocal(`${chave}-01`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })

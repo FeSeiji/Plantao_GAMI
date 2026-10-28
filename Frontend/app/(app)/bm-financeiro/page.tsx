@@ -82,6 +82,19 @@ type LinhaPlantonista = Perfil & {
   total: number
 }
 
+// Sócio Jr: sem pontos; os plantões do mês agrupados pelo dia da semana, pelo turno e pelo nome da vaga naquele
+// dia. plantoes e fracao: quanto do plantão ele fez (a fração na troca por horas e no congresso)
+type SocioJr = Perfil & {
+  total: number
+  grupos: {
+    dia_semana: string
+    turno: "diurno" | "noturno"
+    vaga: string
+    plantoes: number
+    datas: { data: string; fracao: number }[]
+  }[]
+}
+
 // Ajuste manual de pontos de um sócio no mês (lançado por quem tem acesso ao BM)
 type Ajuste = {
   id: string
@@ -115,6 +128,7 @@ type Bm = {
   substituicoes: Substituicao[]
   casosForaBm: CasoForaBm[]
   plantonistas: LinhaPlantonista[]
+  sociosJr: SocioJr[]
   ajustes: Ajuste[]
   historico: EventoHistorico[]
   financeiro: Financeiro & { historico: EventoFinanceiro[] }
@@ -1067,6 +1081,7 @@ export default function BmFinanceiroPage() {
             onEditar={(a) => setAjusteEmEdicao(a)}
             onExcluir={pedirExclusao}
           />
+          <SecaoSociosJr linhas={bm.sociosJr} loading={loading} />
           <SecaoPlantonistas
             linhas={bm.plantonistas}
             fin={fin}
@@ -1306,6 +1321,69 @@ function SecaoAjustes({
           </ol>
         </details>
       )}
+    </section>
+  )
+}
+
+// Sócios Jr: só os plantões, pela vaga e pelo dia da semana (sem pontos e fora da despesa dos plantonistas)
+function SecaoSociosJr({ linhas, loading }: { linhas: SocioJr[]; loading: boolean }) {
+  const formatarDatas = (datas: SocioJr["grupos"][number]["datas"]) =>
+    datas.map((d) => (d.fracao === 1 ? formatarDiaMes(d.data) : `${formatarDiaMes(d.data)} (${formatarPontos(d.fracao)})`)).join(", ")
+
+  return (
+    <section>
+      <h2 className="font-semibold text-gray-800 mb-1">Sócios Jr</h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Plantões do mês pela vaga e pelo dia da semana. Sócio Jr não tem pontos e não entra na despesa &ldquo;Plantonistas&rdquo;.
+      </p>
+      <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+              <th className="px-4 py-3">Dia</th>
+              <th className="px-3 py-3">Turno</th>
+              <th className="px-3 py-3">Vaga</th>
+              <th className="px-3 py-3 text-right">Plantões</th>
+              <th className="px-4 py-3">Datas</th>
+            </tr>
+          </thead>
+          {linhas.map((s) => (
+            <tbody key={s.id} className="border-b border-gray-200 last:border-0">
+              <tr className="bg-gray-50">
+                <td colSpan={3} className="px-4 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <SiglaBadge sigla={s.sigla} />
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800 truncate">{s.nome ?? "—"}</p>
+                      <p className="text-gray-400 text-xs truncate">{s.email}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(s.total)}</td>
+                <td className="px-4 py-2.5 text-xs text-gray-500">no mês</td>
+              </tr>
+              {s.grupos.map((g) => (
+                <tr key={`${g.dia_semana}-${g.turno}-${g.vaga}`} className="border-t border-gray-100">
+                  <td className="px-4 py-2 text-gray-700">{g.dia_semana}</td>
+                  <td className="px-3 py-2 text-gray-700">{g.turno === "diurno" ? "Diurno" : "Noturno"}</td>
+                  <td className="px-3 py-2 text-gray-800 font-medium">{g.vaga}</td>
+                  <td className="px-3 py-2 text-right text-gray-700 tabular-nums">{formatarPontos(g.plantoes)}</td>
+                  <td className="px-4 py-2 text-gray-500 tabular-nums">{formatarDatas(g.datas)}</td>
+                </tr>
+              ))}
+            </tbody>
+          ))}
+          {!loading && linhas.length === 0 && (
+            <tbody>
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  Nenhum sócio Jr com plantão neste mês.
+                </td>
+              </tr>
+            </tbody>
+          )}
+        </table>
+      </div>
     </section>
   )
 }

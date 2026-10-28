@@ -10,7 +10,7 @@ import { limparSessao } from "./sessao"
 // Administradores, técnicos, sócios e quem tem acesso ao BM — mesma lista do backend em routes/bmFinanceiro.js
 const ROLES_BM_FINANCEIRO = ["admin", "tecnico", "anestesita_socio", "bm_access"]
 // Médicos e a gestão (técnico e escritório) — mesma lista em app/(app)/meu-plantao/page.tsx
-const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnico", "escritorio"]
+const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista", "tecnico", "escritorio"]
 
 const NAV_ITEMS = [
   { label: "Meu plantão", href: "/meu-plantao", roles: ROLES_MEU_PLANTAO },

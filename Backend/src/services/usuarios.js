@@ -2,8 +2,8 @@ const { createClient } = require('@supabase/supabase-js')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
-const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_plantonista', 'tecnico', 'escritorio']
-const ROLES_ANESTESISTA = ['anestesita_socio', 'anestesita_plantonista']
+const ROLES_VALIDAS = ['anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista', 'tecnico', 'escritorio']
+const ROLES_ANESTESISTA = ['anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista']
 // Papéis que alguém pode escolher no cadastro público: todos, porque a conta só entra depois da aprovação
 // da gestão. A flag admin não é papel e continua sendo dada só pela gestão.
 const ROLES_CADASTRO_PUBLICO = [...ROLES_ANESTESISTA, 'tecnico', 'escritorio']
@@ -129,7 +129,13 @@ function contaComoSocio(roles) {
   return (roles ?? []).includes('anestesita_socio')
 }
 
+// Sócio Jr: no BM não tem pontos nem entra na despesa dos plantonistas; aparece à parte, com os plantões por
+// posição e dia da semana. Quem também tem o cargo de sócio conta como sócio
+function contaComoSocioJr(roles) {
+  return !contaComoSocio(roles) && (roles ?? []).includes('anestesita_socio_jr')
+}
+
 module.exports = {
   ROLES_VALIDAS, ROLES_ANESTESISTA, ROLES_CADASTRO_PUBLICO, DURACAO_DESATIVACAO, UFS, validarDadosUsuario, criarUsuario,
-  buscarCargosDosUsuarios, buscarRolesDosUsuarios, contaComoSocio, estaDesativado,
+  buscarCargosDosUsuarios, buscarRolesDosUsuarios, contaComoSocio, contaComoSocioJr, estaDesativado,
 }

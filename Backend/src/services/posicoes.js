@@ -8,22 +8,22 @@ const TURNOS = {
   noturno: { hora_inicio: '19:00', hora_fim: '07:00' },
 }
 
-// fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto com o que muda (horário,
-// se é de coordenador). Os nomes do fim de semana (Plantonista, Manhã, 2º–5º) ficam só no frontend.
+// fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto com o que muda (nome, horário,
+// se é de coordenador). rotulo: o nome da vaga na escala (o BM dos sócios Jr e o Excel usam)
 const VAGAS = [
-  { posicao: 1, turno: 'diurno', coordenador: true, fimDeSemana: { coordenador: false } }, // Coordenador; Plantonista no fim de semana
-  { posicao: 2, turno: 'diurno', coordenador: true }, // Coordenador
-  { posicao: 3, turno: 'diurno', fimDeSemana: { hora_fim: '13:00' } }, // 2º; Manhã no fim de semana
-  { posicao: 4, turno: 'diurno' }, // 3º; 2º no fim de semana
-  { posicao: 5, turno: 'diurno' }, // 4º; 3º no fim de semana
-  { posicao: 6, turno: 'diurno' }, // 5º; 4º no fim de semana
-  { posicao: 7, turno: 'diurno' }, // 6º; 5º no fim de semana
-  { posicao: 8, turno: 'diurno', fimDeSemana: false }, // 7º
-  { posicao: 9, turno: 'noturno' }, // Intermediário; Plantonista no fim de semana
-  { posicao: 10, turno: 'noturno' }, // 1º
-  { posicao: 11, turno: 'noturno' }, // 1º; 2º no fim de semana
-  { posicao: 12, turno: 'noturno' }, // 2º; 3º no fim de semana
-  { posicao: 13, turno: 'noturno' }, // 3º; 4º no fim de semana
+  { posicao: 1, turno: 'diurno', rotulo: 'Coordenador', coordenador: true, fimDeSemana: { rotulo: 'Plantonista', coordenador: false } },
+  { posicao: 2, turno: 'diurno', rotulo: 'Coordenador', coordenador: true },
+  { posicao: 3, turno: 'diurno', rotulo: '2º', fimDeSemana: { rotulo: 'Manhã', hora_fim: '13:00' } },
+  { posicao: 4, turno: 'diurno', rotulo: '3º', fimDeSemana: { rotulo: '2º' } },
+  { posicao: 5, turno: 'diurno', rotulo: '4º', fimDeSemana: { rotulo: '3º' } },
+  { posicao: 6, turno: 'diurno', rotulo: '5º', fimDeSemana: { rotulo: '4º' } },
+  { posicao: 7, turno: 'diurno', rotulo: '6º', fimDeSemana: { rotulo: '5º' } },
+  { posicao: 8, turno: 'diurno', rotulo: '7º', fimDeSemana: false },
+  { posicao: 9, turno: 'noturno', rotulo: 'Intermediário', fimDeSemana: { rotulo: 'Plantonista' } },
+  { posicao: 10, turno: 'noturno', rotulo: '1º' },
+  { posicao: 11, turno: 'noturno', rotulo: '1º', fimDeSemana: { rotulo: '2º' } },
+  { posicao: 12, turno: 'noturno', rotulo: '2º', fimDeSemana: { rotulo: '3º' } },
+  { posicao: 13, turno: 'noturno', rotulo: '3º', fimDeSemana: { rotulo: '4º' } },
 ]
 
 const POSICOES = VAGAS.map(v => v.posicao)
@@ -55,6 +55,11 @@ function vagaNoDia(data, posicao) {
 // A vaga 1 é de coordenador só de segunda a sexta: no fim de semana ela é a do plantonista
 function ehVagaDeCoordenador(data, posicao) {
   return vagaNoDia(data, posicao)?.coordenador === true
+}
+
+// "Coordenador" / "3º" / "Manhã" / "Plantonista": o nome da vaga nesse dia
+function rotuloDaVaga(data, posicao) {
+  return vagaNoDia(data, posicao)?.rotulo ?? `Vaga ${posicao}`
 }
 
 function turnoDaPosicao(posicao) {
@@ -104,4 +109,5 @@ module.exports = {
   ehVagaDeCoordenador,
   turnoDaPosicao,
   horarioDaVaga,
+  rotuloDaVaga,
 }

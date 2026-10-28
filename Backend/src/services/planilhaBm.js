@@ -116,6 +116,7 @@ async function gerarPlanilhaBm(bm) {
   await removerVinculoExterno(zip)
   await adicionarAbas(zip, [
     { nome: 'Plantonistas', ...abaPlantonistas(bm.plantonistas) },
+    { nome: 'Sócios Jr', ...abaSociosJr(bm.sociosJr) },
     { nome: 'Casos fora', ...abaCasosFora(bm.casosFora) },
   ])
 
@@ -312,6 +313,23 @@ function abaPlantonistas(plantonistas) {
     linhas: [
       ['Sigla', 'Nome', ...categorias.map(c => ROTULO_CATEGORIA[c]), 'Total'],
       ...plantonistas.map(p => [p.sigla, p.nome ?? p.email, ...categorias.map(c => p.categorias[c]), p.total]),
+    ],
+  }
+}
+
+// Um plantão por linha, de cada sócio Jr, em ordem de data
+function abaSociosJr(sociosJr) {
+  const turno = { diurno: 'Diurno', noturno: 'Noturno' }
+  return {
+    larguras: [8, 32, 12, 14, 10, 16, 10],
+    linhas: [
+      ['Sigla', 'Nome', 'Data', 'Dia da semana', 'Turno', 'Vaga', 'Plantões'],
+      ...sociosJr.flatMap(s =>
+        s.grupos
+          .flatMap(g => g.datas.map(d => ({ ...d, grupo: g })))
+          .sort((a, b) => a.data.localeCompare(b.data))
+          .map(({ data, fracao, grupo: g }) => [s.sigla, s.nome ?? s.email, formatarData(data), g.dia_semana, turno[g.turno], g.vaga, fracao])
+      ),
     ],
   }
 }

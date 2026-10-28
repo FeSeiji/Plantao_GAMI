@@ -7,11 +7,12 @@ import { useRouter } from "next/navigation"
 const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
+  { value: "anestesita_socio_jr", label: "Plantonista Sócio Jr" },
   { value: "tecnico", label: "Técnico" },
   { value: "escritorio", label: "Escritório" },
 ]
 
-const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista"]
 
 const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",

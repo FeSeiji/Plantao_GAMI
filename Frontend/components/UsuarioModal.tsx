@@ -24,6 +24,7 @@ export type UsuarioGestao = {
 export const ROLES = [
   { value: "anestesita_socio", label: "Anestesista Sócio" },
   { value: "anestesita_plantonista", label: "Anestesista Plantonista" },
+  { value: "anestesita_socio_jr", label: "Plantonista Sócio Jr" },
   { value: "tecnico", label: "Técnico" },
   { value: "escritorio", label: "Escritório" },
 ]
@@ -39,7 +40,7 @@ export const ROTULO_ROLE: Record<string, string> = {
 export const ROLES_GESTAO = ["escritorio", "admin", "anestesita_socio", "tecnico"]
 export const ROLES_EDICAO = ["escritorio", "admin", "tecnico"]
 
-export const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_plantonista"]
+export const ROLES_ANESTESISTA = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista"]
 
 export const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",

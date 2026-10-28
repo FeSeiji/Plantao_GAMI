@@ -20,7 +20,7 @@ import {
 import { apiFetch } from "../../../components/sessao"
 
 // Médicos e a gestão (técnico e escritório) veem esta tela — mesma lista em components/Sidebar.tsx
-const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_plantonista", "tecnico", "escritorio"]
+const ROLES_MEU_PLANTAO = ["anestesita_socio", "anestesita_socio_jr", "anestesita_plantonista", "tecnico", "escritorio"]
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
