@@ -4,6 +4,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 const { buscarCargosDosUsuarios, contaComoSocio } = require('./usuarios')
 const { MES_INICIAL_CONTA_CORRENTE } = require('./calculoBm')
+const { buscarEmPaginas } = require('./paginas')
 
 // Financeiro do BM (migrations bm_financeiro e bm_conta_corrente): os valores digitados por quem tem acesso ao BM.
 // Só guarda o que foi digitado; as contas são feitas na tela e, para a conta corrente e o Excel, em calculoBm.js.
@@ -26,47 +27,67 @@ const CAMPOS_CONTROLE = ['mes', 'usuario_id', 'item_id', 'id', 'atualizado_por',
 // os valores de plantão do último mês em que foram preenchidos (valem enquanto o mês não tiver os seus)
 // e o histórico do mês, do mais recente para o mais antigo
 async function buscarFinanceiro(mes) {
-  const inicio = `${mes}-01`
-  const [atual, anteriores, socios, itens, despesas, historico] = await Promise.all([
-    supabase.from('bm_meses').select(CAMPOS_MES.join(', ')).eq('mes', inicio).maybeSingle(),
-    supabase.from('bm_meses').select(`mes, ${CAMPOS_VALOR_PLANTAO.join(', ')}`).lt('mes', inicio).order('mes', { ascending: false }).limit(24),
-    supabase.from('bm_socios_mes').select(`usuario_id, fator_correcao, ${CAMPOS_SOCIO_DINHEIRO.join(', ')}`).eq('mes', inicio),
-    supabase.from('bm_despesa_itens').select('id, empresa, nome, ordem, calculo, ativo').order('ordem'),
-    supabase.from('bm_despesas').select('item_id, banco, data_pago, valor').eq('mes', inicio),
-    supabase
-      .from('bm_historico')
-      .select('id, tabela, antes, depois, feito_por, feito_em')
-      .or(`mes.eq.${inicio},mes.is.null`)
-      .order('feito_em', { ascending: false })
-      .limit(300),
-  ])
-  for (const r of [atual, anteriores, socios, itens, despesas, historico]) if (r.error) throw r.error
+  return (await buscarFinanceiroDosMeses([mes], { comHistorico: true })).get(mes)
+}
 
-  const valoresAnteriores = {}
-  for (const campo of CAMPOS_VALOR_PLANTAO) {
-    const mesComValor = anteriores.data.find(m => m[campo] != null)
-    valoresAnteriores[campo] = mesComValor ? Number(mesComValor[campo]) : null
-  }
-
-  const despesaDoItem = new Map(despesas.data.map(d => [d.item_id, d]))
-  // Item desativado só aparece no mês que já tem valor nele
-  const itensDoMes = itens.data.filter(i => i.ativo || despesaDoItem.has(i.id))
-
-  return {
-    ...Object.fromEntries(CAMPOS_MES.map(c => [c, numeroOuNulo(atual.data?.[c])])),
-    valores_plantao_anteriores: valoresAnteriores,
-    socios: Object.fromEntries(
-      socios.data.map(s => [s.usuario_id, {
-        ...Object.fromEntries(CAMPOS_SOCIO_DINHEIRO.map(c => [c, numeroOuNulo(s[c])])),
-        fator_correcao: Number(s.fator_correcao),
-      }])
+// O financeiro de vários meses ('AAAA-MM', em ordem) com uma consulta por tabela: é o que a conta corrente em
+// cascata usa para refazer os meses anteriores. Sem comHistorico, o histórico vem vazio. Map mes -> financeiro
+async function buscarFinanceiroDosMeses(meses, { comHistorico = false } = {}) {
+  const inicios = meses.map(m => `${m}-01`)
+  const [primeiro, ultimo] = [inicios[0], inicios[inicios.length - 1]]
+  const [todosOsMeses, socios, itens, despesas, historico] = await Promise.all([
+    // Os meses anteriores também: o valor do plantão vazio vale o do último mês preenchido
+    buscarEmPaginas(() => supabase.from('bm_meses').select(`mes, ${CAMPOS_MES.join(', ')}`).lte('mes', ultimo).order('mes', { ascending: false })),
+    buscarEmPaginas(() =>
+      supabase.from('bm_socios_mes').select(`mes, usuario_id, fator_correcao, ${CAMPOS_SOCIO_DINHEIRO.join(', ')}`)
+        .gte('mes', primeiro).lte('mes', ultimo).order('mes').order('usuario_id')
     ),
-    despesas: itensDoMes.map(item => {
-      const d = despesaDoItem.get(item.id)
-      return { ...item, banco: d?.banco ?? null, data_pago: d?.data_pago ?? null, valor: numeroOuNulo(d?.valor) }
-    }),
-    historico: historico.data.map(h => descreverEvento(h, itens.data)).filter(h => h.mudancas.length > 0),
-  }
+    supabase.from('bm_despesa_itens').select('id, empresa, nome, ordem, calculo, ativo').order('ordem'),
+    buscarEmPaginas(() =>
+      supabase.from('bm_despesas').select('mes, item_id, banco, data_pago, valor').gte('mes', primeiro).lte('mes', ultimo).order('mes').order('item_id')
+    ),
+    comHistorico
+      ? supabase
+        .from('bm_historico')
+        .select('id, tabela, antes, depois, feito_por, feito_em')
+        .or(`mes.eq.${primeiro},mes.is.null`)
+        .order('feito_em', { ascending: false })
+        .limit(300)
+      : { data: [], error: null },
+  ])
+  for (const r of [itens, historico]) if (r.error) throw r.error
+
+  return new Map(meses.map((mes, i) => {
+    const inicio = inicios[i]
+    const atual = todosOsMeses.find(m => m.mes === inicio)
+    // Até 24 meses para trás, do mais recente para o mais antigo
+    const anteriores = todosOsMeses.filter(m => m.mes < inicio).slice(0, 24)
+    const valoresAnteriores = {}
+    for (const campo of CAMPOS_VALOR_PLANTAO) {
+      const mesComValor = anteriores.find(m => m[campo] != null)
+      valoresAnteriores[campo] = mesComValor ? Number(mesComValor[campo]) : null
+    }
+
+    const despesaDoItem = new Map(despesas.filter(d => d.mes === inicio).map(d => [d.item_id, d]))
+    // Item desativado só aparece no mês que já tem valor nele
+    const itensDoMes = itens.data.filter(item => item.ativo || despesaDoItem.has(item.id))
+
+    return [mes, {
+      ...Object.fromEntries(CAMPOS_MES.map(c => [c, numeroOuNulo(atual?.[c])])),
+      valores_plantao_anteriores: valoresAnteriores,
+      socios: Object.fromEntries(
+        socios.filter(s => s.mes === inicio).map(s => [s.usuario_id, {
+          ...Object.fromEntries(CAMPOS_SOCIO_DINHEIRO.map(c => [c, numeroOuNulo(s[c])])),
+          fator_correcao: Number(s.fator_correcao),
+        }])
+      ),
+      despesas: itensDoMes.map(item => {
+        const d = despesaDoItem.get(item.id)
+        return { ...item, banco: d?.banco ?? null, data_pago: d?.data_pago ?? null, valor: numeroOuNulo(d?.valor) }
+      }),
+      historico: historico.data.map(h => descreverEvento(h, itens.data)).filter(h => h.mudancas.length > 0),
+    }]
+  }))
 }
 
 // Uma linha do histórico com só o que mudou ({ campo, antes, depois }) e a quem ela se refere
@@ -274,4 +295,4 @@ async function atualizarItemDespesa(id, { nome, ativo }, usuarioId) {
   return { item: data }
 }
 
-module.exports = { buscarFinanceiro, salvarFinanceiro, criarItemDespesa, atualizarItemDespesa }
+module.exports = { buscarFinanceiro, buscarFinanceiroDosMeses, salvarFinanceiro, criarItemDespesa, atualizarItemDespesa }
