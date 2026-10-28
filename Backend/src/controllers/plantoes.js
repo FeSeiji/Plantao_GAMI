@@ -5,6 +5,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { ROTULO_TIPO, buscarAfastamentosNoPeriodo, afastamentoEm, usuariosAfastados, estaDeFerias } = require('../services/afastamentos')
 
 const { ehGestao } = require('../middleware/auth')
+const { erroDoPeriodo } = require('../middleware/parametros')
 const {
   POSICOES, vagaExisteNoDia, ehVagaDeCoordenador, turnoDaPosicao, horarioDaVaga, turnoJaComecou, turnoJaTerminou,
 } = require('../services/posicoes')
@@ -69,6 +70,8 @@ exports.createPlantao = async (req, res) => {
 
 exports.listPlantoes = async (req, res) => {
   const { inicio, fim } = req.query
+  const erroPeriodo = erroDoPeriodo({ inicio, fim })
+  if (erroPeriodo) return res.status(400).json({ error: erroPeriodo })
 
   let query = supabase
     .from('plantoes')
@@ -230,7 +233,8 @@ exports.listarRemocoesDoPlantao = async (req, res) => {
 }
 
 // Move o médico de uma vaga para outra do mesmo plantão, inclusive entre o diurno e o noturno. Se a vaga nova
-// estiver ocupada, os dois trocam de lugar. Vale na hora (sem aceite) e fica registrado em plantao_mudancas_posicao.
+// estiver ocupada, os dois trocam de lugar (só a gestão). Vale na hora (sem aceite) e fica registrado em
+// plantao_mudancas_posicao.
 exports.alterarPosicao = async (req, res) => {
   const { posicao, nova_posicao } = req.body
 
@@ -251,17 +255,28 @@ exports.alterarPosicao = async (req, res) => {
     return res.status(400).json({ error: 'Essa vaga não existe no fim de semana' })
   }
 
-  // Fora da gestão, só quem está escalado nesse plantão mexe nas posições dele
-  if (!ehGestao(req.user) && !plantao.plantao_usuarios.some(u => u.usuario_id === req.user.id)) {
-    return res.status(403).json({ error: 'Você só pode mudar posições nos plantões em que está escalado' })
-  }
-
   const membro = plantao.plantao_usuarios.find(u => u.posicao === posicao)
   if (!membro) return res.status(404).json({ error: 'Essa vaga está vazia' })
 
   const ocupante = plantao.plantao_usuarios.find(u => u.posicao === nova_posicao)
   // O mesmo médico nas duas vagas (uma no diurno e outra no noturno): trocar não muda nada
   if (ocupante?.usuario_id === membro.usuario_id) return res.json({ message: 'Posição mantida' })
+
+  // Fora da gestão, o médico só muda a própria vaga, para uma vaga vazia e enquanto o turno não terminou:
+  // mexer na vaga de um colega (inclusive trocar de lugar com ele) muda os pontos dele, sem o aceite dele
+  if (!ehGestao(req.user)) {
+    if (membro.usuario_id !== req.user.id) {
+      return res.status(403).json({ error: 'Você só pode mudar a sua própria vaga' })
+    }
+    if (ocupante) {
+      return res.status(403).json({
+        error: 'Essa vaga está ocupada. Para trocar de lugar com um colega, peça uma troca ou fale com a gestão.'
+      })
+    }
+    if (turnoJaTerminou(plantao.data, posicao) || turnoJaTerminou(plantao.data, nova_posicao)) {
+      return res.status(400).json({ error: 'O turno já terminou. Só a gestão pode mudar a vaga.' })
+    }
+  }
 
   // Troca pendente e troca por horas são da vaga: mudar quem está nela no meio do caminho embaralharia o pedido
   const { data: trocasDasVagas, error: trocasError } = await supabase

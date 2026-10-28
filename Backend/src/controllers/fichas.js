@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js')
 
 const { ROLES_ANESTESISTA } = require('../services/usuarios')
 const { ehGestao } = require('../middleware/auth')
+const { ehUuid, erroDoPeriodo } = require('../middleware/parametros')
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
 
@@ -46,6 +47,9 @@ exports.listar = async (req, res) => {
   const { inicio, fim, anestesista_id } = req.query
   const offset = Number(req.query.offset ?? 0)
   if (!Number.isInteger(offset) || offset < 0) return res.status(400).json({ error: 'offset inválido' })
+  const erroPeriodo = erroDoPeriodo({ inicio, fim })
+  if (erroPeriodo) return res.status(400).json({ error: erroPeriodo })
+  if (anestesista_id && !ehUuid(anestesista_id)) return res.status(400).json({ error: 'anestesista_id inválido' })
 
   // O id desempata fichas com a mesma data e hora, senão uma ficha pode repetir ou sumir entre as páginas
   let query = supabase

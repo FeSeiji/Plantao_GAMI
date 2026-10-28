@@ -191,6 +191,7 @@ export default function AfastamentosPage() {
         <p>
           {a.tipo === "ferias" ? "Férias" : "Congresso"} de <span className="font-semibold">{nomeDe(a.usuario)}</span> de{" "}
           {formatarData(a.data_inicio)} a {formatarData(a.data_fim)}. Os plantões desse período voltam a contar normalmente.
+          {a.tipo === "ferias" && a.status === "aprovado" && " Se alguém estava cobrindo essas férias, a cobertura também é cancelada."}
         </p>
       ),
       rotuloConfirmar: "Remover",

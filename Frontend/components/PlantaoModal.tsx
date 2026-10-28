@@ -26,6 +26,7 @@ import {
   horarioDaVaga,
   rotuloPosicaoAbreviado,
   turnoDaPosicao,
+  turnoJaTerminou,
   vagasDoTurno,
 } from "./posicoes";
 import { apiFetch } from "./sessao";
@@ -220,8 +221,6 @@ export default function PlantaoModal({
         ? { horaInicio: horarioTrocando.hora_inicio, horaFim: horaParcial }
         : { horaInicio: horaParcial, horaFim: horarioTrocando.hora_fim }
       : null;
-  // Médico fora da gestão só mexe nas posições dos plantões em que está escalado
-  const estouEscalado = selecionados.some((u) => u.id === meuId);
   // O mesmo médico pode estar no diurno e no noturno, mas não duas vezes no mesmo turno
   const noTurno = (usuarioId: string | null, turno: Turno) =>
     selecionados.some(
@@ -944,11 +943,12 @@ export default function PlantaoModal({
       });
     }
 
-    // A gestão muda a posição no modo edição; o médico escalado (que não entra nesse modo) muda direto
-    // na visualização. Mudar de vaga é também como se define o coordenador
+    // A gestão muda qualquer posição no modo edição. O médico (que não entra nesse modo) muda direto na
+    // visualização só a própria vaga, para uma vaga vazia e até o turno terminar
     const mostraSeletorPosicao = podeEditarPlantao
       ? editavel
-      : podeMudarPosicao && estouEscalado;
+      : podeMudarPosicao && u.id === meuId && !turnoJaTerminou(plantao.data, posicao);
+    const ocupada = (p: number) => p !== posicao && selecionados.some((o) => o.posicao === p);
 
     let rotulo: React.ReactNode = rotuloPosicaoAbreviado(plantao.data, posicao);
     if (!pendente && !u.cobertura && mostraSeletorPosicao) {
@@ -961,14 +961,14 @@ export default function PlantaoModal({
         >
           {TURNOS.map((t) => (
             <optgroup key={t.valor} label={t.rotulo}>
-              {vagasDoTurno(t.valor, plantao.data, [posicao]).map((p) => (
-                <option key={p} value={p}>
-                  {rotuloPosicaoAbreviado(plantao.data, p)}
-                  {p !== posicao && selecionados.some((o) => o.posicao === p)
-                    ? " (trocar)"
-                    : ""}
-                </option>
-              ))}
+              {vagasDoTurno(t.valor, plantao.data, [posicao])
+                .filter((p) => podeEditarPlantao || !ocupada(p))
+                .map((p) => (
+                  <option key={p} value={p}>
+                    {rotuloPosicaoAbreviado(plantao.data, p)}
+                    {ocupada(p) ? " (trocar)" : ""}
+                  </option>
+                ))}
             </optgroup>
           ))}
         </select>

@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { requireRole } = require('../middleware/auth')
+const { exigirUuid } = require('../middleware/parametros')
 const {
   createPlantao, listPlantoes, getPlantao, updatePlantao, addUsuarios, removerDaVaga,
   criarTroca, listarTrocasDoPlantao, listarTrocasPendentes, responderTroca, listarRemocoesDoPlantao,
@@ -12,11 +13,14 @@ const {
 // Criar e editar o plantão e preencher ou esvaziar vagas é da gestão.
 // Os médicos usam a troca, que pede aceite; sócios com a flag admin entram por 'admin'
 const gestao = requireRole('escritorio', 'admin', 'tecnico')
-// Mudar médicos de vaga: gestão e os médicos escalados no plantão (conferido no controller).
-// Mudar de vaga é também como se define o coordenador
+// Mudar médicos de vaga: a gestão muda qualquer uma; o médico, só a própria, para uma vaga vazia e até o turno
+// terminar (conferido no controller)
 const mudarPosicao = requireRole('escritorio', 'admin', 'anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista', 'tecnico')
 // Pedir uma vaga livre: só médicos (a gestão aprova ou recusa)
 const medicos = requireRole('anestesita_socio', 'anestesita_socio_jr', 'anestesita_plantonista')
+
+// Ids de rota fora do formato uuid: 404, em vez do erro de sintaxe do banco
+exigirUuid(router, 'id', 'trocaId', 'avisoId', 'pedidoId')
 
 router.get('/', listPlantoes)
 router.get('/trocas/pendentes', listarTrocasPendentes)
