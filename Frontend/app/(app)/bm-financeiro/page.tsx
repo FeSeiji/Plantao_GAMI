@@ -82,17 +82,12 @@ type LinhaPlantonista = Perfil & {
   total: number
 }
 
-// Sócio Jr: sem pontos; os plantões do mês agrupados pelo dia da semana, pelo turno e pelo nome da vaga naquele
-// dia. plantoes e fracao: quanto do plantão ele fez (a fração na troca por horas e no congresso)
-type SocioJr = Perfil & {
-  total: number
-  grupos: {
-    dia_semana: string
-    turno: "diurno" | "noturno"
-    vaga: string
-    plantoes: number
-    datas: { data: string; fracao: number }[]
-  }[]
+// Sócios Jr do mês: cada um é uma coluna, com o total de plantões, e cada linha é uma vaga num tipo de dia
+// ("2º" do diurno de sábado), com quantos plantões cada um fez nela (a fração na troca por horas e no congresso).
+// Sem pontos
+type SociosJr = {
+  socios: (Perfil & { total: number })[]
+  linhas: { dia: "Semana" | "Sábado" | "Domingo"; turno: "diurno" | "noturno"; vaga: string; plantoes: PorSocio }[]
 }
 
 // Ajuste manual de pontos de um sócio no mês (lançado por quem tem acesso ao BM)
@@ -128,7 +123,7 @@ type Bm = {
   substituicoes: Substituicao[]
   casosForaBm: CasoForaBm[]
   plantonistas: LinhaPlantonista[]
-  sociosJr: SocioJr[]
+  sociosJr: SociosJr
   ajustes: Ajuste[]
   historico: EventoHistorico[]
   financeiro: Financeiro & { historico: EventoFinanceiro[] }
@@ -1081,7 +1076,7 @@ export default function BmFinanceiroPage() {
             onEditar={(a) => setAjusteEmEdicao(a)}
             onExcluir={pedirExclusao}
           />
-          <SecaoSociosJr linhas={bm.sociosJr} loading={loading} />
+          <SecaoSociosJr dados={bm.sociosJr} loading={loading} />
           <SecaoPlantonistas
             linhas={bm.plantonistas}
             fin={fin}
@@ -1325,64 +1320,72 @@ function SecaoAjustes({
   )
 }
 
-// Sócios Jr: só os plantões, pela vaga e pelo dia da semana (sem pontos e fora da despesa dos plantonistas)
-function SecaoSociosJr({ linhas, loading }: { linhas: SocioJr[]; loading: boolean }) {
-  const formatarDatas = (datas: SocioJr["grupos"][number]["datas"]) =>
-    datas.map((d) => (d.fracao === 1 ? formatarDiaMes(d.data) : `${formatarDiaMes(d.data)} (${formatarPontos(d.fracao)})`)).join(", ")
+// Sócios Jr: quantos plantões cada um fez em cada vaga, na semana, no sábado e no domingo (sem pontos e fora da
+// despesa dos plantonistas)
+function SecaoSociosJr({ dados: { socios, linhas }, loading }: { dados: SociosJr; loading: boolean }) {
+  const somarLinha = (plantoes: PorSocio) => Object.values(plantoes).reduce((t, v) => t + v, 0)
+  const total = socios.reduce((t, s) => t + s.total, 0)
 
   return (
     <section>
       <h2 className="font-semibold text-gray-800 mb-1">Sócios Jr</h2>
       <p className="text-xs text-gray-500 mb-3">
-        Plantões do mês pela vaga e pelo dia da semana. Sócio Jr não tem pontos e não entra na despesa &ldquo;Plantonistas&rdquo;.
+        Plantões do mês por vaga, na semana, no sábado e no domingo. Sócio Jr não tem pontos e não entra na despesa
+        &ldquo;Plantonistas&rdquo;. As datas estão na aba &ldquo;Sócios Jr&rdquo; do Excel.
       </p>
-      <div className={`bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-              <th className="px-4 py-3">Dia</th>
-              <th className="px-3 py-3">Turno</th>
-              <th className="px-3 py-3">Vaga</th>
-              <th className="px-3 py-3 text-right">Plantões</th>
-              <th className="px-4 py-3">Datas</th>
-            </tr>
-          </thead>
-          {linhas.map((s) => (
-            <tbody key={s.id} className="border-b border-gray-200 last:border-0">
-              <tr className="bg-gray-50">
-                <td colSpan={3} className="px-4 py-2.5">
-                  <div className="flex items-center gap-3">
+      <div className={`w-fit max-w-full bg-white rounded-xl border border-gray-200 overflow-x-auto ${loading ? "opacity-60" : ""} transition-opacity`}>
+        {socios.length === 0 ? (
+          !loading && <p className="px-4 py-8 text-center text-sm text-gray-400">Nenhum sócio Jr com plantão neste mês.</p>
+        ) : (
+          <table className="min-w-[22rem] text-sm">
+            <thead>
+              <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+                <th className="px-4 py-3 text-left">Vaga</th>
+                {socios.map((s) => (
+                  <th key={s.id} className="px-3 py-2 text-center w-20" title={s.nome ?? s.email ?? undefined}>
                     <SiglaBadge sigla={s.sigla} />
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-800 truncate">{s.nome ?? "—"}</p>
-                      <p className="text-gray-400 text-xs truncate">{s.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-3 py-2.5 text-right font-semibold text-gray-800 tabular-nums">{formatarPontos(s.total)}</td>
-                <td className="px-4 py-2.5 text-xs text-gray-500">no mês</td>
+                  </th>
+                ))}
+                <th className="px-4 py-3 text-right w-20">Total</th>
               </tr>
-              {s.grupos.map((g) => (
-                <tr key={`${g.dia_semana}-${g.turno}-${g.vaga}`} className="border-t border-gray-100">
-                  <td className="px-4 py-2 text-gray-700">{g.dia_semana}</td>
-                  <td className="px-3 py-2 text-gray-700">{g.turno === "diurno" ? "Diurno" : "Noturno"}</td>
-                  <td className="px-3 py-2 text-gray-800 font-medium">{g.vaga}</td>
-                  <td className="px-3 py-2 text-right text-gray-700 tabular-nums">{formatarPontos(g.plantoes)}</td>
-                  <td className="px-4 py-2 text-gray-500 tabular-nums">{formatarDatas(g.datas)}</td>
-                </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l, i) => (
+                <React.Fragment key={`${l.dia}-${l.turno}-${l.vaga}`}>
+                  {l.dia !== linhas[i - 1]?.dia && (
+                    <tr className="bg-gray-50 border-t border-gray-200 first:border-t-0">
+                      <td colSpan={socios.length + 2} className="px-4 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        {l.dia}
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="border-t border-gray-100">
+                    <td className="px-4 py-2 text-gray-800">
+                      {l.vaga} <span className="text-gray-400">· {l.turno === "diurno" ? "diurno" : "noturno"}</span>
+                    </td>
+                    {socios.map((s) => (
+                      <td key={s.id} className="px-3 py-2 text-center tabular-nums text-gray-700">
+                        {l.plantoes[s.id] ? formatarPontos(l.plantoes[s.id]) : <span className="text-gray-300">—</span>}
+                      </td>
+                    ))}
+                    <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-800">{formatarPontos(somarLinha(l.plantoes))}</td>
+                  </tr>
+                </React.Fragment>
               ))}
             </tbody>
-          ))}
-          {!loading && linhas.length === 0 && (
-            <tbody>
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                  Nenhum sócio Jr com plantão neste mês.
-                </td>
+            <tfoot>
+              <tr className="border-t border-gray-200 bg-gray-50 text-gray-800 font-semibold">
+                <td className="px-4 py-3">Total</td>
+                {socios.map((s) => (
+                  <td key={s.id} className="px-3 py-3 text-center tabular-nums">
+                    {formatarPontos(s.total)}
+                  </td>
+                ))}
+                <td className="px-4 py-3 text-right tabular-nums">{formatarPontos(total)}</td>
               </tr>
-            </tbody>
-          )}
-        </table>
+            </tfoot>
+          </table>
+        )}
       </div>
     </section>
   )

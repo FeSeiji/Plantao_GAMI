@@ -317,19 +317,25 @@ function abaPlantonistas(plantonistas) {
   }
 }
 
-// Um plantão por linha, de cada sócio Jr, em ordem de data
-function abaSociosJr(sociosJr) {
+// A mesma grade da tela (uma coluna por sócio Jr, uma linha por vaga e tipo de dia) e, abaixo, um plantão por
+// linha, em ordem de data, para conferência
+function abaSociosJr({ socios, linhas, plantoes }) {
   const turno = { diurno: 'Diurno', noturno: 'Noturno' }
+  const socioPorId = new Map(socios.map(s => [s.id, s]))
+  const soma = valores => Math.round(Object.values(valores).reduce((t, v) => t + v, 0) * 100) / 100
   return {
-    larguras: [8, 32, 12, 14, 10, 16, 10],
+    // As colunas servem às duas tabelas (B: turno e nome; C: vaga e data; D em diante: sócios Jr e detalhes)
+    larguras: Array.from({ length: Math.max(7, socios.length + 4) }, (_, i) => [10, 32, 16, 14, 10, 16][i] ?? 10),
     linhas: [
+      ['Dia', 'Turno', 'Vaga', ...socios.map(s => s.sigla ?? s.nome), 'Total'],
+      ...linhas.map(l => [l.dia, turno[l.turno], l.vaga, ...socios.map(s => l.plantoes[s.id] ?? null), soma(l.plantoes)]),
+      ['Total', null, null, ...socios.map(s => s.total), soma(Object.fromEntries(socios.map(s => [s.id, s.total])))],
+      [],
       ['Sigla', 'Nome', 'Data', 'Dia da semana', 'Turno', 'Vaga', 'Plantões'],
-      ...sociosJr.flatMap(s =>
-        s.grupos
-          .flatMap(g => g.datas.map(d => ({ ...d, grupo: g })))
-          .sort((a, b) => a.data.localeCompare(b.data))
-          .map(({ data, fracao, grupo: g }) => [s.sigla, s.nome ?? s.email, formatarData(data), g.dia_semana, turno[g.turno], g.vaga, fracao])
-      ),
+      ...plantoes.map(p => {
+        const s = socioPorId.get(p.socio_id)
+        return [s.sigla, s.nome ?? s.email, formatarData(p.data), p.dia_semana, turno[p.turno], p.vaga, p.fracao]
+      }),
     ],
   }
 }

@@ -25,8 +25,8 @@ const ORDEM_PLANILHA = ['ML', 'PG', 'PZ', 'NA', 'CH', 'OK', 'DI', 'AD', 'MM', 'G
 // - casosForaBm: casos fora com valor (GAMI/ADDS, Sem nota fiscal ou sem recibo ainda), com a parte de cada sócio
 //   (dois anestesistas: metade cada).
 // - plantonistas: plantões por categoria (a planilha não tem; fica abaixo do BM).
-// - sociosJr: os plantões de cada sócio Jr, agrupados pela vaga e pelo dia da semana. Não têm pontos nem entram
-//   na despesa dos plantonistas.
+// - sociosJr: quantos plantões cada sócio Jr fez em cada vaga, na semana, no sábado e no domingo. Não têm pontos
+//   nem entram na despesa dos plantonistas.
 // - financeiro: os valores digitados do mês (faturamento, despesas, valor do plantão, valores por sócio) e o
 //   histórico deles. conta_corrente.dif_mes_anterior: a diferença final do mês anterior de cada sócio, refeita em
 //   cascata desde o primeiro mês da conta corrente (vazia nesse mês, que usa o saldo inicial, e antes dele).
@@ -186,13 +186,7 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
     plantonistas: [...plantonistas]
       .map(([id, valores]) => ({ ...resumoDoPerfil(id, perfis), ...valores }))
       .sort((a, b) => b.total - a.total || (a.nome ?? '').localeCompare(b.nome ?? '')),
-    sociosJr: [...sociosJr]
-      .map(([id, plantoesJr]) => ({
-        ...resumoDoPerfil(id, perfis),
-        total: duasCasas(plantoesJr.reduce((s, p) => s + p.fracao, 0)),
-        grupos: agruparPlantoesJr(plantoesJr),
-      }))
-      .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '')),
+    sociosJr: resumirSociosJr(sociosJr, perfis),
     // Todos os casos fora do mês, com todos os campos, para a aba extra do Excel
     casosFora: [...casosFora].reverse(),
     ajustes: ajustes.map(({ usuario_id, criado_por, atualizado_por, pontos, ...a }) => ({
@@ -222,28 +216,40 @@ async function montarBm(mes, { contaCorrente = true, incluir = [] } = {}) {
 }
 
 const DIAS_DA_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+const TIPOS_DE_DIA = ['Semana', 'Sábado', 'Domingo']
+const tipoDoDia = diaDaSemana => (diaDaSemana === 6 ? 'Sábado' : diaDaSemana === 0 ? 'Domingo' : 'Semana')
 
-// Plantões de um sócio Jr agrupados pelo dia da semana, pelo turno e pelo nome da vaga naquele dia ("2º" do
-// diurno de sábado), de segunda a domingo e na ordem da escala. plantoes: quanto do plantão ele fez (a fração na
-// troca por horas e no congresso); o noturno conta no dia em que começa
-function agruparPlantoesJr(plantoes) {
-  const grupos = new Map()
-  for (const { data, posicao, fracao } of plantoes) {
-    const diaDaSemana = new Date(`${data}T12:00:00Z`).getUTCDay()
-    const turno = turnoDaPosicao(posicao)
-    const vaga = rotuloDaVaga(data, posicao)
-    const chave = `${diaDaSemana}|${turno}|${vaga}`
-    // ordem: de segunda a domingo e, no dia, pela vaga
-    const grupo = grupos.get(chave) ??
-      { dia_semana: DIAS_DA_SEMANA[diaDaSemana], turno, vaga, plantoes: 0, datas: [], ordem: [(diaDaSemana + 6) % 7, posicao] }
-    grupo.plantoes += fracao
-    grupo.datas.push({ data, fracao: duasCasas(fracao) })
-    grupo.ordem[1] = Math.min(grupo.ordem[1], posicao)
-    grupos.set(chave, grupo)
+// Sócios Jr do mês, no formato da grade: cada um é uma coluna (socios, com o total de plantões) e cada linha é uma
+// vaga num tipo de dia ("2º" do diurno de sábado), com quantos plantões cada um fez nela. plantoes: um por linha,
+// com a data, para a conferência no Excel. O noturno conta no dia em que começa (o de sexta é de semana); a fração
+// vem da troca por horas e do congresso
+function resumirSociosJr(plantoesPorSocio, perfis) {
+  const linhas = new Map()
+  const plantoes = []
+  for (const [id, doSocio] of plantoesPorSocio) {
+    for (const { data, posicao, fracao } of doSocio) {
+      const diaDaSemana = new Date(`${data}T12:00:00Z`).getUTCDay()
+      const dia = tipoDoDia(diaDaSemana)
+      const turno = turnoDaPosicao(posicao)
+      const vaga = rotuloDaVaga(data, posicao)
+      const chave = `${dia}|${turno}|${vaga}`
+      const linha = linhas.get(chave) ?? { dia, turno, vaga, plantoes: {}, posicao }
+      linha.plantoes[id] = duasCasas((linha.plantoes[id] ?? 0) + fracao)
+      linha.posicao = Math.min(linha.posicao, posicao)
+      linhas.set(chave, linha)
+      plantoes.push({ socio_id: id, data, dia_semana: DIAS_DA_SEMANA[diaDaSemana], turno, vaga, fracao: duasCasas(fracao) })
+    }
   }
-  return [...grupos.values()]
-    .sort((a, b) => a.ordem[0] - b.ordem[0] || a.ordem[1] - b.ordem[1])
-    .map(({ ordem, ...g }) => ({ ...g, plantoes: duasCasas(g.plantoes), datas: g.datas.sort((a, b) => a.data.localeCompare(b.data)) }))
+  return {
+    socios: [...plantoesPorSocio]
+      .map(([id, doSocio]) => ({ ...resumoDoPerfil(id, perfis), total: duasCasas(doSocio.reduce((s, p) => s + p.fracao, 0)) }))
+      .sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '')),
+    // Semana, sábado e domingo; em cada um, na ordem da escala (o diurno antes do noturno)
+    linhas: [...linhas.values()]
+      .sort((a, b) => TIPOS_DE_DIA.indexOf(a.dia) - TIPOS_DE_DIA.indexOf(b.dia) || a.posicao - b.posicao)
+      .map(({ posicao, ...l }) => l),
+    plantoes: plantoes.sort((a, b) => a.data.localeCompare(b.data)),
+  }
 }
 
 // Diferença final do mês anterior de cada sócio: refaz as contas de cada mês desde o primeiro da conta corrente
