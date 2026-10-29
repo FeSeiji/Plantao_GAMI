@@ -6,3 +6,6 @@
 
 # Dependências: o npm install recria (no Render, a cada deploy)
 node_modules/
+
+# Manuais e PDFs do cliente: ficam só na máquina (o repositório é público)
+docs/

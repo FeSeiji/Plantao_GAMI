@@ -481,6 +481,17 @@ exports.criarTroca = async (req, res) => {
       return res.status(400).json({ error: `Essa vaga já tem ${qual} valendo. A gestão precisa cancelá-la antes.` })
     }
 
+    // O turno terminou sem cobertura: a escala subiu (services/subidas.js) e fica assim. A cobertura das férias só
+    // pode ser registrada até o fim do turno; na última posição ocupada não há subida, e a vaga continua aceitando
+    if (
+      coberturaFerias &&
+      turnoJaTerminou(plantao.data, posicao) &&
+      vagasQueSobem(plantao.data, turnoDaPosicao(posicao)).includes(posicao) &&
+      temAlguemAbaixo(plantao, plantao.plantao_usuarios, posicao)
+    ) {
+      return res.status(400).json({ error: 'O turno terminou sem cobertura e a escala já subiu nessa vaga: a cobertura não pode mais ser registrada' })
+    }
+
     // O convidado precisa estar livre no horário da vaga (na troca por horas, só no intervalo que vai cobrir).
     // Quem já está no mesmo turno desse plantão conta como ocupado
     const janela = parcial

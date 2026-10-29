@@ -74,7 +74,8 @@ type Resumo = {
       // Horas de plantão extra no mês (o sócio soma os pontos dele em socio.pontos)
       horas_extra: number
     }
-    socio: { plantoes: number; pontos: number }
+    // pontos já inclui os ajustes manuais do BM (Administrativo, Reunião...), que vêm também em pontos_ajustes
+    socio: { plantoes: number; pontos: number; pontos_ajustes: number }
   }
   // Meus plantões extras dos próximos dias que ainda não terminaram
   extras: ExtraResumo[]
@@ -460,6 +461,8 @@ export default function DashboardPage() {
                     <p className="text-2xl font-bold text-gray-800 tabular-nums">{formatarPontos(mes!.socio.pontos)} pts</p>
                     <p className="text-xs text-gray-500">
                       como sócio · {mes!.socio.plantoes} {mes!.socio.plantoes === 1 ? "plantão" : "plantões"}
+                      {mes!.socio.pontos_ajustes !== 0 &&
+                        ` · ${mes!.socio.pontos_ajustes > 0 ? "+" : ""}${formatarPontos(mes!.socio.pontos_ajustes)} de ajustes`}
                     </p>
                   </div>
                 )}

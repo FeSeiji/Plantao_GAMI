@@ -59,4 +59,17 @@ async function buscarAjustesDoPeriodo(primeiro, ultimo) {
 // Tipo do ajuste: a linha em que ele cai no BM (Administrativo e Reunião têm linha própria, como na planilha)
 const TIPOS_AJUSTE = ['administrativo', 'reuniao', 'outro']
 
-module.exports = { CAMPOS_AJUSTE, TIPOS_AJUSTE, buscarAjustesDoMes, buscarAjustesDoPeriodo }
+// Soma dos ajustes (não excluídos) de um sócio no mês: o painel dele mostra os mesmos pontos do BM.
+// inicioDoMes: 'AAAA-MM-01'
+async function somarAjustesDoUsuario(usuarioId, inicioDoMes) {
+  const { data, error } = await supabase
+    .from('ajustes_pontos')
+    .select('pontos')
+    .eq('mes', inicioDoMes)
+    .eq('usuario_id', usuarioId)
+    .is('excluido_em', null)
+  if (error) throw error
+  return data.reduce((soma, a) => soma + Number(a.pontos), 0)
+}
+
+module.exports = { CAMPOS_AJUSTE, TIPOS_AJUSTE, buscarAjustesDoMes, buscarAjustesDoPeriodo, somarAjustesDoUsuario }
