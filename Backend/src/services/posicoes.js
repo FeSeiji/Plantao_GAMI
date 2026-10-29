@@ -10,8 +10,8 @@ const TURNOS = {
 
 // fimDeSemana: false quando a vaga não existe no sábado e no domingo; um objeto com o que muda (nome, horário,
 // se é de coordenador). rotulo: o nome da vaga na escala (o BM dos sócios Jr e o Excel usam).
-// sobe: posição numerada, que entra na subida de escala (services/subidas.js). Coordenadores (o 1º do noturno
-// também é coordenador para o cliente), plantonista, intermediário e manhã ficam de fora
+// sobe: posição numerada, que entra na subida de escala (services/subidas.js), inclusive o 1º do noturno (usuário,
+// 29/10/2026). Coordenadores do diurno, plantonista, intermediário e manhã ficam de fora
 const VAGAS = [
   { posicao: 1, turno: 'diurno', rotulo: 'Coordenador', coordenador: true, fimDeSemana: { rotulo: 'Plantonista', coordenador: false } },
   { posicao: 2, turno: 'diurno', rotulo: 'Coordenador', coordenador: true },
@@ -22,8 +22,8 @@ const VAGAS = [
   { posicao: 7, turno: 'diurno', rotulo: '6º', sobe: true, fimDeSemana: { rotulo: '5º' } },
   { posicao: 8, turno: 'diurno', rotulo: '7º', sobe: true, fimDeSemana: false },
   { posicao: 9, turno: 'noturno', rotulo: 'Intermediário', fimDeSemana: { rotulo: 'Plantonista' } },
-  { posicao: 10, turno: 'noturno', rotulo: '1º' },
-  { posicao: 11, turno: 'noturno', rotulo: '1º', fimDeSemana: { rotulo: '2º', sobe: true } },
+  { posicao: 10, turno: 'noturno', rotulo: '1º', sobe: true },
+  { posicao: 11, turno: 'noturno', rotulo: '1º', sobe: true, fimDeSemana: { rotulo: '2º' } },
   { posicao: 12, turno: 'noturno', rotulo: '2º', sobe: true, fimDeSemana: { rotulo: '3º' } },
   { posicao: 13, turno: 'noturno', rotulo: '3º', sobe: true, fimDeSemana: { rotulo: '4º' } },
 ]
