@@ -462,6 +462,57 @@ export default function PlantaoModal({
     }
   }
 
+  // Subida de escala antecipada (só a gestão): sem cobertura, a escala sobe sozinha quando o turno termina; antes disso
+  // a gestão pode subir já. Quem está abaixo, nas posições numeradas do turno, passa a valer uma posição acima e o
+  // titular continua com os pontos da vaga
+  // Quem está abaixo da vaga na escada do turno (as posições numeradas): quem sobe se a escala subir nela
+  function abaixoNaEscada(posicao: number) {
+    return selecionados
+      .filter((o) => o.posicao != null && o.posicao > posicao && turnoDaPosicao(o.posicao) === turnoDaPosicao(posicao) && vagaSobe(plantao.data, o.posicao))
+      .sort((a, b) => a.posicao! - b.posicao!);
+  }
+
+  function subirEscala(u: Usuario) {
+    const posicao = u.posicao!;
+    const abaixo = abaixoNaEscada(posicao);
+    setConfirmacao({
+      titulo: "Subir a escala agora?",
+      mensagem: (
+        <p>
+          Sem esperar o fim do turno, quem está abaixo de{" "}
+          <span className="font-semibold">{nomeDe(u)}</span> ({rotuloPosicao(plantao.data, posicao)}) sobe uma posição:{" "}
+          {abaixo.map((o) => nomeDe(o)).join(", ")}. {nomeDe(u)} continua com os pontos
+          da vaga. Se alguém cobrir as férias, a escala deixa de subir.
+        </p>
+      ),
+      rotuloConfirmar: "Subir a escala",
+      acao: () => alterarSubida(posicao, true),
+    });
+  }
+
+  async function alterarSubida(posicao: number, subir: boolean) {
+    setError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await apiFetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/plantoes/${plantao.id}/subidas${subir ? "" : `/${posicao}`}`,
+        {
+          method: subir ? "POST" : "DELETE",
+          headers: { Authorization: `Bearer ${token}`, ...(subir ? { "Content-Type": "application/json" } : {}) },
+          body: subir ? JSON.stringify({ posicao }) : undefined,
+        },
+      );
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({}));
+        throw new Error(result.error ?? (subir ? "Não foi possível subir a escala." : "Não foi possível desfazer a subida."));
+      }
+      await recarregarPlantao();
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível alterar a subida de escala.");
+    }
+  }
+
   function desfazerCobertura(posicao: number, cobertura: Cobertura) {
     setConfirmacao({
       titulo: cobertura.ferias ? "Desfazer cobertura de férias?" : "Desfazer troca por horas?",
@@ -918,8 +969,9 @@ export default function PlantaoModal({
     // Com troca por horas (ou cobertura de férias) valendo, a vaga não aceita outra troca até a gestão desfazê-la.
     // Titular de férias não sai da vaga: em vez de trocar, alguém cobre o turno inteiro
     const ferias = deFerias(u.afastamento);
-    // Férias sem cobertura numa posição numerada: se ninguém cobrir, a escala sobe sozinha quando o turno começa
-    const sobeNoInicio = ferias && !u.cobertura && !u.subida && vagaSobe(plantao.data, posicao);
+    // Férias sem cobertura numa posição numerada com alguém abaixo: se ninguém cobrir até o fim do turno, a escala
+    // sobe sozinha. Na última posição ocupada não há quem suba, e a vaga continua precisando de cobertura
+    const sobeNoFim = ferias && !u.cobertura && !u.subida && vagaSobe(plantao.data, posicao) && abaixoNaEscada(posicao).length > 0;
     if (!pendente && !u.cobertura && podePedirVaga)
       acoes.push({
         rotulo:
@@ -928,6 +980,11 @@ export default function PlantaoModal({
             : ferias ? "Cobrir a vaga" : "Pedir a vaga",
         onClick: () => abrirTroca(posicao),
       });
+    // Até o fim do turno, a gestão pode antecipar a subida (e desfazê-la); depois que ele termina, ela é automática
+    if (podeGerirEquipe && sobeNoFim && !turnoJaTerminou(plantao.data, posicao))
+      acoes.push({ rotulo: "Subir escala", onClick: () => subirEscala(u) });
+    if (podeGerirEquipe && u.subida && !turnoJaTerminou(plantao.data, posicao))
+      acoes.push({ rotulo: "Desfazer subida", perigo: true, onClick: () => alterarSubida(posicao, false) });
     if (pendente && (podeGerirEquipe || pendente.solicitadoPor.id === meuId))
       acoes.push({
         rotulo: "Cancelar pedido de troca",
@@ -1007,9 +1064,9 @@ export default function PlantaoModal({
                 {u.subida && " · a escala subiu"}
               </span>
             )}
-            {sobeNoInicio && (
+            {sobeNoFim && (
               <span className="block">
-                Sem cobertura: a escala sobe às {Number(horarioDaVaga(plantao.data, posicao).hora_inicio.slice(0, 2))}h
+                Sem cobertura: a escala sobe às {Number(horarioDaVaga(plantao.data, posicao).hora_fim.slice(0, 2))}h, no fim do turno
               </span>
             )}
             {u.posicaoEfetiva != null && (

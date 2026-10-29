@@ -11,7 +11,7 @@ const { listarCasosFora } = require('./casosFora')
 const { buscarAjustesDoMes, buscarAjustesDoPeriodo } = require('./ajustesPontos')
 const { buscarFinanceiroDosMeses } = require('./financeiroBm')
 const { buscarEmPaginas } = require('./paginas')
-const { vagasQueSubiram, posicoesEfetivas } = require('./subidas')
+const { buscarSubidasDoPeriodo, vagasQueSubiram, posicoesEfetivas } = require('./subidas')
 const { buscarExtras, duracaoDoExtra } = require('./extras')
 const { MES_INICIAL_CONTA_CORRENTE, calcularMes, saldoInicial, mesSeguinte } = require('./calculoBm')
 
@@ -64,7 +64,7 @@ async function carregarPeriodo(meses, { completo = false } = {}) {
       .order('id')
   )
 
-  const [trocas, cargos, casosFora, afastamentos, ajustes, financeiros, extras] = await Promise.all([
+  const [trocas, cargos, casosFora, afastamentos, ajustes, financeiros, extras, subidas] = await Promise.all([
     buscarTrocasAceitas(inicio, fim),
     buscarCargosDosUsuarios(),
     listarCasosFora({ inicio, fim, todos: true }),
@@ -72,8 +72,9 @@ async function carregarPeriodo(meses, { completo = false } = {}) {
     completo ? buscarAjustesDoMes(inicio) : buscarAjustesDoPeriodo(inicio, `${meses[meses.length - 1]}-01`).then(a => ({ ajustes: a, historico: [] })),
     buscarFinanceiroDosMeses(meses, { comHistorico: completo }),
     buscarExtras({ inicio, fim }),
+    buscarSubidasDoPeriodo(inicio, fim),
   ])
-  return { plantoes, trocas, cargos, casosFora, afastamentos, ...ajustes, financeiros, extras }
+  return { plantoes, trocas, cargos, casosFora, afastamentos, ...ajustes, financeiros, extras, subidas }
 }
 
 // A parte do período que é do mês (o que montarDoMes usa)
@@ -93,6 +94,7 @@ function dadosDoMes(periodo, mes) {
     historico: periodo.historico,
     financeiro: periodo.financeiros.get(mes),
     extras: periodo.extras.filter(e => doMes(e.data)),
+    subidas: periodo.subidas.filter(s => idsPlantoes.has(s.plantao_id)),
   }
 }
 
@@ -100,7 +102,7 @@ function dadosDoMes(periodo, mes) {
 // BM da tela e do Excel). incluir (só na cascata): sócios que viram coluna mesmo sem nada no mês (quem tem saldo
 // vindo do mês anterior). comPerfis: busca nome e sigla de cada um (a cascata só precisa das contas)
 async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], comPerfis = false } = {}) {
-  const { plantoes, trocas, cargos, casosFora, afastamentos, ajustes, historico, financeiro, extras } = dados
+  const { plantoes, trocas, cargos, casosFora, afastamentos, ajustes, historico, financeiro, extras, subidas } = dados
   const ehSocio = id => contaComoSocio(cargos.get(id)?.roles)
   const ehSocioJr = id => contaComoSocioJr(cargos.get(id)?.roles)
   // Trocas por horas e coberturas de férias: a vaga continua do titular (repartirPlantao divide)
@@ -124,7 +126,7 @@ async function montarDoMes(mes, dados, { difMesAnterior = null, incluir = [], co
   // Subida de escala: a posição que cada vaga vale no plantão (quem está abaixo da vaga de férias sem cobertura sobe)
   const efetivasPorPlantao = new Map(plantoes.map(p => {
     const coberta = posicao => coberturas.some(c => c.plantao_id === p.id && c.posicao === posicao)
-    return [p.id, posicoesEfetivas(p, vagasQueSubiram(p, p.plantao_usuarios, afastamentos, coberta))]
+    return [p.id, posicoesEfetivas(p, vagasQueSubiram(p, p.plantao_usuarios, afastamentos, coberta, subidas))]
   }))
   const efetiva = (plantao, posicao) => efetivasPorPlantao.get(plantao.id)?.get(posicao) ?? posicao
 

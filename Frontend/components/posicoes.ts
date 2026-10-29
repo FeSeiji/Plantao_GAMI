@@ -15,7 +15,8 @@ type Vaga = Nome & {
   posicao: number
   turno: Turno
   coordenador?: boolean
-  // Posição numerada, que entra na subida de escala (coordenadores, plantonista, intermediário e manhã ficam de fora)
+  // Posição numerada, que entra na subida de escala, inclusive o 1º do noturno (coordenadores do diurno, plantonista,
+  // intermediário e manhã ficam de fora)
   sobe?: boolean
   // Sábado e domingo: false quando a vaga não existe; senão, o que muda (nome, horário, se é de coordenador)
   fimDeSemana?: false | (Partial<Nome> & { coordenador?: boolean; sobe?: boolean; hora_inicio?: string; hora_fim?: string })
@@ -41,8 +42,8 @@ const VAGAS: Vaga[] = [
     posicao: 9, turno: "noturno", rotulo: "Intermediário", curto: "Int", abrev: "Interm.", frase: "intermediário",
     fimDeSemana: { rotulo: "Plantonista", curto: "P", abrev: "Plant.", frase: "plantonista do noturno" },
   },
-  { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1" },
-  { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1", fimDeSemana: { rotulo: "2º", curto: "2", sobe: true } },
+  { posicao: 10, turno: "noturno", rotulo: "1º", curto: "1", sobe: true },
+  { posicao: 11, turno: "noturno", rotulo: "1º", curto: "1", sobe: true, fimDeSemana: { rotulo: "2º", curto: "2" } },
   { posicao: 12, turno: "noturno", rotulo: "2º", curto: "2", sobe: true, fimDeSemana: { rotulo: "3º", curto: "3" } },
   { posicao: 13, turno: "noturno", rotulo: "3º", curto: "3", sobe: true, fimDeSemana: { rotulo: "4º", curto: "4" } },
 ]
