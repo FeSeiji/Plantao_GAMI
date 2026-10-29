@@ -1,45 +1,36 @@
-const { createClient } = require('@supabase/supabase-js')
+const { TURNOS, vagasQueSobem, turnoDaPosicao, turnoJaComecou } = require('./posicoes')
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+// Subida de escala (Dra. Aline, 28/10/2026): o titular de férias aprovadas continua na vaga, recebendo os pontos
+// dela. Se o turno começa sem ninguém cobrindo as férias, a escala sobe sozinha: quem está abaixo dele, nas posições
+// numeradas do mesmo turno (vagasQueSobem), passa a valer uma posição acima. Ninguém muda de vaga no banco: a subida
+// é calculada a cada leitura, e some sozinha se alguém cobrir as férias depois ou se as férias forem removidas.
 
-const { TURNOS, vagasQueSobem } = require('./posicoes')
-const { buscarEmPaginas } = require('./paginas')
-
-// Subida de escala (migration plantao_subidas): a vaga de quem está de férias ficou sem cobertura e a gestão sobe a
-// escala. Ninguém muda de vaga no banco: quem está abaixo dela, nas posições numeradas do mesmo turno, passa a valer
-// uma posição acima. Quem está de férias continua na vaga e recebe os pontos dela.
-
-async function buscarSubidas(plantaoIds) {
-  const ids = [...new Set(plantaoIds)]
-  if (ids.length === 0) return []
-  const { data, error } = await supabase.from('plantao_subidas').select('plantao_id, posicao, usuario_id').in('plantao_id', ids)
-  if (error) throw error
-  return data
-}
-
-// As subidas dos plantões do período (inicio e fim: 'AAAA-MM-DD')
-async function buscarSubidasDoPeriodo(inicio, fim) {
-  const subidas = await buscarEmPaginas(() =>
-    supabase
-      .from('plantao_subidas')
-      .select('plantao_id, posicao, usuario_id, plantoes!inner(data)')
-      .gte('plantoes.data', inicio)
-      .lte('plantoes.data', fim)
-      .order('id')
+function deFerias(afastamentos, usuarioId, data) {
+  return afastamentos.some(a =>
+    a.usuario_id === usuarioId && a.tipo === 'ferias' && a.status === 'aprovado' && a.data_inicio <= data && a.data_fim >= data
   )
-  return subidas.map(({ plantoes: _plantao, ...s }) => s)
 }
 
-// As subidas que valem no plantão: a do titular que continua na vaga. membros: [{ usuario_id, posicao }]
-function subidasValidas(plantao, membros, subidas) {
-  return subidas.filter(s => s.plantao_id === plantao.id && membros.some(m => m.posicao === s.posicao && m.usuario_id === s.usuario_id))
+// As vagas do plantão em que a escala subiu. membros: [{ usuario_id, posicao }]; afastamentos: os dos membros
+// (só as férias aprovadas contam); coberta(posicao): a vaga tem troca por horas ou cobertura de férias valendo
+function vagasQueSubiram(plantao, membros, afastamentos, coberta, agora = new Date()) {
+  return new Set(
+    membros
+      .filter(m =>
+        m.posicao != null &&
+        vagasQueSobem(plantao.data, turnoDaPosicao(m.posicao)).includes(m.posicao) &&
+        deFerias(afastamentos, m.usuario_id, plantao.data) &&
+        !coberta(m.posicao) &&
+        turnoJaComecou(plantao.data, m.posicao, agora)
+      )
+      .map(m => m.posicao)
+  )
 }
 
-// Map posicao -> a posição que a vaga vale com as subidas do plantão, só para as que mudam. Na escada do turno
-// (vagasQueSobem), cada vaga sobe tantas posições quantas subidas houver acima dela: com o 3º de férias e subido,
+// Map posicao -> a posição que a vaga vale com a escala subida, só para as que mudam. subiram: vagasQueSubiram.
+// Na escada do turno, cada vaga sobe tantas posições quantas vagas subidas houver acima dela: com o 3º de férias,
 // o 4º vale como 3º, o 5º como 4º...
-function posicoesEfetivas(plantao, membros, subidas) {
-  const subiram = new Set(subidasValidas(plantao, membros, subidas).map(s => s.posicao))
+function posicoesEfetivas(plantao, subiram) {
   const efetivas = new Map()
   if (subiram.size === 0) return efetivas
   for (const turno of Object.keys(TURNOS)) {
@@ -53,4 +44,4 @@ function posicoesEfetivas(plantao, membros, subidas) {
   return efetivas
 }
 
-module.exports = { buscarSubidas, buscarSubidasDoPeriodo, subidasValidas, posicoesEfetivas }
+module.exports = { vagasQueSubiram, posicoesEfetivas }

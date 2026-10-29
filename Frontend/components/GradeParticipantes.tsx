@@ -23,7 +23,7 @@ export type CelulaGrade =
       pessoa: Pessoa
       // Coluna da vaga: o rótulo ("3º", "Coord.") ou o select de posição
       rotulo?: React.ReactNode
-      destaque?: "coordenador" | "pendente" | "indisponivel"
+      destaque?: "coordenador" | "pendente" | "indisponivel" | "ferias"
       status?: React.ReactNode
       acoes?: AcaoMenu[]
       // Conteúdo sempre visível abaixo do nome (ex.: Aceitar/Recusar troca)
@@ -50,6 +50,8 @@ const CORES = {
   coordenador: { fundo: "bg-purple-50/60", faixa: "bg-purple-400", status: "text-purple-800" },
   pendente: { fundo: "bg-amber-50", faixa: "bg-amber-400", status: "text-amber-800" },
   indisponivel: { fundo: "bg-red-50", faixa: "bg-red-400", status: "text-red-700" },
+  // De férias, com a escala subida no lugar dele
+  ferias: { fundo: "bg-sky-50", faixa: "bg-sky-400", status: "text-sky-800" },
 }
 
 // Coluna da vaga ("Coord.", "2º" ou o select de posição): mesma largura em todas as linhas
