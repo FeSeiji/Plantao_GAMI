@@ -972,7 +972,9 @@ export default function PlantaoModal({
     // Férias sem cobertura numa posição numerada com alguém abaixo: se ninguém cobrir até o fim do turno, a escala
     // sobe sozinha. Na última posição ocupada não há quem suba, e a vaga continua precisando de cobertura
     const sobeNoFim = ferias && !u.cobertura && !u.subida && vagaSobe(plantao.data, posicao) && abaixoNaEscada(posicao).length > 0;
-    if (!pendente && !u.cobertura && podePedirVaga)
+    // Depois que o turno termina com a escala subida, ela fica assim: não entra mais cobertura
+    const subidaTravada = u.subida && turnoJaTerminou(plantao.data, posicao);
+    if (!pendente && !u.cobertura && !subidaTravada && podePedirVaga)
       acoes.push({
         rotulo:
           podeGerirEquipe || ehMinhaVaga

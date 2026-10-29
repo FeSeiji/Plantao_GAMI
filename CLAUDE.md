@@ -27,8 +27,3 @@ The placement of `app.use(authMiddleware)` in `app.js` is what separates public 
 ### Roles System
 
 Roles live in `app_metadata.roles` on the Supabase user (not `user_metadata`): `escritorio`, `tecnico`, `anestesita_socio`, `anestesita_plantonista` (spelled "anestesita" in code). Admin is not a role — it's the separate flag `app_metadata.is_admin`; `requireRole('admin')` matches users with that flag. Only the service role key can set/modify them — user JWTs cannot.
-
-### Unused Files
-
-- `Backend/supabase.js` uses ESM syntax (`import`/`export`) and is not imported anywhere — all active code in `src/` uses CommonJS (`require`/`module.exports`).
-- `src/routes/index.js` is not imported in `app.js` — `app.js` imports route files directly. It also requires controllers that don't exist (`healthController`, `hello`, `hospital`), so it would crash if mounted.

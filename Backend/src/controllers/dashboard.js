@@ -12,6 +12,7 @@ const { contaComoSocio } = require('../services/usuarios')
 const { buscarAfastamentosNoPeriodo, fatorDoDia } = require('../services/afastamentos')
 const { buscarExtras, duracaoDoExtra } = require('../services/extras')
 const { buscarSubidas, vagasQueSubiram, posicoesEfetivas } = require('../services/subidas')
+const { somarAjustesDoUsuario } = require('../services/ajustesPontos')
 
 const FUSO_HOSPITAL = 'America/Sao_Paulo'
 const DIAS_AGENDA = 7
@@ -125,15 +126,18 @@ exports.resumo = async (req, res) => {
 
   // Coberturas dos plantões (as partes das minhas vagas que outra pessoa cobre, e as férias cobertas, que não sobem a
   // escala), afastamentos do mês (meus congressos descontam na vaga; as férias de quem está no plantão comigo sobem a
-  // escala), meus plantões extras e as subidas de escala antecipadas pela gestão
+  // escala), meus plantões extras, as subidas de escala antecipadas pela gestão e, para o sócio, os ajustes manuais
+  // de pontos do mês (Administrativo, Reunião...), que o BM soma
+  const souSocio = contaComoSocio(req.user.app_metadata?.roles)
   const plantoesDoMes = [...janela.data, ...minhasCoberturas.data.map(c => c.plantoes)]
-  let coberturasDosPlantoes, coberturasDasMinhas, afastamentos, meusExtras, subidas
+  let coberturasDosPlantoes, coberturasDasMinhas, afastamentos, meusExtras, subidas, meusAjustes
   try {
-    [coberturasDosPlantoes, afastamentos, meusExtras, subidas] = await Promise.all([
+    [coberturasDosPlantoes, afastamentos, meusExtras, subidas, meusAjustes] = await Promise.all([
       buscarCoberturas([...plantoesDoMes, ...proximos.data].map(p => p.id)),
       buscarAfastamentosNoPeriodo([eu, ...plantoesDoMes.flatMap(p => p.plantao_usuarios.map(u => u.usuario_id))], inicioMes, fimMes),
       buscarExtras({ inicio: inicioJanela, fim: ultimoDiaAgenda > fimMes ? ultimoDiaAgenda : fimMes, usuarioIds: [eu] }),
       buscarSubidas(plantoesDoMes.map(p => p.id)),
+      souSocio ? somarAjustesDoUsuario(eu, inicioMes) : 0,
     ])
     coberturasDasMinhas = coberturasDosPlantoes.filter(c => c.usuario_saida === eu)
   } catch (err) {
@@ -150,11 +154,11 @@ exports.resumo = async (req, res) => {
   const doMes = [...minhas, ...comoCobertura].filter(p => p.data >= inicioMes && p.data <= fimMes)
 
   // O plantão não tem tipo: quem tem o cargo de sócio soma pontos e quem é só plantonista soma plantões por categoria
-  const souSocio = contaComoSocio(req.user.app_metadata?.roles)
   const meuMes = {
     mes: hoje.slice(0, 7),
     plantonista: { plantoes: 0, categorias: categoriasZeradas() },
-    socio: { plantoes: 0, pontos: 0 },
+    // pontos já inclui pontos_ajustes, como no BM
+    socio: { plantoes: 0, pontos: meusAjustes, pontos_ajustes: duasCasas(meusAjustes) },
   }
   for (const p of doMes) {
     // Fração da vaga que é minha: o intervalo que cubro, ou o que sobra quando alguém cobre parte da minha vaga.
