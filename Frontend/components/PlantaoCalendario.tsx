@@ -37,7 +37,7 @@ export type Usuario = {
   trocaPendente?: TrocaPendente | null
   afastamento?: Afastamento | null
   cobertura?: Cobertura | null
-  // Subida de escala: a vaga dele (de férias) subiu a escala; posicaoEfetiva: a posição que ele vale com a subida
+  // Subida de escala: ele está de férias e a escala subiu na vaga dele; posicaoEfetiva: a posição que ele vale com a subida
   subida?: boolean
   posicaoEfetiva?: number | null
 }
@@ -65,7 +65,7 @@ export function doTurno(plantao: Plantao, turno: Turno) {
 }
 
 // Sigla com os indicadores: anel roxo do coordenador, ponto laranja de troca pendente,
-// "!" de afastamento aprovado (cinza quando a escala já subiu) ou "?" de pedido pendente, a sigla de quem cobre
+// "!" de afastamento aprovado (azul quando a escala já subiu: ele continua de férias) ou "?" de pedido pendente, a sigla de quem cobre
 // (troca por horas ou férias) e a posição na fila ou na equipe (com "↑" quando subiu na escala).
 // Também usada no Meu plantão, onde a posição já aparece na linha da tabela.
 // data: o dia do plantão, porque o nome da vaga muda no fim de semana
@@ -108,7 +108,7 @@ export function BadgeComMarcador({
       {usuario.afastamento && (
         <span
           className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border border-white text-white text-[8px] font-bold flex items-center justify-center leading-none ${
-            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : usuario.subida ? "bg-gray-400" : "bg-red-600"
+            afastamentoPendente(usuario.afastamento) ? "bg-amber-500" : usuario.subida ? "bg-sky-600" : "bg-red-600"
           }`}
         >
           {afastamentoPendente(usuario.afastamento) ? "?" : "!"}
